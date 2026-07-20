@@ -512,3 +512,14 @@
 - 凭证：网页 Run 仍使用临时 Base URL、API Key、Model；CLI 只从显式环境变量读取 Token。服务器不再读取任何认证 JSON 文件。
 - 存储：业务 SQLite 改用 `data/aifpatent/`，为后续 LangGraph 检查点预留 `data/langgraph/`，二者均 Git 忽略。
 - 验证：后端、配置、脚本和 CLI 中无运行时 OpenCode 引用；借用原项目既有 Python 环境执行新项目完整 179 项离线测试，全部通过。
+
+## 2026-07-20 — AIF-GRAPH-001
+
+- 类型：LangGraph 编排与 LangChain 模型层核心迁移。
+- 图拓扑：新增 `IdeaGraphState` 和固定 11 节点 `StateGraph`；节点名称继续使用原权威步骤名，边固定为线性顺序，模型不得选择、跳过或循环业务步骤。
+- 持久化：`run_id` 作为 LangGraph `thread_id`，`data/langgraph/checkpoints.db` 仅保存 `run_id`、最后完成节点和完成计数；专利正文、Evidence、结论、审计、报告继续以业务 SQLite 与 RunStore 为权威。
+- 可靠性：LangGraph RetryPolicy 负责节点级重试，现有 Harness 记录每个业务 attempt、写一次结果和完成门禁；单节点超时、进程取消和服务关闭均有确定性终态与 JSONL 事件。
+- 模型层：默认传输改为 LangChain `ChatOpenAI`；每次 Run 的 Base URL、API Key、Model 仍由 ContextVar 临时提供。DeepSeek/OpenAI-compatible JSON mode、火山方舟 `thinking.disabled`、代理失败直连回退、严格 Pydantic Schema 和中文门禁保持不变。
+- 安全：新增回归在临时 Runtime Context 放入哨兵密钥并执行完整图，确认 LangGraph SQLite 不包含该值；API Key 也不进入 Graph State、业务配置快照、日志或前端存储。
+- 可观测性：前端调试时间线识别 LangGraph 图开始、节点开始/完成/失败/取消和图终态；系统健康检查新增 `langgraph_checkpointer` 组件。
+- 验证：完整 181 项离线测试通过；`compileall`、`node --check`、四个 Shell 脚本语法、`pip check` 和 `git diff --check` 通过。

@@ -481,7 +481,7 @@ function renderEmptyDebug() {
 function debugEventLabel(event) {
   return ({
     run_scheduled: "Run 已调度",
-    workflow_started: "Workflow 已开始",
+    workflow_started: "旧 Workflow 已开始",
     workflow_step_started: "步骤开始",
     workflow_step_completed: "步骤完成",
     workflow_step_failed: "步骤失败",
@@ -491,6 +491,14 @@ function debugEventLabel(event) {
     workflow_finished: "Workflow 已结束",
     workflow_failed: "Workflow 失败",
     workflow_cancelled: "Workflow 已取消",
+    langgraph_started: "LangGraph 已开始",
+    langgraph_node_started: "LangGraph 节点开始",
+    langgraph_node_completed: "LangGraph 节点完成",
+    langgraph_node_failed: "LangGraph 节点失败",
+    langgraph_node_cancelled: "LangGraph 节点已取消",
+    langgraph_finished: "LangGraph 已结束",
+    langgraph_failed: "LangGraph 失败",
+    langgraph_cancelled: "LangGraph 已取消",
     run_failed: "Run 失败",
     run_cancelled: "Run 已取消",
   })[event] || event;

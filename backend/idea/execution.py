@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 from datetime import date
@@ -20,6 +19,7 @@ from .config import AppConfig
 from .database import Database
 from .document_analysis import DocumentAnalysisService
 from .inventiveness import InventivenessService
+from .graph import LangGraphWorkflow
 from .novelty import NoveltyService
 from .providers import FetchedDocument
 from .reporting import ReportService
@@ -28,7 +28,7 @@ from .run_store import RunStore, RunStoreError
 from .runtime_debug import RunDebugLog
 from .search_strategy import assess_breadth, build_budget
 from .value_analysis import ValueAnalysisService
-from .workflow import CompletionGateError, WorkflowHarness, WorkflowStep
+from .workflow import WorkflowHarness, WorkflowStep
 
 
 class ExecutionGateError(RuntimeError):
@@ -68,86 +68,23 @@ class WorkflowExecutor:
         self.audit = audit
         self.reporting = reporting
         self.debug_log = debug_log
+        self.graph = LangGraphWorkflow(
+            database=database,
+            harness=harness,
+            checkpoint_path=config.storage.langgraph_database,
+            step_handler=self._execute_step,
+            fingerprint_builder=self._step_input_fingerprint,
+            limitation_collector=self._collect_run_limitations,
+            step_timeout_seconds=config.workflow.step_timeout_seconds,
+            max_step_attempts=config.workflow.max_step_attempts,
+            debug_log=debug_log,
+        )
 
     async def execute(self, run_id: str) -> str:
-        run = self.database.get_run(run_id)
-        if run["status"] == "QUEUED":
-            self.harness.begin_run(run_id)
-            self._debug(run_id, "workflow_started", total_steps=11)
-        elif run["status"] != "RUNNING":
-            return run["status"]
-        try:
-            while (step := self.harness.next_step(run_id)) is not None:
-                run = self.database.get_run(run_id)
-                if run["status"] != "RUNNING":
-                    return run["status"]
-                attempt = self.harness.start_step(
-                    run_id, step, self._step_input_fingerprint(run_id, step)
-                )
-                self._debug(
-                    run_id,
-                    "workflow_step_started",
-                    step_name=step.value,
-                    attempt=attempt,
-                )
-                try:
-                    output = await asyncio.wait_for(
-                        self._execute_step(run_id, step, attempt),
-                        timeout=self.config.workflow.step_timeout_seconds,
-                    )
-                except asyncio.CancelledError:
-                    if self.database.get_run(run_id)["status"] == "RUNNING":
-                        self.harness.cancel_run(run_id)
-                    self._debug(run_id, "workflow_cancelled", step_name=step.value)
-                    raise
-                except Exception as exc:
-                    self.harness.fail_step(
-                        run_id,
-                        step,
-                        attempt,
-                        error_code=type(exc).__name__,
-                        error_message=str(exc),
-                    )
-                    self._debug(
-                        run_id,
-                        "workflow_step_failed",
-                        step_name=step.value,
-                        attempt=attempt,
-                        error_code=type(exc).__name__,
-                        error_message=str(exc)[:1000],
-                    )
-                    if self.database.get_run(run_id)["status"] == "FAILED":
-                        return "FAILED"
-                    continue
-                self.harness.complete_step(run_id, step, attempt, output)
-                self._debug(
-                    run_id,
-                    "workflow_step_completed",
-                    step_name=step.value,
-                    attempt=attempt,
-                )
-            try:
-                status = self.harness.finish_run(
-                    run_id, limitations=self._collect_run_limitations(run_id)
-                )
-                self._debug(run_id, "workflow_finished", status=status)
-                return status
-            except CompletionGateError as exc:
-                self.database.set_run_status(
-                    run_id,
-                    "FAILED",
-                    error_code="COMPLETION_GATE_FAILED",
-                    error_message=str(exc),
-                )
-                self._debug(
-                    run_id,
-                    "workflow_failed",
-                    error_code="COMPLETION_GATE_FAILED",
-                    error_message=str(exc)[:1000],
-                )
-                return "FAILED"
-        except asyncio.CancelledError:
-            raise
+        return await self.graph.execute(run_id)
+
+    async def aclose(self) -> None:
+        await self.graph.aclose()
 
     def _debug(self, run_id: str, event: str, **details: Any) -> None:
         if self.debug_log:

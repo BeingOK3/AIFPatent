@@ -46,9 +46,10 @@
     "storage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["database", "runs_dir", "uploads_dir", "cache_dir", "document_store_dir", "cache", "history"],
+      "required": ["database", "langgraph_database", "runs_dir", "uploads_dir", "cache_dir", "document_store_dir", "cache", "history"],
       "properties": {
         "database": {"type": "string", "minLength": 1},
+        "langgraph_database": {"type": "string", "minLength": 1},
         "runs_dir": {"type": "string", "minLength": 1},
         "uploads_dir": {"type": "string", "minLength": 1},
         "cache_dir": {"type": "string", "minLength": 1},

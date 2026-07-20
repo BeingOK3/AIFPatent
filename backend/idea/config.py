@@ -66,6 +66,7 @@ class HistorySettings(StrictModel):
 
 class StorageSettings(StrictModel):
     database: Path
+    langgraph_database: Path
     runs_dir: Path
     uploads_dir: Path
     cache_dir: Path
@@ -205,6 +206,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     storage = config.storage.model_copy(
         update={
             "database": _absolute(config.storage.database, root),
+            "langgraph_database": _absolute(config.storage.langgraph_database, root),
             "runs_dir": _absolute(config.storage.runs_dir, root),
             "uploads_dir": _absolute(config.storage.uploads_dir, root),
             "cache_dir": _absolute(config.storage.cache_dir, root),

@@ -9,6 +9,7 @@ from idea.agent_schemas import IdeaParserOutput, NoveltyResult, QueryPlannerOutp
 from idea.config import load_config
 from idea.database import Database
 from idea.execution import WorkflowExecutor
+from idea.model_client import RuntimeModelConfig, runtime_model_config
 from idea.providers import FetchedDocument
 from idea.retrieval import FetchResult, RetrievalResult
 from idea.run_store import RunStore
@@ -205,10 +206,16 @@ class WorkflowExecutorTests(unittest.TestCase):
         self.db.initialize()
         self.store = RunStore(root / "runs")
         self.config = load_config()
+        self.graph_db = root / "langgraph.db"
+        storage = self.config.storage.model_copy(
+            update={"langgraph_database": self.graph_db}
+        )
         workflow = self.config.workflow.model_copy(
             update={"max_step_attempts": 2, "step_timeout_seconds": 5}
         )
-        self.config = self.config.model_copy(update={"workflow": workflow})
+        self.config = self.config.model_copy(
+            update={"workflow": workflow, "storage": storage}
+        )
         self.case = self.db.create_case("Execution")
 
     def tearDown(self) -> None:
@@ -230,10 +237,20 @@ class WorkflowExecutorTests(unittest.TestCase):
             reporting or FakeReporting(self.db, self.store),
         )
 
+    @staticmethod
+    def run_executor(executor, run_id):
+        async def scenario():
+            try:
+                return await executor.execute(run_id)
+            finally:
+                await executor.aclose()
+
+        return asyncio.run(scenario())
+
     def test_fixed_graph_completes_all_eleven_steps_and_manifest(self) -> None:
         run = self.create_run()
         executor = self.executor(run)
-        status = asyncio.run(executor.execute(run["run_id"]))
+        status = self.run_executor(executor, run["run_id"])
         self.assertEqual(status, "COMPLETED")
         progress = executor.harness.progress(run["run_id"])
         self.assertEqual(progress["completed_steps"], len(WORKFLOW_STEPS))
@@ -243,7 +260,7 @@ class WorkflowExecutorTests(unittest.TestCase):
         run = self.create_run()
         retrieval = FakeRetrieval(fail_once=True)
         executor = self.executor(run, retrieval=retrieval)
-        status = asyncio.run(executor.execute(run["run_id"]))
+        status = self.run_executor(executor, run["run_id"])
         self.assertEqual(status, "COMPLETED")
         self.assertEqual(retrieval.retrieve_calls, 2)
         with self.db.connect() as connection:
@@ -258,7 +275,7 @@ class WorkflowExecutorTests(unittest.TestCase):
         retrieval = FakeRetrieval(document_count=4)
         executor = self.executor(run, retrieval=retrieval)
 
-        status = asyncio.run(executor.execute(run["run_id"]))
+        status = self.run_executor(executor, run["run_id"])
 
         self.assertEqual(status, "COMPLETED_WITH_LIMITATIONS")
         self.assertEqual(retrieval.fetch_calls, 1)
@@ -273,7 +290,7 @@ class WorkflowExecutorTests(unittest.TestCase):
         executor = self.executor(
             run, reporting=LimitedReporting(self.db, self.store)
         )
-        status = asyncio.run(executor.execute(run["run_id"]))
+        status = self.run_executor(executor, run["run_id"])
         self.assertEqual(status, "COMPLETED_WITH_LIMITATIONS")
         stored = self.db.get_run(run["run_id"])
         self.assertEqual(stored["status"], "COMPLETED_WITH_LIMITATIONS")
@@ -286,14 +303,14 @@ class WorkflowExecutorTests(unittest.TestCase):
         self.db.put_stage_result(run["run_id"], "PARSE_IDEA", parsed_idea().model_dump(mode="json"))
         agents = FakeAgents()
         executor = self.executor(run, agents=agents)
-        self.assertEqual(asyncio.run(executor.execute(run["run_id"])), "COMPLETED")
+        self.assertEqual(self.run_executor(executor, run["run_id"]), "COMPLETED")
         self.assertEqual(agents.parse_calls, 0)
 
     def test_critical_audit_exhausts_step_and_never_writes_report(self) -> None:
         run = self.create_run()
         audit = FakeAudit(critical=True)
         executor = self.executor(run, audit=audit)
-        self.assertEqual(asyncio.run(executor.execute(run["run_id"])), "FAILED")
+        self.assertEqual(self.run_executor(executor, run["run_id"]), "FAILED")
         self.assertEqual(audit.calls, 2)
         self.assertFalse(self.store.paths(self.case["case_id"], run["run_id"]).manifest.exists())
 
@@ -302,9 +319,32 @@ class WorkflowExecutorTests(unittest.TestCase):
         executor = self.executor(
             run, reporting=CorruptReporting(self.db, self.store)
         )
-        self.assertEqual(asyncio.run(executor.execute(run["run_id"])), "FAILED")
+        self.assertEqual(self.run_executor(executor, run["run_id"]), "FAILED")
         stored = self.db.get_run(run["run_id"])
         self.assertEqual(stored["error_code"], "COMPLETION_GATE_FAILED")
+
+    def test_graph_has_fixed_nodes_and_checkpoint_never_contains_runtime_secret(self) -> None:
+        run = self.create_run()
+        executor = self.executor(run)
+        secret = "sentinel-runtime-secret-must-not-be-persisted"
+
+        async def scenario():
+            try:
+                graph = await executor.graph._compiled_graph()
+                nodes = set(graph.nodes)
+                status = await executor.execute(run["run_id"])
+                return status, nodes
+            finally:
+                await executor.aclose()
+
+        with runtime_model_config(
+            RuntimeModelConfig("https://runtime.test/v1", secret, "fixture-model")
+        ):
+            status, nodes = asyncio.run(scenario())
+        self.assertEqual(status, "COMPLETED")
+        self.assertTrue({step.value for step in WORKFLOW_STEPS}.issubset(nodes))
+        self.assertTrue(self.graph_db.is_file())
+        self.assertNotIn(secret.encode(), self.graph_db.read_bytes())
 
 
 if __name__ == "__main__":

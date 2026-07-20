@@ -23,6 +23,7 @@
   },
   "storage": {
     "database": "data/aifpatent/aifpatent.db",
+    "langgraph_database": "data/langgraph/checkpoints.db",
     "runs_dir": "workspace/idea-runs",
     "uploads_dir": "workspace/uploads",
     "cache_dir": "workspace/cache",

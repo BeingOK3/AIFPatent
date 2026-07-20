@@ -135,7 +135,7 @@ workspace/cache/           1 GiB FIFO 可重建缓存（Git 忽略）
 docs/                      技术设计与只追加开发日志
 ```
 
-完整设计见 `docs/idea-rebuild-technical-design.md`，开发与测试证据见 `docs/development-log.md`。
+当前 LangGraph/LangChain 架构见 `docs/aifpatent-architecture.md`，迁移计划见 `docs/migration-plan.md`，开发与测试证据见 `docs/development-log.md`。`docs/idea-rebuild-technical-design.md` 作为迁移前领域设计背景保留。
 
 ## License
 

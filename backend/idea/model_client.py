@@ -12,6 +12,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
+import openai
+from langchain_openai import ChatOpenAI
 from pydantic import ValidationError
 
 from .agent_schemas import AgentModel, agent_json_schema, validate_agent_output
@@ -144,7 +146,7 @@ class StructuredModelClient:
         transport: ModelTransport | None = None,
     ):
         self.settings = settings
-        self.transport = transport or self._http_transport
+        self.transport = transport or self._langchain_transport
 
     async def complete(
         self,
@@ -276,32 +278,82 @@ class StructuredModelClient:
             "Content-Type": "application/json",
         }
 
-    async def _http_transport(
+    async def _langchain_transport(
         self, payload: dict[str, Any], headers: dict[str, str]
     ) -> dict[str, Any]:
         try:
-            return await self._post(payload, headers, trust_env=True)
-        except (ImportError, httpx.ProxyError, httpx.ConnectError):
-            return await self._post(payload, headers, trust_env=False)
+            return await self._langchain_post(payload, trust_env=True)
+        except (ImportError, httpx.ProxyError, httpx.ConnectError, openai.APIConnectionError):
+            return await self._langchain_post(payload, trust_env=False)
 
-    async def _post(
-        self, payload: dict[str, Any], headers: dict[str, str], *, trust_env: bool
+    async def _langchain_post(
+        self, payload: dict[str, Any], *, trust_env: bool
     ) -> dict[str, Any]:
-        url = self.base_url() + "/chat/completions"
+        extra_body = None
+        if "thinking" in payload:
+            extra_body = {"thinking": payload["thinking"]}
         async with httpx.AsyncClient(
             timeout=self.settings.timeout_seconds,
             trust_env=trust_env,
             follow_redirects=True,
-        ) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-        try:
-            value = response.json()
-        except json.JSONDecodeError as exc:
-            raise ModelClientError("model response is not JSON") from exc
-        if not isinstance(value, dict):
-            raise ModelClientError("model response root is not an object")
-        return value
+        ) as async_client:
+            with httpx.Client(
+                timeout=self.settings.timeout_seconds,
+                trust_env=trust_env,
+                follow_redirects=True,
+            ) as sync_client:
+                model = ChatOpenAI(
+                    model=self.model_name(),
+                    base_url=self.base_url(),
+                    api_key=self.api_key(),
+                    temperature=self.settings.temperature,
+                    max_completion_tokens=self.settings.max_output_tokens,
+                    timeout=self.settings.timeout_seconds,
+                    max_retries=0,
+                    extra_body=extra_body,
+                    http_client=sync_client,
+                    http_async_client=async_client,
+                    stream_usage=False,
+                )
+                message = await model.ainvoke(
+                    payload["messages"],
+                    response_format=payload["response_format"],
+                )
+
+        content = self._langchain_content(message.content)
+        metadata = message.response_metadata if isinstance(message.response_metadata, dict) else {}
+        token_usage = metadata.get("token_usage")
+        usage = dict(token_usage) if isinstance(token_usage, dict) else {}
+        usage_metadata = message.usage_metadata
+        if isinstance(usage_metadata, dict):
+            mapping = {
+                "input_tokens": "prompt_tokens",
+                "output_tokens": "completion_tokens",
+                "total_tokens": "total_tokens",
+            }
+            for source, target in mapping.items():
+                value = usage_metadata.get(source)
+                if isinstance(value, (int, float)):
+                    usage[target] = int(value)
+        return {
+            "id": message.id or metadata.get("id"),
+            "choices": [{"message": {"content": content}}],
+            "usage": usage,
+        }
+
+    @staticmethod
+    def _langchain_content(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts = []
+            for block in content:
+                if isinstance(block, str):
+                    texts.append(block)
+                elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                    texts.append(block["text"])
+            return "".join(texts)
+        return ""
 
     @staticmethod
     def _content(response: dict[str, Any]) -> str:

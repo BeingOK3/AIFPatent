@@ -5,7 +5,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+from langchain_core.messages import AIMessage
 
 from idea.config import load_config
 from idea.model_client import (
@@ -233,6 +235,40 @@ class StructuredModelClientTests(unittest.TestCase):
         ):
             payload = client._payload([])
         self.assertNotIn("thinking", payload)
+
+    def test_default_transport_uses_langchain_chat_model_and_preserves_usage(self) -> None:
+        client = StructuredModelClient(self.settings)
+        message = AIMessage(
+            content=json.dumps(valid_parser_output()),
+            id="langchain-response",
+            usage_metadata={
+                "input_tokens": 12,
+                "output_tokens": 34,
+                "total_tokens": 46,
+            },
+        )
+
+        async def scenario():
+            with runtime_model_config(
+                RuntimeModelConfig(
+                    "https://ark.cn-beijing.volces.com/api/coding/v3",
+                    "ephemeral-test-token",
+                    "kimi-k2.6",
+                )
+            ):
+                return await client._langchain_post(client._payload([]), trust_env=False)
+
+        with patch("idea.model_client.ChatOpenAI") as chat:
+            chat.return_value.ainvoke = AsyncMock(return_value=message)
+            response = asyncio.run(scenario())
+
+        self.assertEqual(response["id"], "langchain-response")
+        self.assertEqual(response["usage"]["prompt_tokens"], 12)
+        self.assertEqual(response["usage"]["completion_tokens"], 34)
+        arguments = chat.call_args.kwargs
+        self.assertEqual(arguments["model"], "kimi-k2.6")
+        self.assertEqual(arguments["extra_body"], {"thinking": {"type": "disabled"}})
+        self.assertEqual(arguments["max_retries"], 0)
 
 
 if __name__ == "__main__":

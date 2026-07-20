@@ -17,6 +17,7 @@ class FrontendContractTests(unittest.TestCase):
         for legacy in ("5 大专利模块", "业界专利分析", "PCT申请评审", "侵权挖掘"):
             self.assertNotIn(legacy, self.html)
         self.assertNotIn('"/api/run"', self.javascript)
+        self.assertIn("langgraph_node_started", self.javascript)
 
     def test_frontend_calls_durable_idea_history_progress_and_report_apis(self) -> None:
         for fragment in (

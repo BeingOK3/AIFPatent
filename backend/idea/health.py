@@ -36,6 +36,7 @@ class HealthService:
         started = time.monotonic()
         database = self._check_database()
         cache = self._check_cache()
+        langgraph = self._check_langgraph()
         model = self._check_model_auth()
         exa = self._check_exa_config()
         google = await self._timed_google_probe()
@@ -46,7 +47,7 @@ class HealthService:
             "detail": "recovery loop is ready" if recovery_ready else "workflow not connected yet",
         }
         provider_available = exa["ok"] or google["ok"] or self.config.search.providers.local_cache.enabled
-        core_ok = database["ok"] and cache["ok"] and model["ok"]
+        core_ok = database["ok"] and cache["ok"] and langgraph["ok"] and model["ok"]
         all_online = exa["ok"] and google["ok"]
         status = "ok" if core_ok and all_online and recovery_ready else "degraded"
         if not core_ok or not provider_available:
@@ -63,6 +64,7 @@ class HealthService:
                     "source": str(self.config.source_path),
                 },
                 "database": database,
+                "langgraph_checkpointer": langgraph,
                 "model": model,
                 "exa_mcp": exa,
                 "google_patents_local": google,
@@ -94,6 +96,22 @@ class HealthService:
                 "path": str(self.cache.root),
                 "max_bytes": self.cache.max_bytes,
                 **stats,
+            }
+        except Exception as exc:
+            return {"ok": False, "status": "error", "detail": type(exc).__name__}
+
+    def _check_langgraph(self) -> dict:
+        path = self.config.storage.langgraph_database
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, name = tempfile.mkstemp(prefix=".health-", dir=path.parent)
+            os.close(descriptor)
+            Path(name).unlink()
+            return {
+                "ok": True,
+                "status": "ready",
+                "path": str(path),
+                "thread_key": "run_id",
             }
         except Exception as exc:
             return {"ok": False, "status": "error", "detail": type(exc).__name__}

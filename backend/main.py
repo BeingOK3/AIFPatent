@@ -70,6 +70,11 @@ async def resume_idea_runs():
             logger.info("标记需要重新输入临时 API Token 的 IDEA Runs: %s", interrupted)
 
 
+@app.on_event("shutdown")
+async def close_idea_runtime():
+    await IDEA_RUNTIME.executor.aclose()
+
+
 def _safe_name(name: str) -> str:
     """Strip directory components to prevent path traversal."""
     return Path(name).name
