@@ -2,15 +2,15 @@
 
 AIFPatent 是从 AI4Patent 当前工作树独立孵化的新项目。它拥有全新的 Git 历史和远程仓库，目标是在保留专利证据、审计、不可变 Run 与 BYOK 安全语义的前提下，将执行编排迁移到 LangGraph，并使用 LangChain 统一模型结构化调用。
 
-当前仓库不继承原项目的 `.git`、运行数据、缓存、日志或凭证。迁移过程和每个里程碑的验证证据记录在 `docs/development-log.md` 与 `docs/commit-ledger.md`。
+当前仓库不继承原项目的 `.git`、运行数据、缓存、日志或凭证。已完成的迁移记录和核心开发历史保存在 `development/core/`，不与当前产品文档混合。
 
 AIFPatent 当前只对外启用“专利 IDEA 评估”。系统把检索、全文核验、新颖性、创造性、价值分析、审计和报告固化为后端 Workflow；CLI 只负责提交任务、等待持久终态和读取权威报告，不能自行跳步或模拟工具结果。
 
 ## 当前能力
 
 - 固定 11 步 Workflow，每一步都有 attempt、状态、错误码和 write-once 检查点。
-- 本地 Google Patents 与 EXA MCP 并行检索，结果独立留痕、归一化、合并去重；单路故障可降级。
-- 先基于标题/摘要和中英双语概念组筛选，再对相关候选读取全文；深读下限固定为 10 篇。
+- Google Patents 与 EXA MCP 在同轮统一调度，结果独立留痕、归一化、合并去重；EXA 可并发，Google 实际网络请求全局串行；单路故障可降级。
+- 先基于标题/摘要和中英双语概念组筛选，再对相关候选读取全文；所有模式的深读下限不得低于 10 篇，deep 默认下限为 20 篇。
 - 新颖性遵守单篇文献原则，可直接输出“具备新颖性”，同时给出置信度、最接近文献、缺失特征、检索范围和局限。
 - 创造性、价值、模拟审查意见和证据审计均使用严格 JSON Schema；模型不能伪造 evidence ID。
 - 价值维度使用 1–5 分制；面向用户的判断文字统一为中文，报告中的专利公开号可直接打开原文。
@@ -99,7 +99,7 @@ CLI 只有在 Run 到达成功终态后才返回报告；失败、取消、健�
 - `FAILED`：步骤重试耗尽或完成门禁失败，不会生成伪成功报告。
 - `CANCELLED`：用户取消，保留已产生的审计记录。
 
-本地 Google Patents 不需要单独服务，但仍依赖当前主机访问 `patents.google.com`；“本地”指工具由本项目实现，并不等于离线镜像。EXA MCP 是独立备路。两路都不可用时检索会失败，模型记忆不能替代真实检索。FIFO 缓存可复用已经成功抓取的数据，但不是完整专利数据库。
+本地 Google Patents 不需要单独服务，但仍依赖当前主机访问 `patents.google.com`；“本地”指工具由本项目实现，并不等于离线镜像。EXA MCP 是独立的调用备路，但当前同样定向 Google Patents 页面，不代表独立专利数据库。两路都不可用时检索会失败，模型记忆不能替代真实检索。FIFO 缓存可复用已经成功抓取的数据，但不是完整专利数据库。
 
 健康检查：
 
@@ -132,10 +132,12 @@ data/langgraph/            LangGraph 检查点（Git 忽略）
 workspace/idea-runs/       不可自动删除的 Run 输入与报告（Git 忽略）
 workspace/debug/idea-runs/  逐 Run JSONL 调试日志（Git 忽略，不记录 API Key）
 workspace/cache/           1 GiB FIFO 可重建缓存（Git 忽略）
-docs/                      技术设计与只追加开发日志
+docs/                      与当前实现一致的产品文档
+development/core/          核心系统开发与迁移历史
+development/followup-rag/  追问、耐久语料和混合 RAG 后续设计
 ```
 
-当前 LangGraph/LangChain 架构见 `docs/aifpatent-architecture.md`，迁移计划见 `docs/migration-plan.md`，开发与测试证据见 `docs/development-log.md`。`docs/idea-rebuild-technical-design.md` 作为迁移前领域设计背景保留。
+当前已实现架构见 `docs/aifpatent-architecture.md`。核心系统历史位于 `development/core/`；评审后追问、耐久全文语料和混合 RAG 属于独立后续开发域，位于 `development/followup-rag/`。
 
 ## License
 

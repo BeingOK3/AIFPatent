@@ -39,11 +39,12 @@ class DatabaseTests(unittest.TestCase):
             "run_documents", "idea_features", "evidence", "feature_mappings",
             "novelty_results", "inventive_routes", "value_results", "audit_results",
             "reports", "artifacts", "cache_entries", "deletion_events", "stage_results",
+            "provider_circuit_breakers",
         }
         self.assertTrue(expected.issubset(self.db.table_names()))
         with self.db.connect() as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-        self.assertEqual(version, 2)
+        self.assertEqual(version, 3)
 
     def test_stage_results_are_hashed_write_once_checkpoints(self) -> None:
         case = self.db.create_case("checkpoint")

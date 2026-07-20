@@ -170,7 +170,7 @@ class ProviderRunner:
                 "search",
                 query.query_id,
                 ProviderStatus.ERROR,
-                type(exc).__name__,
+                getattr(exc, "error_code", type(exc).__name__),
                 str(exc),
                 started,
             )
@@ -223,7 +223,7 @@ class ProviderRunner:
                 "fetch",
                 request.request_id,
                 ProviderStatus.ERROR,
-                type(exc).__name__,
+                getattr(exc, "error_code", type(exc).__name__),
                 str(exc),
                 started,
             )

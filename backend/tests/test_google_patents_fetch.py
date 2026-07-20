@@ -24,7 +24,14 @@ class GooglePatentsFetchTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.settings = load_config().search.providers.google_patents_local.model_copy(
-            update={"min_request_interval_seconds": 0, "max_attempts": 1}
+            update={
+                "min_request_interval_seconds": 0,
+                "search_interval_min_seconds": 0,
+                "search_interval_max_seconds": 0,
+                "document_interval_min_seconds": 0,
+                "document_interval_max_seconds": 0,
+                "max_attempts": 1,
+            }
         )
         self.calls: list[str] = []
 

@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
+import threading
 import time
+import weakref
 from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from html import unescape
 from html.parser import HTMLParser
 from urllib.parse import urlencode, urljoin, urlparse
@@ -18,6 +23,38 @@ from .base import FetchRequest, FetchedDocument, SearchHit, SearchProvider, Sear
 
 
 HttpGetter = Callable[[str], Awaitable[bytes]]
+
+
+class GooglePatentsRequestError(RuntimeError):
+    def __init__(self, error_code: str, message: str):
+        super().__init__(message)
+        self.error_code = error_code
+
+
+@dataclass
+class _DomainRequestGate:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    last_request_at: float = 0.0
+    blocked_until_ms: int = 0
+    blocked_reason: str = ""
+    blocked_error_code: str = ""
+
+
+_GATE_REGISTRY: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_GATE_REGISTRY_LOCK = threading.Lock()
+
+
+def _shared_domain_gate(base_url: str) -> _DomainRequestGate:
+    loop = asyncio.get_running_loop()
+    parsed = urlparse(base_url)
+    origin = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    with _GATE_REGISTRY_LOCK:
+        gates = _GATE_REGISTRY.setdefault(loop, {})
+        gate = gates.get(origin)
+        if gate is None:
+            gate = _DomainRequestGate()
+            gates[origin] = gate
+        return gate
 
 
 def _classes(attrs: dict[str, str | None]) -> set[str]:
@@ -374,8 +411,6 @@ class GooglePatentsProvider(SearchProvider):
         self.settings = settings
         self.cache = cache
         self.http_getter = http_getter
-        self._rate_lock = asyncio.Lock()
-        self._last_request_at = 0.0
 
     def build_search_url(self, query: SearchQuery) -> str:
         parameters = {
@@ -452,33 +487,53 @@ class GooglePatentsProvider(SearchProvider):
             except KeyError:
                 pass
 
+        gate = _shared_domain_gate(str(self.settings.base_url))
         last_error: Exception | None = None
         for attempt in range(1, self.settings.max_attempts + 1):
             try:
-                await self._wait_for_rate_limit()
-                if self.http_getter is not None:
-                    content = await self.http_getter(url)
-                else:
-                    content = await self._http_get_with_proxy_fallback(url)
+                async with gate.lock:
+                    self._raise_if_circuit_open(gate)
+                    await self._wait_for_rate_limit(gate, category=category)
+                    if self.http_getter is not None:
+                        content = await self.http_getter(url)
+                    else:
+                        content = await self._http_get_with_proxy_fallback(url, gate=gate)
                 if self.cache is not None:
                     self.cache.put_bytes(cache_key, category, content)
                 return content
             except Exception as exc:
                 last_error = exc
-                if attempt < self.settings.max_attempts:
-                    await asyncio.sleep(min(2 ** (attempt - 1), 4))
+                attempt_limit = self._attempt_limit(exc)
+                if attempt >= min(self.settings.max_attempts, attempt_limit):
+                    if attempt_limit > 1:
+                        self._open_circuit(
+                            gate,
+                            error_code="GOOGLE_PATENTS_TEMPORARILY_UNAVAILABLE",
+                            reason=type(exc).__name__,
+                            cooldown_seconds=(
+                                self.settings.transient_failure_cooldown_seconds
+                            ),
+                        )
+                    raise
+                await asyncio.sleep(self._retry_delay(attempt))
         assert last_error is not None
         raise last_error
 
-    async def _http_get_with_proxy_fallback(self, url: str) -> bytes:
+    async def _http_get_with_proxy_fallback(
+        self, url: str, *, gate: _DomainRequestGate
+    ) -> bytes:
         try:
-            return await self._http_get(url, trust_env=self.settings.trust_environment_proxy)
+            return await self._http_get(
+                url, trust_env=self.settings.trust_environment_proxy, gate=gate
+            )
         except (ImportError, httpx.ProxyError, httpx.ConnectError):
             if not self.settings.fallback_to_direct or not self.settings.trust_environment_proxy:
                 raise
-            return await self._http_get(url, trust_env=False)
+            return await self._http_get(url, trust_env=False, gate=gate)
 
-    async def _http_get(self, url: str, *, trust_env: bool) -> bytes:
+    async def _http_get(
+        self, url: str, *, trust_env: bool, gate: _DomainRequestGate
+    ) -> bytes:
         async with httpx.AsyncClient(
             timeout=self.settings.timeout_seconds,
             headers={"User-Agent": self.settings.user_agent},
@@ -486,13 +541,160 @@ class GooglePatentsProvider(SearchProvider):
             trust_env=trust_env,
         ) as client:
             response = await client.get(url)
+            content_type = (response.headers.get("content-type") or "").lower()
+            sample = response.content[:4096].lower()
+            if response.status_code == 429:
+                cooldown = self._retry_after_seconds(response.headers.get("retry-after"))
+                self._open_circuit(
+                    gate,
+                    error_code="GOOGLE_PATENTS_RATE_LIMITED",
+                    reason="HTTP 429",
+                    cooldown_seconds=cooldown,
+                )
+                raise GooglePatentsRequestError(
+                    "GOOGLE_PATENTS_RATE_LIMITED",
+                    "Google Patents rate limit reached; provider circuit opened",
+                )
+            is_block_page = "text/html" in content_type and (
+                b"<title>sorry" in sample or b"unusual traffic" in sample
+            )
+            if is_block_page:
+                cooldown = random.uniform(
+                    self.settings.blocked_cooldown_min_seconds,
+                    self.settings.blocked_cooldown_max_seconds,
+                )
+                self._open_circuit(
+                    gate,
+                    error_code="GOOGLE_PATENTS_BLOCKED",
+                    reason="Google automated-query protection page",
+                    cooldown_seconds=cooldown,
+                )
+                raise GooglePatentsRequestError(
+                    "GOOGLE_PATENTS_BLOCKED",
+                    "Google Patents blocked automated requests; provider circuit opened",
+                )
             response.raise_for_status()
             return response.content
 
-    async def _wait_for_rate_limit(self) -> None:
-        async with self._rate_lock:
-            now = time.monotonic()
-            wait = self.settings.min_request_interval_seconds - (now - self._last_request_at)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._last_request_at = time.monotonic()
+    async def _wait_for_rate_limit(
+        self, gate: _DomainRequestGate, *, category: str
+    ) -> None:
+        if category == "searches":
+            lower = self.settings.search_interval_min_seconds
+            upper = self.settings.search_interval_max_seconds
+        else:
+            lower = self.settings.document_interval_min_seconds
+            upper = self.settings.document_interval_max_seconds
+        lower = max(lower, self.settings.min_request_interval_seconds)
+        upper = max(upper, lower)
+        interval = random.uniform(lower, upper)
+        now = time.monotonic()
+        wait = interval - (now - gate.last_request_at)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        gate.last_request_at = time.monotonic()
+
+    @staticmethod
+    def _attempt_limit(exc: Exception) -> int:
+        if isinstance(exc, GooglePatentsRequestError):
+            return 1
+        if isinstance(
+            exc,
+            (
+                ConnectionError,
+                OSError,
+                httpx.TimeoutException,
+                httpx.TransportError,
+            ),
+        ):
+            return 3
+        if isinstance(exc, httpx.HTTPStatusError):
+            return 2 if 500 <= exc.response.status_code < 600 else 1
+        return 1
+
+    @staticmethod
+    def _retry_delay(attempt: int) -> float:
+        if attempt <= 1:
+            return random.uniform(5, 10)
+        return random.uniform(20, 40)
+
+    def _retry_after_seconds(self, value: str | None) -> float:
+        if value:
+            try:
+                return max(1.0, float(value))
+            except ValueError:
+                try:
+                    retry_at = parsedate_to_datetime(value)
+                    if retry_at.tzinfo is None:
+                        retry_at = retry_at.replace(tzinfo=timezone.utc)
+                    return max(
+                        1.0,
+                        (retry_at - datetime.now(timezone.utc)).total_seconds(),
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    pass
+        return float(self.settings.rate_limited_cooldown_seconds)
+
+    def _raise_if_circuit_open(self, gate: _DomainRequestGate) -> None:
+        timestamp = int(time.time() * 1000)
+        database = self.cache.database if self.cache is not None else None
+        if database is not None:
+            with database.connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT reason,error_code,blocked_until
+                    FROM provider_circuit_breakers WHERE provider = ?
+                    """,
+                    (self.name,),
+                ).fetchone()
+                if row is not None and row["blocked_until"] <= timestamp:
+                    connection.execute(
+                        "DELETE FROM provider_circuit_breakers WHERE provider = ?",
+                        (self.name,),
+                    )
+                    row = None
+                if row is not None:
+                    gate.blocked_until_ms = row["blocked_until"]
+                    gate.blocked_reason = row["reason"]
+                    gate.blocked_error_code = row["error_code"]
+        if gate.blocked_until_ms <= timestamp:
+            gate.blocked_until_ms = 0
+            gate.blocked_reason = ""
+            gate.blocked_error_code = ""
+            return
+        remaining = max(1, (gate.blocked_until_ms - timestamp + 999) // 1000)
+        raise GooglePatentsRequestError(
+            gate.blocked_error_code or "GOOGLE_PATENTS_CIRCUIT_OPEN",
+            f"Google Patents provider circuit is open for {remaining} more seconds",
+        )
+
+    def _open_circuit(
+        self,
+        gate: _DomainRequestGate,
+        *,
+        error_code: str,
+        reason: str,
+        cooldown_seconds: float,
+    ) -> None:
+        timestamp = int(time.time() * 1000)
+        blocked_until = timestamp + max(1, round(cooldown_seconds * 1000))
+        gate.blocked_until_ms = blocked_until
+        gate.blocked_reason = reason
+        gate.blocked_error_code = error_code
+        if self.cache is None:
+            return
+        with self.cache.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO provider_circuit_breakers(
+                    provider,state,reason,error_code,blocked_until,updated_at
+                ) VALUES(?,?,?,?,?,?)
+                ON CONFLICT(provider) DO UPDATE SET
+                    state=excluded.state,
+                    reason=excluded.reason,
+                    error_code=excluded.error_code,
+                    blocked_until=excluded.blocked_until,
+                    updated_at=excluded.updated_at
+                """,
+                (self.name, "OPEN", reason, error_code, blocked_until, timestamp),
+            )

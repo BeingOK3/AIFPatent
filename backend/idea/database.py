@@ -278,6 +278,15 @@ CREATE TABLE IF NOT EXISTS cache_entries (
 );
 CREATE INDEX IF NOT EXISTS idx_cache_fifo ON cache_entries(sequence);
 
+CREATE TABLE IF NOT EXISTS provider_circuit_breakers (
+    provider TEXT PRIMARY KEY,
+    state TEXT NOT NULL CHECK(state IN ('OPEN')),
+    reason TEXT NOT NULL,
+    error_code TEXT NOT NULL,
+    blocked_until INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS deletion_events (
     event_id TEXT PRIMARY KEY,
     entity_type TEXT NOT NULL,
@@ -326,7 +335,7 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA_SQL)
-            connection.execute("PRAGMA user_version = 2")
+            connection.execute("PRAGMA user_version = 3")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

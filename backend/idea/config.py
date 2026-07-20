@@ -99,9 +99,27 @@ class ExaSettings(ProviderSettings):
 class GooglePatentsSettings(ProviderSettings):
     base_url: HttpUrl
     min_request_interval_seconds: float = Field(ge=0)
+    search_interval_min_seconds: float = Field(ge=0)
+    search_interval_max_seconds: float = Field(ge=0)
+    document_interval_min_seconds: float = Field(ge=0)
+    document_interval_max_seconds: float = Field(ge=0)
+    transient_failure_cooldown_seconds: int = Field(ge=1)
+    rate_limited_cooldown_seconds: int = Field(ge=1)
+    blocked_cooldown_min_seconds: int = Field(ge=1)
+    blocked_cooldown_max_seconds: int = Field(ge=1)
     user_agent: str = Field(min_length=1)
     trust_environment_proxy: bool
     fallback_to_direct: bool
+
+    @model_validator(mode="after")
+    def validate_google_patents_intervals(self) -> "GooglePatentsSettings":
+        if self.search_interval_max_seconds < self.search_interval_min_seconds:
+            raise ValueError("search interval maximum must be >= minimum")
+        if self.document_interval_max_seconds < self.document_interval_min_seconds:
+            raise ValueError("document interval maximum must be >= minimum")
+        if self.blocked_cooldown_max_seconds < self.blocked_cooldown_min_seconds:
+            raise ValueError("blocked cooldown maximum must be >= minimum")
+        return self
 
 
 class LocalCacheProviderSettings(StrictModel):

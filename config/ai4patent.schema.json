@@ -167,13 +167,21 @@
         "google_patents_local": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "timeout_seconds", "max_attempts", "base_url", "min_request_interval_seconds", "user_agent", "trust_environment_proxy", "fallback_to_direct"],
+          "required": ["enabled", "timeout_seconds", "max_attempts", "base_url", "min_request_interval_seconds", "search_interval_min_seconds", "search_interval_max_seconds", "document_interval_min_seconds", "document_interval_max_seconds", "transient_failure_cooldown_seconds", "rate_limited_cooldown_seconds", "blocked_cooldown_min_seconds", "blocked_cooldown_max_seconds", "user_agent", "trust_environment_proxy", "fallback_to_direct"],
           "properties": {
             "enabled": {"type": "boolean"},
             "timeout_seconds": {"type": "integer", "minimum": 1},
             "max_attempts": {"type": "integer", "minimum": 1},
             "base_url": {"type": "string", "format": "uri"},
             "min_request_interval_seconds": {"type": "number", "minimum": 0},
+            "search_interval_min_seconds": {"type": "number", "minimum": 0},
+            "search_interval_max_seconds": {"type": "number", "minimum": 0},
+            "document_interval_min_seconds": {"type": "number", "minimum": 0},
+            "document_interval_max_seconds": {"type": "number", "minimum": 0},
+            "transient_failure_cooldown_seconds": {"type": "integer", "minimum": 1},
+            "rate_limited_cooldown_seconds": {"type": "integer", "minimum": 1},
+            "blocked_cooldown_min_seconds": {"type": "integer", "minimum": 1},
+            "blocked_cooldown_max_seconds": {"type": "integer", "minimum": 1},
             "user_agent": {"type": "string", "minLength": 1},
             "trust_environment_proxy": {"type": "boolean"},
             "fallback_to_direct": {"type": "boolean"}
