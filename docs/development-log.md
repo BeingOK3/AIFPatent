@@ -536,3 +536,10 @@
 - Provider 降级：首次 Run 的 Google Patents 搜索与全文抓取成功；短时间内重跑时 Google `/xhr/query` 返回 HTTP 503，配置的三次 Provider 重试耗尽后由 EXA 16 次成功调用支撑完整报告，终态按设计标为 `COMPLETED_WITH_LIMITATIONS`，未伪装成全 Provider 正常。
 - 清理：真实测试 Case 含失败 Run 和修复后成功 Run，共 2 条，在验证完成后通过官方删除 API 清理；脱敏 JSONL 仍按 Git 忽略策略留在本机用于本次调试证据。
 - 品牌与传输：首页、Schema、Provider User-Agent/MCP Client 名称统一为 AIFPatent；LangChain 自定义 HTTP 客户端显式关闭额外 socket option 注入，避免代理行为警告。
+
+## 2026-07-20 — AIF-DELIVERY-001
+
+- 独立仓库：`BeingOK3/AIFPatent`，`main` 保存孵化基线，`feat/langgraph-migration` 保存完整迁移提交链。
+- 提交链：`ae2331c` 独立基线、`0a32493` 移除 OpenCode、`20587d9` LangGraph/LangChain 核心迁移、`5e44e1f` 真实 E2E 稳定性修复。
+- 最终离线验证：184 项测试通过；Python、JavaScript、Shell、依赖一致性、diff 格式和敏感凭证模式扫描全部通过。
+- 原项目隔离：迁移前后 AI4Patent HEAD 均为 `8a2795819cbed647c36e5d2cde49eb6730627228`，工作树状态哈希均为 `5bdb5399664ed99835633e56cab71e8066684248b9787787d104f2b7f804be04`，源码内容哈希均为 `9ee3381d78e25706142054e4b9ffc87cbfceb366d8f2f5a8ab51b04780f6bb4e`。

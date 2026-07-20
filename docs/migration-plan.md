@@ -26,7 +26,7 @@
 6. [x] 接入 LangChain BYOK 模型工厂并保留厂商兼容策略。
 7. [x] 保持 Case/Run API、SSE、调试日志和前端兼容。
 8. [x] 完成离线、并发、恢复、降级、真实模型和 Manifest 回归。
-9. 推送独立 GitHub 仓库并复验原项目零变化。
+9. [x] 推送独立 GitHub 仓库并复验原项目零变化。
 
 ## 4. 完成门槛
 
@@ -37,3 +37,12 @@
 - 现有单元/API/前端测试迁移后通过，并新增 LangGraph 拓扑与恢复测试。
 - 至少完成 quick、standard、并发、Provider 降级和服务恢复真实回归。
 - 报告继续满足中文判断、1–5 分评分、可点击专利链接和 Manifest 哈希校验。
+
+## 5. 交付证据
+
+- 独立远端：`https://github.com/BeingOK3/AIFPatent`
+- 稳定分支：`main`；迁移分支：`feat/langgraph-migration`
+- 原 AI4Patent HEAD：`8a2795819cbed647c36e5d2cde49eb6730627228`
+- 原 AI4Patent 工作树状态哈希：`5bdb5399664ed99835633e56cab71e8066684248b9787787d104f2b7f804be04`
+- 原 AI4Patent 源码内容哈希：`9ee3381d78e25706142054e4b9ffc87cbfceb366d8f2f5a8ab51b04780f6bb4e`
+- 三项值在迁移前后完全一致，原项目的用户未提交修改没有被暂存、覆盖或提交。
