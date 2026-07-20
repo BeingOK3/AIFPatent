@@ -40,8 +40,6 @@ class ModelSettings(StrictModel):
     default: str = Field(min_length=1)
     base_url: HttpUrl
     api_key_env: str = Field(min_length=1)
-    auth_file: Path
-    auth_provider: str = Field(min_length=1)
     timeout_seconds: int = Field(ge=1)
     max_output_tokens: int = Field(ge=256)
     structured_output_retries: int = Field(ge=0, le=10)
@@ -213,5 +211,4 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             "document_store_dir": _absolute(config.storage.document_store_dir, root),
         }
     )
-    model = config.model.model_copy(update={"auth_file": _absolute(config.model.auth_file, root)})
-    return config.model_copy(update={"storage": storage, "model": model})
+    return config.model_copy(update={"storage": storage})

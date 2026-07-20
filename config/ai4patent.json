@@ -15,16 +15,14 @@
     "provider": "deepseek",
     "default": "deepseek-v4-flash",
     "base_url": "https://api.deepseek.com",
-    "api_key_env": "DEEPSEEK_API_KEY",
-    "auth_file": "data/opencode/auth.json",
-    "auth_provider": "agent-plan",
+    "api_key_env": "LLM_API_KEY",
     "timeout_seconds": 180,
     "max_output_tokens": 8192,
     "structured_output_retries": 2,
     "temperature": 0.1
   },
   "storage": {
-    "database": "data/ai4patent/ai4patent.db",
+    "database": "data/aifpatent/aifpatent.db",
     "runs_dir": "workspace/idea-runs",
     "uploads_dir": "workspace/uploads",
     "cache_dir": "workspace/cache",

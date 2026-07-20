@@ -4,7 +4,7 @@ AIFPatent 是从 AI4Patent 当前工作树独立孵化的新项目。它拥有�
 
 当前仓库不继承原项目的 `.git`、运行数据、缓存、日志或凭证。迁移过程和每个里程碑的验证证据记录在 `docs/development-log.md` 与 `docs/commit-ledger.md`。
 
-AI4Patent 当前只对外启用“专利 IDEA 评估”。系统把检索、全文核验、新颖性、创造性、价值分析、审计和报告固化为后端 Workflow；Skill 只负责提交任务、等待持久终态和读取权威报告，不能自行跳步或模拟工具结果。
+AIFPatent 当前只对外启用“专利 IDEA 评估”。系统把检索、全文核验、新颖性、创造性、价值分析、审计和报告固化为后端 Workflow；CLI 只负责提交任务、等待持久终态和读取权威报告，不能自行跳步或模拟工具结果。
 
 ## 当前能力
 
@@ -23,8 +23,8 @@ AI4Patent 当前只对外启用“专利 IDEA 评估”。系统把检索、全�
 环境要求：Linux、Python 3.10+、`bash`、`curl`，以及可访问模型 API 和至少一个专利检索 Provider 的网络。
 
 ```bash
-git clone git@github.com:BeingOK3/AI4Patent.git
-cd AI4Patent
+git clone git@github.com:BeingOK3/AIFPatent.git
+cd AIFPatent
 ./install.sh
 ```
 
@@ -67,19 +67,17 @@ cd AI4Patent
 
 系统会根据 IDEA 的宽窄在上下限之间确定目标。用户可以修改上限，但深读下限不能低于 10，候选上限不能小于深读上限。
 
-## Skill/CLI
-
-OpenCode 中的当前入口为 `config/opencode/skills/patent-idea-review/`。旧 `patent-IDEA-analyzer` 已归档，不应加载执行。
+## CLI
 
 服务启动后可直接运行确定性 CLI：
 
 CLI 不接受明文 `--api-key` 参数；启动 Run 时只从当前进程的环境变量读取 Token：
 
 ```bash
-export DEEPSEEK_API_KEY='your-key'
-config/opencode/skills/patent-idea-review/scripts/idea_workflow.py health
+export LLM_API_KEY='your-key'
+tools/idea_workflow.py health
 
-config/opencode/skills/patent-idea-review/scripts/idea_workflow.py run \
+tools/idea_workflow.py run \
   --model-base-url https://api.deepseek.com \
   --model deepseek-v4-flash \
   --idea '一种具体的技术方案……' \
@@ -116,8 +114,7 @@ curl http://127.0.0.1:8001/api/idea/runs/RUN_ID/debug
 
 ```bash
 PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s backend/tests -q
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" \
-  config/opencode/skills/patent-idea-review
+python3 -m compileall -q backend tools
 ```
 
 测试使用 fixture 或 fake transport 时不依赖外网；真实 E2E 需要模型密钥和检索网络。
@@ -129,9 +126,9 @@ backend/idea/              Workflow、Provider、Agent Schema、审计和报告
 backend/tests/             离线单元/合约/集成测试
 frontend/                  IDEA 单页工作区
 config/ai4patent.json      唯一系统设置入口（不含密钥）
-config/opencode/AGENTS.md  OpenCode 强制路由
-config/opencode/skills/    薄 IDEA Skill 与归档 Skill
-data/ai4patent/            SQLite 运行数据（Git 忽略）
+tools/idea_workflow.py     确定性 HTTP CLI（不含模型编排）
+data/aifpatent/            SQLite 业务数据（Git 忽略）
+data/langgraph/            LangGraph 检查点（Git 忽略）
 workspace/idea-runs/       不可自动删除的 Run 输入与报告（Git 忽略）
 workspace/debug/idea-runs/  逐 Run JSONL 调试日志（Git 忽略，不记录 API Key）
 workspace/cache/           1 GiB FIFO 可重建缓存（Git 忽略）

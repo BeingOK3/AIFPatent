@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from idea.config import load_config
 from idea.model_client import (
@@ -75,13 +76,14 @@ def value_output(*, chinese: bool):
 class StructuredModelClientTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
-        auth = Path(self.temp.name) / "auth.json"
-        auth.write_text(json.dumps({"agent-plan": {"apiKey": "test-secret"}}), encoding="utf-8")
-        self.settings = load_config().model.model_copy(
-            update={"auth_file": auth, "structured_output_retries": 1}
+        self.settings = load_config().model.model_copy(update={"structured_output_retries": 1})
+        self.environment = patch.dict(
+            "os.environ", {self.settings.api_key_env: "test-secret"}
         )
+        self.environment.start()
 
     def tearDown(self) -> None:
+        self.environment.stop()
         self.temp.cleanup()
 
     def test_valid_response_is_parsed_and_schema_validated(self) -> None:
@@ -95,11 +97,12 @@ class StructuredModelClientTests(unittest.TestCase):
                 "usage": {"prompt_tokens": 10, "completion_tokens": 20},
             }
 
-        result = asyncio.run(
-            StructuredModelClient(self.settings, transport=transport).complete(
-                "patent-idea-parser", system_prompt="Parse the idea.", input_payload={"idea": "cache idea"}
+        with runtime_model_config(RuntimeModelConfig("https://example.test/v1", "test-secret", "test-model")):
+            result = asyncio.run(
+                StructuredModelClient(self.settings, transport=transport).complete(
+                    "patent-idea-parser", system_prompt="Parse the idea.", input_payload={"idea": "cache idea"}
+                )
             )
-        )
         self.assertEqual(result.output.features[0].feature_id, "F1")
         self.assertEqual(result.attempts, 1)
         self.assertEqual(result.usage["completion_tokens"], 20)
@@ -186,9 +189,9 @@ class StructuredModelClientTests(unittest.TestCase):
         self.assertIn("Simplified Chinese", payloads[1]["messages"][-1]["content"])
 
     def test_missing_credential_fails_before_transport(self) -> None:
-        settings = self.settings.model_copy(update={"auth_file": Path(self.temp.name) / "missing.json"})
-        with self.assertRaisesRegex(ModelClientError, "credential"):
-            StructuredModelClient(settings).api_key()
+        with patch.dict("os.environ", {self.settings.api_key_env: ""}):
+            with self.assertRaisesRegex(ModelClientError, "credential"):
+                StructuredModelClient(self.settings).api_key()
 
     def test_runtime_config_overrides_all_model_coordinates_only_inside_context(self) -> None:
         client = StructuredModelClient(self.settings)

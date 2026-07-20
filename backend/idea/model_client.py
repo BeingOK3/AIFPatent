@@ -236,14 +236,7 @@ class StructuredModelClient:
         key = os.environ.get(self.settings.api_key_env, "").strip()
         if key:
             return key
-        try:
-            auth = json.loads(self.settings.auth_file.read_text(encoding="utf-8-sig"))
-            key = str(auth.get(self.settings.auth_provider, {}).get("apiKey") or "").strip()
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ModelClientError("model credential file is missing or invalid") from exc
-        if not key:
-            raise ModelClientError("model credential is not configured")
-        return key
+        raise ModelClientError("runtime model credential is not configured")
 
     def model_name(self) -> str:
         runtime = _RUN_MODEL_CONFIG.get()

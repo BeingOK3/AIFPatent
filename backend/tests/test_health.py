@@ -24,14 +24,9 @@ class HealthServiceTests(unittest.TestCase):
         raw["storage"]["document_store_dir"] = str(root / "cache" / "documents")
         raw["storage"]["runs_dir"] = str(root / "runs")
         raw["storage"]["uploads_dir"] = str(root / "uploads")
-        raw["model"]["auth_file"] = str(root / "auth.json")
         config_path = root / "config.json"
         config_path.write_text(json.dumps(raw), encoding="utf-8")
         self.config = load_config(config_path)
-        self.config.model.auth_file.write_text(
-            json.dumps({self.config.model.auth_provider: {"apiKey": "test-only"}}),
-            encoding="utf-8",
-        )
         self.db = Database(self.config.storage.database)
         self.db.initialize()
         self.cache = CacheStore(
@@ -40,9 +35,6 @@ class HealthServiceTests(unittest.TestCase):
             max_bytes=self.config.storage.cache.max_bytes,
             low_watermark_bytes=self.config.storage.cache.low_watermark_bytes,
         )
-        self.opencode = root / "opencode"
-        self.opencode.write_text("binary", encoding="utf-8")
-        self.opencode.chmod(0o755)
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -55,7 +47,6 @@ class HealthServiceTests(unittest.TestCase):
             self.config,
             self.db,
             self.cache,
-            opencode_bin=self.opencode,
             google_patents_probe=google_probe,
             workflow_recovery_ready=lambda: recovery,
         )
@@ -76,7 +67,7 @@ class HealthServiceTests(unittest.TestCase):
         self.assertTrue(result["components"]["exa_mcp"]["ok"])
         self.assertFalse(result["components"]["google_patents_local"]["ok"])
 
-    def test_idea_health_uses_unified_exa_config_and_does_not_require_opencode(self) -> None:
+    def test_idea_health_uses_unified_exa_config(self) -> None:
         async def google_probe():
             return True, "fixture"
 
@@ -84,18 +75,16 @@ class HealthServiceTests(unittest.TestCase):
             self.config,
             self.db,
             self.cache,
-            opencode_bin=self.root / "missing-opencode",
             google_patents_probe=google_probe,
             workflow_recovery_ready=lambda: True,
         )
         result = asyncio.run(service.check())
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["components"]["opencode"]["status"], "optional")
+        self.assertNotIn("opencode", result["components"])
         self.assertEqual(result["components"]["exa_mcp"]["status"], "configured")
 
     def test_missing_server_credential_waits_for_per_run_token(self) -> None:
-        self.config.model.auth_file.unlink()
         result = asyncio.run(self.service().check())
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], "ok")
@@ -111,7 +100,6 @@ class HealthServiceTests(unittest.TestCase):
     def test_health_never_returns_api_key(self) -> None:
         result = asyncio.run(self.service().check())
         rendered = json.dumps(result)
-        self.assertNotIn("test-only", rendered)
         self.assertNotIn("apiKey", rendered)
 
     def test_google_probe_falls_back_from_broken_proxy_to_direct(self) -> None:
@@ -119,7 +107,6 @@ class HealthServiceTests(unittest.TestCase):
             self.config,
             self.db,
             self.cache,
-            opencode_bin=self.opencode,
             workflow_recovery_ready=lambda: True,
         )
         response = AsyncMock()

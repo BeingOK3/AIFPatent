@@ -11,7 +11,7 @@ if [[ ! -x "$VENV/bin/python" ]]; then
     exit 1
 fi
 
-mkdir -p "$ROOT/logs" "$ROOT/workspace/uploads" "$ROOT/data/opencode"
+mkdir -p "$ROOT/logs" "$ROOT/workspace/uploads" "$ROOT/data/aifpatent"
 READY_URL="http://127.0.0.1:$PORT/openapi.json"
 if curl --noproxy "*" --fail --silent --max-time 2 "$READY_URL" >/dev/null; then
     echo "服务已在运行：http://localhost:$PORT"
@@ -34,8 +34,8 @@ else
     fi
 fi
 
-echo "AI4P 专利工作台已启动：http://localhost:$PORT"
-echo "日志：logs/server.log、logs/ai4p.log"
+echo "AIFPatent 专利工作台已启动：http://localhost:$PORT"
+echo "日志：logs/server.log、logs/aifpatent.log"
 echo "停止：./stop.sh"
 if command -v xdg-open >/dev/null 2>&1; then
     xdg-open "http://localhost:$PORT" >/dev/null 2>&1 &

@@ -503,3 +503,12 @@
 - 隔离：未复制原 `.git`、`config/opencode`、虚拟环境、下载引擎、运行数据库、Case/Run、工作区缓存、日志或认证文件。
 - 新项目：目录为 `/home/bok/code/patent_prototype/AIFPatent`，默认分支为 `main`，远程目标为 `BeingOK3/AIFPatent`。
 - 迁移原则：LangGraph 替换执行编排层，LangChain 提供模型适配；专利领域逻辑、业务 SQLite、Evidence、审计与 Manifest 保持权威。
+
+## 2026-07-20 — AIF-OC-001
+
+- 类型：新项目 OpenCode 运行依赖清理。
+- 删除：`backend/opencode_client.py`、临时 `backend/vk.py`、`/api/run`、`/api/stop`、OpenCode 健康探针、二进制下载安装分支和认证文件回退。
+- 保留：IDEA Case/Run API、SSE、持久步骤、Provider、审计、报告与文件接口；原薄客户端迁为 `tools/idea_workflow.py`，仅通过 HTTP 调用权威 API。
+- 凭证：网页 Run 仍使用临时 Base URL、API Key、Model；CLI 只从显式环境变量读取 Token。服务器不再读取任何认证 JSON 文件。
+- 存储：业务 SQLite 改用 `data/aifpatent/`，为后续 LangGraph 检查点预留 `data/langgraph/`，二者均 Git 忽略。
+- 验证：后端、配置、脚本和 CLI 中无运行时 OpenCode 引用；借用原项目既有 Python 环境执行新项目完整 179 项离线测试，全部通过。

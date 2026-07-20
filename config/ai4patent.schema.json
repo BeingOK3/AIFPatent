@@ -31,14 +31,12 @@
     "model": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "default", "base_url", "api_key_env", "auth_file", "auth_provider", "timeout_seconds", "max_output_tokens", "structured_output_retries", "temperature"],
+      "required": ["provider", "default", "base_url", "api_key_env", "timeout_seconds", "max_output_tokens", "structured_output_retries", "temperature"],
       "properties": {
         "provider": {"type": "string", "minLength": 1},
         "default": {"type": "string", "minLength": 1},
         "base_url": {"type": "string", "format": "uri"},
         "api_key_env": {"type": "string", "minLength": 1},
-        "auth_file": {"type": "string", "minLength": 1},
-        "auth_provider": {"type": "string", "minLength": 1},
         "timeout_seconds": {"type": "integer", "minimum": 1},
         "max_output_tokens": {"type": "integer", "minimum": 256},
         "structured_output_retries": {"type": "integer", "minimum": 0, "maximum": 10},

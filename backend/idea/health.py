@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -10,7 +9,7 @@ from typing import Awaitable, Callable
 import httpx
 
 from .cache import CacheStore
-from .config import AppConfig, PROJECT_ROOT
+from .config import AppConfig
 from .database import Database
 
 
@@ -24,19 +23,12 @@ class HealthService:
         database: Database,
         cache: CacheStore,
         *,
-        opencode_bin: str | Path | None = None,
         google_patents_probe: Probe | None = None,
         workflow_recovery_ready: Callable[[], bool] | None = None,
     ):
         self.config = config
         self.database = database
         self.cache = cache
-        self.opencode_bin = Path(
-            opencode_bin
-            or os.environ.get("OPENCODE_EXE")
-            or shutil.which("opencode")
-            or PROJECT_ROOT / "bin" / "opencode" / "opencode"
-        )
         self.google_patents_probe = google_patents_probe or self._probe_google_patents
         self.workflow_recovery_ready = workflow_recovery_ready or (lambda: False)
 
@@ -44,7 +36,6 @@ class HealthService:
         started = time.monotonic()
         database = self._check_database()
         cache = self._check_cache()
-        opencode = self._check_opencode()
         model = self._check_model_auth()
         exa = self._check_exa_config()
         google = await self._timed_google_probe()
@@ -55,9 +46,6 @@ class HealthService:
             "detail": "recovery loop is ready" if recovery_ready else "workflow not connected yet",
         }
         provider_available = exa["ok"] or google["ok"] or self.config.search.providers.local_cache.enabled
-        # The current IDEA-only Workflow calls its model and retrieval providers
-        # directly. OpenCode remains an optional legacy integration and must not
-        # prevent the IDEA API from accepting a Run.
         core_ok = database["ok"] and cache["ok"] and model["ok"]
         all_online = exa["ok"] and google["ok"]
         status = "ok" if core_ok and all_online and recovery_ready else "degraded"
@@ -75,7 +63,6 @@ class HealthService:
                     "source": str(self.config.source_path),
                 },
                 "database": database,
-                "opencode": opencode,
                 "model": model,
                 "exa_mcp": exa,
                 "google_patents_local": google,
@@ -110,14 +97,6 @@ class HealthService:
             }
         except Exception as exc:
             return {"ok": False, "status": "error", "detail": type(exc).__name__}
-
-    def _check_opencode(self) -> dict:
-        ready = self.opencode_bin.is_file() and os.access(self.opencode_bin, os.X_OK)
-        return {
-            "ok": ready,
-            "status": "ready" if ready else "optional",
-            "path": str(self.opencode_bin),
-        }
 
     def _check_model_auth(self) -> dict:
         return {

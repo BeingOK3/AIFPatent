@@ -1,18 +1,14 @@
-﻿import json
-import shutil
+﻿import shutil
 import logging
-import uuid
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 from idea.api import RunTaskManager, create_idea_router
 from idea.config import load_config
 from idea.health import HealthService
 from idea.runtime import build_runtime
-from opencode_client import run_task, kill_current, kill_task
 
 BASE = Path(__file__).resolve().parent.parent
 FRONTEND = BASE / "frontend"
@@ -27,14 +23,14 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(str(LOG_DIR / "ai4p.log"), encoding="utf-8"),
+        logging.FileHandler(str(LOG_DIR / "aifpatent.log"), encoding="utf-8"),
     ],
 )
-logger = logging.getLogger("ai4p")
+logger = logging.getLogger("aifpatent")
 # Suppress noisy uvicorn access logs (200 OK on every /api/files poll etc.)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
-app = FastAPI(title="AI4P 专利工作台")
+app = FastAPI(title="AIFPatent 专利工作台")
 
 APP_CONFIG = load_config()
 IDEA_RUNTIME = build_runtime(APP_CONFIG)
@@ -72,10 +68,6 @@ async def resume_idea_runs():
         interrupted = IDEA_TASKS.resume_incomplete()
         if interrupted:
             logger.info("标记需要重新输入临时 API Token 的 IDEA Runs: %s", interrupted)
-
-
-def sse(d):
-    return f"data: {json.dumps(d, ensure_ascii=False)}\n\n"
 
 
 def _safe_name(name: str) -> str:
@@ -160,51 +152,6 @@ async def delete_file(name: str):
             logger.info(f"删除文件: {name}")
             return {"deleted": name}
     return JSONResponse({"error": "not found"}, status_code=404)
-
-
-# ===== 任务执行 =====
-class Task(BaseModel):
-    text: str
-    model: str = "agent-plan/glm-5.2"
-    files: list[str] = []
-    session_id: str | None = None
-
-
-@app.post("/api/run")
-async def run(task: Task):
-    task_id = str(uuid.uuid4())
-    async def gen():
-        yield sse({"type": "task_id", "task_id": task_id})
-        try:
-            tag = f"续接session={task.session_id[:16]}" if task.session_id else f"附带文件={task.files}"
-            logger.info(f"任务开始: model={task.model}, {tag}")
-            yield sse({"type": "status", "text": "已提交，agent 工作中..." if not task.session_id else "追问中..."})
-            async for evt in run_task(task.text, task.model, task.files, task.session_id, task_id):
-                et = evt.get("type")
-                if et == "output":
-                    logger.info(f"  [output] {evt['text'][:2000]}")
-                elif et == "log":
-                    raw_t = evt.get("event_type", "?")
-                    part = evt.get("part", {})
-                    logger.info(f"  [{raw_t}] {json.dumps(part, ensure_ascii=False)[:1000]}")
-                elif et == "step":
-                    logger.info("  [step]")
-                yield sse(evt)
-            logger.info("任务完成")
-        except Exception as e:
-            logger.exception(f"任务异常: {e}")
-            yield sse({"type": "error", "error": f"{type(e).__name__}: {e}"})
-    return StreamingResponse(gen(), media_type="text/event-stream")
-
-
-@app.post("/api/stop")
-async def stop(task_id: str | None = None):
-    """Stop a specific task (by task_id) or all running tasks."""
-    if task_id:
-        kill_task(task_id)
-    else:
-        kill_current()
-    return {"ok": True}
 
 
 @app.get("/")

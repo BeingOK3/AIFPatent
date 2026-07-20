@@ -11,10 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
-SCRIPT = Path(
-    "config/opencode/skills/patent-idea-review/scripts/idea_workflow.py"
-).resolve()
-SKILL = SCRIPT.parents[1] / "SKILL.md"
+SCRIPT = Path("tools/idea_workflow.py").resolve()
 
 
 class FixtureHandler(BaseHTTPRequestHandler):
@@ -85,7 +82,7 @@ class SkillWorkflowCliTests(unittest.TestCase):
 
     def run_cli(self, *arguments):
         environment = os.environ.copy()
-        environment["DEEPSEEK_API_KEY"] = "fixture-runtime-token"
+        environment["LLM_API_KEY"] = "fixture-runtime-token"
         return subprocess.run(
             [sys.executable, str(SCRIPT), *arguments, "--base-url", self.base_url],
             text=True,
@@ -129,7 +126,7 @@ class SkillWorkflowCliTests(unittest.TestCase):
 
     def test_missing_runtime_token_does_not_create_an_orphan_case(self) -> None:
         environment = os.environ.copy()
-        environment.pop("DEEPSEEK_API_KEY", None)
+        environment.pop("LLM_API_KEY", None)
         result = subprocess.run(
             [
                 sys.executable,
@@ -176,23 +173,10 @@ class SkillWorkflowCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 3)
         self.assertEqual(FixtureHandler.calls, [])
 
-    def test_thin_skill_routes_execution_to_workflow_and_archives_legacy_manual(self) -> None:
-        skill = SKILL.read_text(encoding="utf-8")
-        frontmatter = skill.split("---", 2)[1]
-        self.assertEqual(
-            {line.split(":", 1)[0] for line in frontmatter.splitlines() if ":" in line},
-            {"name", "description"},
-        )
-        self.assertLessEqual(len(skill.splitlines()), 180)
-        self.assertIn("Do not call EXA", skill)
-        self.assertIn("report.json", skill)
-        agents = Path("config/opencode/AGENTS.md").read_text(encoding="utf-8")
-        self.assertNotIn("统一使用 EXA", agents)
-        self.assertIn("Local Google Patents and EXA MCP", agents)
-        legacy = Path(
-            "config/opencode/skills/patent-IDEA-analyzer/SKILL.md"
-        ).read_text(encoding="utf-8-sig")
-        self.assertIn("DEPRECATED legacy manual", legacy[:500])
+    def test_cli_is_independent_from_opencode(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("opencode", source.lower())
+        self.assertIn("/api/idea/cases", source)
 
 
 if __name__ == "__main__":

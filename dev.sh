@@ -10,9 +10,9 @@ if [[ ! -x "$VENV/bin/python" ]]; then
     exit 1
 fi
 
-mkdir -p "$ROOT/logs" "$ROOT/workspace/uploads" "$ROOT/data/opencode"
-echo "AI4P 专利工作台：http://localhost:$PORT"
-echo "日志：当前终端和 logs/ai4p.log"
+mkdir -p "$ROOT/logs" "$ROOT/workspace/uploads" "$ROOT/data/aifpatent"
+echo "AIFPatent 专利工作台：http://localhost:$PORT"
+echo "日志：当前终端和 logs/aifpatent.log"
 echo "退出：Ctrl+C"
 if command -v xdg-open >/dev/null 2>&1; then
     (sleep 2; xdg-open "http://localhost:$PORT" >/dev/null 2>&1) &
