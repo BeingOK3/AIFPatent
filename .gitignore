@@ -1,0 +1,44 @@
+﻿# Python
+backend/.venv/
+backend/__pycache__/
+*.pyc
+*.pyo
+
+config/opencode/opencode.json
+
+# Downloaded engine binary
+bin/opencode/
+
+# Logs
+logs/
+backend/*.log
+backend/*.err
+bin/*.log
+bin/*.err
+
+# Runtime database (opencode session data)
+data/opencode/*.db
+data/opencode/*.db-shm
+data/opencode/*.db-wal
+data/ai4patent/
+
+# Secrets - API keys, NEVER commit
+data/opencode/auth.json
+config/opencode/opencode.json.bak
+
+# User workspace data (runtime)
+workspace/
+data/opencode/snapshot/
+
+# Test / temp scripts
+backend/check.js
+
+# Node
+node_modules/
+
+# OS
+Thumbs.db
+.DS_Store
+
+data/opencode/log/
+data/opencode/tool-output/

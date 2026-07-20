@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai4patent.local/schemas/ai4patent.schema.json",
+  "title": "AI4Patent system configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["app", "features", "model", "storage", "workflow", "search", "outputs", "logging"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port"],
+      "properties": {
+        "host": {"type": "string", "minLength": 1},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idea", "deepdive", "pct", "value", "cfp"],
+      "properties": {
+        "idea": {"const": true},
+        "deepdive": {"const": false},
+        "pct": {"const": false},
+        "value": {"const": false},
+        "cfp": {"const": false}
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "default", "base_url", "api_key_env", "auth_file", "auth_provider", "timeout_seconds", "max_output_tokens", "structured_output_retries", "temperature"],
+      "properties": {
+        "provider": {"type": "string", "minLength": 1},
+        "default": {"type": "string", "minLength": 1},
+        "base_url": {"type": "string", "format": "uri"},
+        "api_key_env": {"type": "string", "minLength": 1},
+        "auth_file": {"type": "string", "minLength": 1},
+        "auth_provider": {"type": "string", "minLength": 1},
+        "timeout_seconds": {"type": "integer", "minimum": 1},
+        "max_output_tokens": {"type": "integer", "minimum": 256},
+        "structured_output_retries": {"type": "integer", "minimum": 0, "maximum": 10},
+        "temperature": {"type": "number", "minimum": 0, "maximum": 2}
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["database", "runs_dir", "uploads_dir", "cache_dir", "document_store_dir", "cache", "history"],
+      "properties": {
+        "database": {"type": "string", "minLength": 1},
+        "runs_dir": {"type": "string", "minLength": 1},
+        "uploads_dir": {"type": "string", "minLength": 1},
+        "cache_dir": {"type": "string", "minLength": 1},
+        "document_store_dir": {"type": "string", "minLength": 1},
+        "cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_bytes", "low_watermark_bytes", "eviction_policy", "cleanup_after_write"],
+          "properties": {
+            "max_bytes": {"type": "integer", "minimum": 1},
+            "low_watermark_bytes": {"type": "integer", "minimum": 0},
+            "eviction_policy": {"const": "fifo"},
+            "cleanup_after_write": {"type": "boolean"}
+          }
+        },
+        "history": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["auto_delete", "manual_delete_enabled"],
+          "properties": {
+            "auto_delete": {"const": false},
+            "manual_delete_enabled": {"const": true}
+          }
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_timeout_seconds", "max_step_attempts", "document_agent_concurrency", "inventive_route_concurrency", "resume_incomplete_runs_on_startup"],
+      "properties": {
+        "step_timeout_seconds": {"type": "integer", "minimum": 1},
+        "max_step_attempts": {"type": "integer", "minimum": 1},
+        "document_agent_concurrency": {"type": "integer", "minimum": 1},
+        "inventive_route_concurrency": {"type": "integer", "minimum": 1},
+        "resume_incomplete_runs_on_startup": {"type": "boolean"}
+      }
+    },
+    "search": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providers", "default_mode", "modes", "saturation"],
+      "properties": {
+        "providers": {"$ref": "#/$defs/providers"},
+        "default_mode": {"enum": ["quick", "standard", "deep"]},
+        "modes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["quick", "standard", "deep"],
+          "properties": {
+            "quick": {"$ref": "#/$defs/searchMode"},
+            "standard": {"$ref": "#/$defs/searchMode"},
+            "deep": {"$ref": "#/$defs/searchMode"}
+          }
+        },
+        "saturation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["consecutive_rounds", "max_new_high_relevance_families"],
+          "properties": {
+            "consecutive_rounds": {"type": "integer", "minimum": 1},
+            "max_new_high_relevance_families": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["always_save_markdown", "always_save_json", "generate_docx_by_default", "generate_xlsx_by_default"],
+      "properties": {
+        "always_save_markdown": {"const": true},
+        "always_save_json": {"const": true},
+        "generate_docx_by_default": {"type": "boolean"},
+        "generate_xlsx_by_default": {"type": "boolean"}
+      }
+    },
+    "logging": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "log_full_user_input", "log_full_model_output"],
+      "properties": {
+        "level": {"enum": ["DEBUG", "INFO", "WARNING", "ERROR"]},
+        "log_full_user_input": {"type": "boolean"},
+        "log_full_model_output": {"type": "boolean"}
+      }
+    }
+  },
+  "$defs": {
+    "providerBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {"enabled": {"type": "boolean"}}
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exa_mcp", "google_patents_local", "local_cache"],
+      "properties": {
+        "exa_mcp": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "timeout_seconds", "max_attempts", "endpoint", "search_tool", "fetch_tool", "fetch_max_characters"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "timeout_seconds": {"type": "integer", "minimum": 1},
+            "max_attempts": {"type": "integer", "minimum": 1},
+            "endpoint": {"type": "string", "format": "uri"},
+            "search_tool": {"type": "string", "minLength": 1},
+            "fetch_tool": {"type": "string", "minLength": 1},
+            "fetch_max_characters": {"type": "integer", "minimum": 10000, "maximum": 500000}
+          }
+        },
+        "google_patents_local": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "timeout_seconds", "max_attempts", "base_url", "min_request_interval_seconds", "user_agent", "trust_environment_proxy", "fallback_to_direct"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "timeout_seconds": {"type": "integer", "minimum": 1},
+            "max_attempts": {"type": "integer", "minimum": 1},
+            "base_url": {"type": "string", "format": "uri"},
+            "min_request_interval_seconds": {"type": "number", "minimum": 0},
+            "user_agent": {"type": "string", "minLength": 1},
+            "trust_environment_proxy": {"type": "boolean"},
+            "fallback_to_direct": {"type": "boolean"}
+          }
+        },
+        "local_cache": {"$ref": "#/$defs/providerBase"}
+      }
+    },
+    "searchMode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_max", "deep_review_min", "deep_review_max"],
+      "properties": {
+        "candidate_max": {"type": "integer", "minimum": 10},
+        "deep_review_min": {"type": "integer", "minimum": 10},
+        "deep_review_max": {"type": "integer", "minimum": 10}
+      }
+    }
+  }
+}

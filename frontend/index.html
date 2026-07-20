@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI4Patent · IDEA 专利评估</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">AI4PATENT / INTERNAL</p>
+      <h1>IDEA 专利评估工作台</h1>
+      <p class="subtitle">双路检索 · 证据矩阵 · 固定 Workflow · 全量历史留存</p>
+    </div>
+    <div class="system-state">
+      <span id="healthDot" class="health-dot"></span>
+      <span id="healthText">检查系统状态…</span>
+      <span id="cacheText" class="muted"></span>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="panel history-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="section-kicker">SHARED HISTORY</p>
+          <h2>评估记录</h2>
+        </div>
+        <button id="newCaseBtn" class="icon-button" title="新建空白方案组">＋</button>
+      </div>
+      <div id="caseList" class="case-list" aria-live="polite"></div>
+    </aside>
+
+    <section class="panel input-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="section-kicker">CONTROLLED INPUT</p>
+          <h2 id="inputPanelTitle">新建 IDEA Run</h2>
+        </div>
+        <span id="activeCaseBadge" class="badge">未选择 Case</span>
+      </div>
+
+      <div id="runSnapshotNotice" class="snapshot-notice hidden" role="status"></div>
+
+      <form id="runForm">
+        <label for="modelBaseUrl">模型 API（本页临时使用）</label>
+        <div class="form-grid two runtime-config-grid">
+          <div>
+            <label for="modelBaseUrl">Base URL</label>
+            <input id="modelBaseUrl" type="url" required autocomplete="off" spellcheck="false"
+              placeholder="例如：https://api.deepseek.com">
+          </div>
+          <div>
+            <label for="modelName">Model</label>
+            <input id="modelName" required maxlength="200" autocomplete="off" spellcheck="false"
+              placeholder="例如：deepseek-v4-flash">
+          </div>
+        </div>
+        <label for="apiToken">API Key</label>
+        <input id="apiToken" type="password" required autocomplete="new-password" spellcheck="false"
+          placeholder="输入本次页面使用的 API Key">
+        <div class="field-meta">
+          <span>三项配置仅用于当前页面和对应 Run</span>
+          <span>刷新、关闭或点击“＋”后必须重新输入；API Key 不写入历史、日志或浏览器存储</span>
+        </div>
+
+        <label for="caseTitle">方案组名称（Case）</label>
+        <input id="caseTitle" maxlength="200" placeholder="例如：Token 热度缓存淘汰">
+        <div class="field-meta"><span>名称必须唯一；用于归纳同一方案的不可变 Run，不参与模型判断</span></div>
+
+        <label for="ideaText">技术方案 / IDEA</label>
+        <textarea id="ideaText" minlength="10" maxlength="200000" rows="10" required
+          placeholder="说明应用场景、技术问题、必要技术手段、数据流/控制关系和预期技术效果。描述越具体，检索和特征拆分越稳定。"></textarea>
+        <div class="field-meta"><span id="ideaCount">0 字符</span><span id="runInputMode">新 Run 输入；提交后形成不可变快照</span></div>
+
+        <div class="form-grid two">
+          <div>
+            <label for="evaluationDate">评估日</label>
+            <input id="evaluationDate" type="date" required>
+            <p class="input-help">实际检索截止日；该日期之后公开的专利不进入新颖性判断。</p>
+          </div>
+          <div>
+            <label for="dateBasis">评估日依据</label>
+            <input id="dateBasis" value="用户指定或提交日" maxlength="200">
+            <p class="input-help">说明为什么选择该日期，仅用于报告追溯，不改变计算。</p>
+          </div>
+        </div>
+
+        <div class="budget-card">
+          <div class="budget-title">
+            <div>
+              <strong>检索与深读预算</strong>
+              <p>范围宽窄由 IDEA 特征自适应判断；这里只设置成本边界。</p>
+            </div>
+            <select id="searchMode" aria-label="检索模式">
+              <option value="quick">快速</option>
+              <option value="standard" selected>标准</option>
+              <option value="deep">深度</option>
+            </select>
+          </div>
+          <div class="form-grid three">
+            <div>
+              <label for="candidateMax">候选上限</label>
+              <input id="candidateMax" type="number" min="10" max="500" value="80">
+            </div>
+            <div>
+              <label for="deepMin">深读下限</label>
+              <input id="deepMin" type="number" min="10" max="100" value="10">
+            </div>
+            <div>
+              <label for="deepMax">深读上限</label>
+              <input id="deepMax" type="number" min="10" max="100" value="20">
+            </div>
+          </div>
+          <p class="budget-note">不会用弱相关文献凑数；不足下限时明确降级为限制或不确定结论。</p>
+        </div>
+
+        <div class="action-row">
+          <button id="submitRun" class="button primary" type="submit">开始受控评估</button>
+          <button id="cancelRun" class="button danger hidden" type="button">取消当前 Run</button>
+        </div>
+        <p id="formMessage" class="message" role="status"></p>
+      </form>
+
+      <section class="progress-section">
+        <div class="progress-header">
+          <div>
+            <p class="section-kicker">HARNESS PROGRESS</p>
+            <h3 id="progressTitle">尚未运行</h3>
+          </div>
+          <span id="runStatus" class="status-pill neutral">—</span>
+        </div>
+        <div class="progress-track"><span id="progressBar"></span></div>
+        <ol id="stepList" class="step-list"></ol>
+      </section>
+
+      <section class="debug-section">
+        <div class="progress-header">
+          <div>
+            <p class="section-kicker">LIVE DEBUG TRACE</p>
+            <h3>运行调试</h3>
+          </div>
+          <span id="debugStatus" class="status-pill neutral">等待 Run</span>
+        </div>
+        <p id="debugSummary" class="debug-summary">开始评估后，这里会显示当前 Workflow、Tool Call、耗时和错误。</p>
+        <div id="debugTimeline" class="debug-timeline" aria-live="polite"></div>
+      </section>
+    </section>
+
+    <section class="panel result-panel">
+      <div class="panel-heading result-heading">
+        <div>
+          <p class="section-kicker">AUDITED OUTPUT</p>
+          <h2>评估结果</h2>
+        </div>
+        <div class="result-actions">
+          <button id="rerunBtn" class="button ghost hidden">重新运行</button>
+          <a id="markdownLink" class="button ghost hidden" href="#">导出 Markdown</a>
+          <button id="deleteRunBtn" class="button ghost danger-text hidden">删除 Run</button>
+        </div>
+      </div>
+
+      <div id="emptyResult" class="empty-state">
+        <div class="empty-mark">F1 → Fn</div>
+        <h3>选择历史 Run 或开始一次新评估</h3>
+        <p>最终结论、原文证据、检索限制与版本信息会保存在本地，可随时复查。</p>
+      </div>
+
+      <div id="reportView" class="hidden">
+        <div id="conclusionCard" class="conclusion-card"></div>
+        <nav id="resultTabs" class="tabs" aria-label="结果章节"></nav>
+        <div id="tabContent" class="tab-content"></div>
+      </div>
+    </section>
+  </main>
+
+  <template id="caseTemplate">
+    <article class="case-card">
+      <button class="case-main">
+        <strong class="case-name"></strong>
+        <span class="case-meta"></span>
+      </button>
+      <button class="case-delete" title="删除 Case">×</button>
+      <div class="run-list"></div>
+    </article>
+  </template>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
