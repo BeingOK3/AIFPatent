@@ -269,6 +269,7 @@ class StructuredModelClientTests(unittest.TestCase):
         self.assertEqual(arguments["model"], "kimi-k2.6")
         self.assertEqual(arguments["extra_body"], {"thinking": {"type": "disabled"}})
         self.assertEqual(arguments["max_retries"], 0)
+        self.assertEqual(arguments["http_socket_options"], ())
 
 
 if __name__ == "__main__":

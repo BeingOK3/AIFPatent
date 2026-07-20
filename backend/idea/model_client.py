@@ -313,6 +313,7 @@ class StructuredModelClient:
                     extra_body=extra_body,
                     http_client=sync_client,
                     http_async_client=async_client,
+                    http_socket_options=(),
                     stream_usage=False,
                 )
                 message = await model.ainvoke(

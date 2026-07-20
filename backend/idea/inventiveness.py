@@ -23,6 +23,10 @@ explain whether a skilled person had a supported motivation to combine. Never se
 patent/evidence ID, or change the novelty result. Return the supplied route_id and D1 publication
 exactly. If any required D2 teaching or combination motivation lacks evidence, return
 NEED_MORE_EVIDENCE or UNCERTAIN rather than NOT_INVENTIVE.
+For every publication listed in d2_publication_numbers, include at least one evidence_id from
+that same supplied D2 candidate. Never list a D2 publication without its own bound evidence.
+If validation_correction is present, the previous answer was rejected. Rebuild the complete
+answer and follow the supplied per-feature publication-to-evidence map exactly.
 Write the objective technical problem, every rationale, and every limitation in Simplified Chinese.
 """
 
@@ -70,18 +74,54 @@ class InventivenessService:
 
         async def execute(route: _RouteInput) -> tuple[_RouteInput, InventiveStepOutput]:
             async with semaphore:
-                result = await self.agents.call_agent(
-                    run_id,
-                    "patent-inventive-step-analyzer",
-                    system_prompt=INVENTIVE_STEP_PROMPT,
-                    input_payload=route.payload,
-                    input_size=len(canonical_json(route.payload)),
-                )
-                output = result.output
-                if not isinstance(output, InventiveStepOutput):
-                    raise AgentExecutionError("inventive-step analyzer returned wrong model")
-                self._validate_output(route, output)
-                return route, output
+                validation_error: AgentExecutionError | None = None
+                for validation_attempt in range(2):
+                    call_payload = route.payload
+                    if validation_attempt:
+                        call_payload = {
+                            **route.payload,
+                            "validation_correction": {
+                                "reason": str(validation_error),
+                                "instruction": (
+                                    "重新生成完整结果。每个列出的 D2 公开号必须至少绑定一条"
+                                    "来自该公开号候选的 evidence_id；没有证据就不要列出该公开号。"
+                                ),
+                                "valid_evidence_by_feature_and_publication": {
+                                    feature_id: {
+                                        publication: sorted(
+                                            evidence_id
+                                            for evidence_id, bound_publication in route.evidence_publication[
+                                                feature_id
+                                            ].items()
+                                            if bound_publication == publication
+                                        )
+                                        for publication in sorted(publications)
+                                    }
+                                    for feature_id, publications in route.allowed_publications.items()
+                                },
+                            },
+                        }
+                    result = await self.agents.call_agent(
+                        run_id,
+                        "patent-inventive-step-analyzer",
+                        system_prompt=INVENTIVE_STEP_PROMPT,
+                        input_payload=call_payload,
+                        input_size=len(canonical_json(call_payload)),
+                    )
+                    output = result.output
+                    if not isinstance(output, InventiveStepOutput):
+                        raise AgentExecutionError(
+                            "inventive-step analyzer returned wrong model"
+                        )
+                    try:
+                        self._validate_output(route, output)
+                    except AgentExecutionError as exc:
+                        validation_error = exc
+                        if validation_attempt:
+                            raise
+                        continue
+                    return route, output
+                raise AgentExecutionError("inventive validation correction was exhausted")
 
         completed = await asyncio.gather(*(execute(route) for route in routes))
         self._persist(run_id, completed)
@@ -181,6 +221,7 @@ class InventivenessService:
             "rules": {
                 "use_only_supplied_evidence": True,
                 "not_inventive_requires_every_difference": True,
+                "each_cited_publication_requires_own_evidence": True,
                 "missing_evidence_status": "NEED_MORE_EVIDENCE",
             },
         }

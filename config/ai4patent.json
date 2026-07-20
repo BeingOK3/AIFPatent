@@ -63,7 +63,7 @@
         "max_attempts": 3,
         "base_url": "https://patents.google.com",
         "min_request_interval_seconds": 1.0,
-        "user_agent": "AI4Patent/1.0 (internal patent research)",
+        "user_agent": "AIFPatent/1.0 (internal patent research)",
         "trust_environment_proxy": true,
         "fallback_to_direct": true
       },

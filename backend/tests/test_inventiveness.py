@@ -24,10 +24,17 @@ def feature_mapping(feature_id, status, evidence_ids=None):
 
 
 class RouteModel:
-    def __init__(self, *, unknown_evidence=False, force_not_inventive=False):
+    def __init__(
+        self,
+        *,
+        unknown_evidence=False,
+        force_not_inventive=False,
+        omit_evidence_once=False,
+    ):
         self.settings = SimpleNamespace(provider="stub")
         self.unknown_evidence = unknown_evidence
         self.force_not_inventive = force_not_inventive
+        self.omit_evidence_once = omit_evidence_once
         self.calls = []
         self.active = 0
         self.max_active = 0
@@ -44,6 +51,8 @@ class RouteModel:
             candidates = feature["d2_candidates"]
             publications = [candidate["publication_number"] for candidate in candidates[:1]]
             evidence = [item["evidence_id"] for item in candidates[0]["evidence"]] if candidates else []
+            if self.omit_evidence_once and "validation_correction" not in payload:
+                evidence = []
             if self.unknown_evidence:
                 evidence = ["E-invented"]
             analyses.append({
@@ -184,6 +193,21 @@ class InventivenessServiceTests(unittest.TestCase):
         with self.db.connect() as connection:
             count = connection.execute("SELECT COUNT(*) FROM inventive_routes").fetchone()[0]
         self.assertEqual(count, 0)
+
+    def test_unbound_publication_receives_one_precise_internal_correction(self) -> None:
+        model = RouteModel(omit_evidence_once=True)
+        service = InventivenessService(
+            self.db, IdeaAgentService(self.db, model), max_routes=1
+        )
+        outputs = asyncio.run(service.analyze(self.run_id, self.novelty()))
+        self.assertEqual(len(outputs), 1)
+        self.assertEqual(len(model.calls), 2)
+        correction = model.calls[1]["validation_correction"]
+        self.assertIn("every cited D2 publication", correction["reason"])
+        self.assertIn(
+            "US2A1",
+            correction["valid_evidence_by_feature_and_publication"]["F2"],
+        )
 
     def test_not_novel_skips_inventive_model_calls(self) -> None:
         model = RouteModel()

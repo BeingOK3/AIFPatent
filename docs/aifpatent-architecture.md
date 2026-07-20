@@ -67,6 +67,7 @@ START
 - JSON 解析失败后的带错误摘要纠正；
 - 面向用户判断文字的简体中文门禁；
 - Evidence ID、公开号和确定性完成门禁；
+- D2 公开号与同文献 Evidence 的精确绑定，以及一次带权威合法清单的内部纠错；
 - 火山方舟网关的 `thinking: disabled`；
 - 代理连接失败后的直连回退；
 - Token 用量和响应 ID 写入脱敏 Tool Call 审计。

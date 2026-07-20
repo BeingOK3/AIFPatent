@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ai4patent.local/schemas/ai4patent.schema.json",
-  "title": "AI4Patent system configuration",
+  "title": "AIFPatent system configuration",
   "type": "object",
   "additionalProperties": false,
   "required": ["app", "features", "model", "storage", "workflow", "search", "outputs", "logging"],

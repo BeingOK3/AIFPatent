@@ -13,6 +13,8 @@ class FrontendContractTests(unittest.TestCase):
         cls.css = Path("frontend/style.css").read_text(encoding="utf-8")
 
     def test_only_idea_workflow_is_visible_and_generic_agent_endpoint_is_absent(self) -> None:
+        self.assertIn("AIFPatent", self.html)
+        self.assertNotIn("AI4PATENT / INTERNAL", self.html)
         self.assertIn("IDEA 专利评估工作台", self.html)
         for legacy in ("5 大专利模块", "业界专利分析", "PCT申请评审", "侵权挖掘"):
             self.assertNotIn(legacy, self.html)

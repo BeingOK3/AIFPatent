@@ -46,7 +46,7 @@ class McpHttpClient:
                 "params": {
                     "protocolVersion": MCP_PROTOCOL_VERSION,
                     "capabilities": {},
-                    "clientInfo": {"name": "AI4Patent", "version": "1.0"},
+                    "clientInfo": {"name": "AIFPatent", "version": "1.0"},
                 },
             },
             self._headers(),

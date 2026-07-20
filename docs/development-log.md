@@ -523,3 +523,16 @@
 - 安全：新增回归在临时 Runtime Context 放入哨兵密钥并执行完整图，确认 LangGraph SQLite 不包含该值；API Key 也不进入 Graph State、业务配置快照、日志或前端存储。
 - 可观测性：前端调试时间线识别 LangGraph 图开始、节点开始/完成/失败/取消和图终态；系统健康检查新增 `langgraph_checkpointer` 组件。
 - 验证：完整 181 项离线测试通过；`compileall`、`node --check`、四个 Shell 脚本语法、`pip check` 和 `git diff --check` 通过。
+
+## 2026-07-20 — AIF-STABILITY-001
+
+- 类型：真实模型全链路回归、创造性证据绑定修复与图并发/取消补强。
+- 图级回归：新增两个 Run 同时通过一个 CompiledStateGraph 执行的测试，SQLite Checkpointer 记录两个独立 `thread_id`；新增运行中节点取消测试，确认 asyncio Task、LangGraph 节点、业务 attempt 和 Run 依次进入 `INTERRUPTED/CANCELLED`。
+- 真实模型冒烟：使用获授权的临时火山方舟 Base URL、Token 和 `kimi-k2.6` 通过 LangChain 完成 IDEA Parser，第一次返回合法结构，约 15.8 秒、1047 tokens；Token 未写入仓库或运行文件。
+- 首次真实 quick Run：随机工业边缘缓存方案完成前 8 个节点后，`ANALYZE_INVENTIVENESS` 三次失败，错误均为 `every cited D2 publication requires bound evidence`。现场表明所有 D2 候选都带合法证据，但模型列出部分 D2 公开号时遗漏该文献自己的 evidence ID；原 Prompt 没有明确一对一绑定要求，后置校验也没有把精确错误反馈给模型。
+- 修复：保留严格门禁，明确“每个 D2 公开号至少绑定一条同候选证据”；首次领域校验失败后，在同一 LangGraph 节点内附上按 feature/publication 分组的合法 evidence ID 清单进行一次定向纠错。第二次仍无效则继续失败，不删除、不猜测、不跨文献补证据。
+- 修复后真实 quick Run：同一 Case 下创建不可变新 Run，完成 `COMPLETED_WITH_LIMITATIONS`，11/11 节点全部 attempt 1，总耗时约 445.7 秒；40 个候选、10 篇深读、41 次 Tool Call，结论“具备新颖性”，价值评分为 3/5、4/5、4/5。
+- 报告门禁：中文新颖性/创造性/价值说明、Google Patents 可点击链接、`report.json`、`report.md` 和 Manifest 哈希全部通过；临时 API Key 在 API 返回、业务 SQLite、LangGraph SQLite、workspace 和 logs 中均无命中。
+- Provider 降级：首次 Run 的 Google Patents 搜索与全文抓取成功；短时间内重跑时 Google `/xhr/query` 返回 HTTP 503，配置的三次 Provider 重试耗尽后由 EXA 16 次成功调用支撑完整报告，终态按设计标为 `COMPLETED_WITH_LIMITATIONS`，未伪装成全 Provider 正常。
+- 清理：真实测试 Case 含失败 Run 和修复后成功 Run，共 2 条，在验证完成后通过官方删除 API 清理；脱敏 JSONL 仍按 Git 忽略策略留在本机用于本次调试证据。
+- 品牌与传输：首页、Schema、Provider User-Agent/MCP Client 名称统一为 AIFPatent；LangChain 自定义 HTTP 客户端显式关闭额外 socket option 注入，避免代理行为警告。

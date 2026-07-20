@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -71,6 +72,16 @@ class FakeAgents:
 
     async def plan_queries(self, run_id, idea, *, per_query_limit):
         return query_plan()
+
+
+class BlockingAgents(FakeAgents):
+    def __init__(self):
+        super().__init__()
+        self.started = asyncio.Event()
+
+    async def parse_idea(self, run_id, text):
+        self.started.set()
+        await asyncio.Event().wait()
 
 
 class FakeRetrieval:
@@ -345,6 +356,50 @@ class WorkflowExecutorTests(unittest.TestCase):
         self.assertTrue({step.value for step in WORKFLOW_STEPS}.issubset(nodes))
         self.assertTrue(self.graph_db.is_file())
         self.assertNotIn(secret.encode(), self.graph_db.read_bytes())
+
+    def test_two_runs_execute_concurrently_on_independent_graph_threads(self) -> None:
+        first = self.create_run()
+        second = self.create_run()
+        executor = self.executor(first)
+
+        async def scenario():
+            try:
+                return await asyncio.gather(
+                    executor.execute(first["run_id"]),
+                    executor.execute(second["run_id"]),
+                )
+            finally:
+                await executor.aclose()
+
+        self.assertEqual(asyncio.run(scenario()), ["COMPLETED", "COMPLETED"])
+        with sqlite3.connect(self.graph_db) as connection:
+            thread_count = connection.execute(
+                "SELECT COUNT(DISTINCT thread_id) FROM checkpoints"
+            ).fetchone()[0]
+        self.assertEqual(thread_count, 2)
+
+    def test_cancelling_graph_interrupts_active_node_and_run(self) -> None:
+        run = self.create_run()
+        agents = BlockingAgents()
+        executor = self.executor(run, agents=agents)
+
+        async def scenario():
+            task = asyncio.create_task(executor.execute(run["run_id"]))
+            try:
+                await asyncio.wait_for(agents.started.wait(), timeout=2)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                return self.db.get_run(run["run_id"]), executor.harness.progress(run["run_id"])
+            finally:
+                await executor.aclose()
+
+        stored, progress = asyncio.run(scenario())
+        self.assertEqual(stored["status"], "CANCELLED")
+        parse_step = next(item for item in progress["steps"] if item["name"] == "PARSE_IDEA")
+        self.assertEqual(parse_step["status"], "INTERRUPTED")
 
 
 if __name__ == "__main__":

@@ -1,1 +1,1 @@
-"""AI4Patent backend tests."""
+"""AIFPatent backend tests."""
