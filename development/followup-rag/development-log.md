@@ -221,3 +221,11 @@
 - 类型：LangChain 适配边界验证补记。
 - 结果：适配器与 Context 目标测试 5 项通过；无 LangChain 安装时保持延迟、明确失败；若依赖存在则消息角色与内容逐条保持一致；compileall 和 `git diff --check` 通过。
 - 安全检查：适配器只传递已装配消息，不读取配置密钥，不生成或修改上下文 Manifest。
+
+## 2026-07-21 — IDEA-INFRA-GOPROXY-001
+
+- 类型：Phase 0/1 开发基础设施构建兼容性修正。
+- 实现：MinIO 源码构建增加可覆盖的 `GOPROXY` build arg；Compose 默认保持 `proxy.golang.org`，受限网络环境可通过 `AIFPATENT_GOPROXY` 指定可访问的 Go module proxy。
+- 边界：仅影响 Docker build 阶段，不改变 MinIO 版本、运行时镜像、业务服务或 Python 依赖；基础镜像仍按 Dockerfile digest 锁定。
+- 涉及文件：`deploy/rag/Dockerfile.minio`、`deploy/rag/compose.yml`、本日志。
+- 验证：待用当前网络的可达 Go proxy 完成 MinIO 构建和三服务运行态验收。
