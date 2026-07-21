@@ -245,3 +245,11 @@
 - 影响：运行镜像不再依赖构建时 Debian 软件源，保持固定 MinIO 源码版本、非 root 用户和数据卷不变。
 - 涉及文件：`deploy/rag/Dockerfile.minio`、`deploy/rag/compose.yml`、本日志。
 - 验证：待完成最终镜像构建、容器健康检查和对象持久化冒烟。
+
+## 2026-07-21 — IDEA-INFRA-RUNTIME-001-VERIFY
+
+- 类型：本地 RAG 依赖运行态验收补记。
+- 结果：PostgreSQL、Redis、MinIO 三个 Compose 服务均为 `healthy`；PostgreSQL 真实查询确认 `vector`/`pg_trgm` 和 24 张 public 表；Redis 密码鉴权返回 `PONG`；MinIO `/minio/health/live` 和 Console 端口通过；SigV4 建桶、写入、读回哈希校验和清理通过。
+- 构建说明：基础镜像按 Dockerfile 锁定 digest 加载；MinIO 固定源码版本构建成功；当前网络使用可覆盖的 Go module proxy 完成构建。
+- Python 验证：完整离线套件 232 项通过；compileall 和 `git diff --check` 通过。
+- 安全检查：测试凭证只从 `deploy/rag/rag.env` 注入当前进程，不打印、不写入对象、不进入 Git；测试桶和对象已清理。
