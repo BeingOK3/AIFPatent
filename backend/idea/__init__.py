@@ -40,6 +40,15 @@ from .lexical import (
     normalize_lexical_text,
 )
 from .postgres_lexical import PostgreSQLLexicalSearchRepository
+from .postgres_report import PostgreSQLReportScopeRepository
+from .report_retrieval import (
+    InitialReportRetriever,
+    ReportDocumentScope,
+    ReportRetrievalError,
+    ReportRetrievalQuery,
+    ReportRetrievalResult,
+    ReportRetrievalSelection,
+)
 from .s3_object_store import S3ObjectStore
 from .postgres_corpus import (
     PostgreSQLCorpusError,
@@ -89,6 +98,13 @@ __all__ = [
     "LexicalSearchRequest",
     "LexicalTerms",
     "PostgreSQLLexicalSearchRepository",
+    "PostgreSQLReportScopeRepository",
+    "InitialReportRetriever",
+    "ReportDocumentScope",
+    "ReportRetrievalError",
+    "ReportRetrievalQuery",
+    "ReportRetrievalResult",
+    "ReportRetrievalSelection",
     "lexical_query_terms",
     "lexical_search_terms",
     "normalize_lexical_text",

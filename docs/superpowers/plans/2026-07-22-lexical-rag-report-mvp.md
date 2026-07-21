@@ -18,6 +18,7 @@
 - 修改：`backend/idea/postgres_corpus.py`
 - 修改：`backend/idea/postgres_lexical.py`
 - 修改：`deploy/rag/postgres-init/020_corpus_schema.sql`
+- 新建：`deploy/rag/postgres-init/035_report_retrieval_schema.sql`
 - 测试：`backend/tests/test_report_retrieval.py`
 - 测试：`backend/tests/test_corpus_integration.py`
 

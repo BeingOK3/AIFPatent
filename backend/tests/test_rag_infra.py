@@ -119,6 +119,10 @@ class RagInfrastructureTests(unittest.TestCase):
         self.assertIn("EXTENSION IF NOT EXISTS vector", init_sql)
         self.assertIn("EXTENSION IF NOT EXISTS pg_trgm", init_sql)
 
+        migrate = " ".join(rag_infra._docker_command("migrate"))
+        self.assertIn("030_lexical_schema.sql", migrate)
+        self.assertIn("035_report_retrieval_schema.sql", migrate)
+
 
 if __name__ == "__main__":
     unittest.main()

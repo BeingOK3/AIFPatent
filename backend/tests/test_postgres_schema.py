@@ -7,6 +7,7 @@ from pathlib import Path
 SCHEMA_PATH = Path("deploy/rag/postgres-init/010_core_schema.sql")
 CORPUS_SCHEMA_PATH = Path("deploy/rag/postgres-init/020_corpus_schema.sql")
 LEXICAL_SCHEMA_PATH = Path("deploy/rag/postgres-init/030_lexical_schema.sql")
+REPORT_RETRIEVAL_SCHEMA_PATH = Path("deploy/rag/postgres-init/035_report_retrieval_schema.sql")
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -14,6 +15,7 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.sql = SCHEMA_PATH.read_text(encoding="utf-8")
         self.corpus_sql = CORPUS_SCHEMA_PATH.read_text(encoding="utf-8")
         self.lexical_sql = LEXICAL_SCHEMA_PATH.read_text(encoding="utf-8")
+        self.report_retrieval_sql = REPORT_RETRIEVAL_SCHEMA_PATH.read_text(encoding="utf-8")
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
         self.assertIn("BEGIN;", self.sql)
@@ -86,6 +88,16 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("gin_trgm_ops", self.lexical_sql)
         self.assertIn("'030_lexical_schema'", self.lexical_sql)
         self.assertNotIn("DROP TABLE", self.lexical_sql.upper())
+
+    def test_report_retrieval_schema_audits_zero_hit_feature_version_pairs(self) -> None:
+        sql = self.report_retrieval_sql
+        self.assertIn("CREATE TABLE IF NOT EXISTS report_retrieval_queries", sql)
+        self.assertIn("UNIQUE(run_id, version_id, feature_id, retriever_version)", sql)
+        self.assertIn("hit_count INTEGER NOT NULL CHECK (hit_count >= 0)", sql)
+        self.assertIn("'035_report_retrieval_schema'", sql)
+        self.assertNotIn("DROP TABLE", sql.upper())
+        self.assertNotIn("TRUNCATE", sql.upper())
+        self.assertNotIn("DELETE FROM", sql.upper())
 
 
 if __name__ == "__main__":

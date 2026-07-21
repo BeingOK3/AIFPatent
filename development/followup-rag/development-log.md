@@ -420,3 +420,13 @@
 - 审查修正：trigram 候选改用 GIN 支持的 word-similarity 运算符，避免短查询与长 Chunk 的全串 similarity 稀释；中文 query 不再把 full run 与全部 bigram 强制 AND；repair 对缺失或混合 Version 范围精确比较并回滚。
 - 自动化验证：Lexical/Schema/Infra 聚焦测试 21 项通过；完整离线套件 285 项通过、2 项按设计跳过；真实 PostgreSQL/MinIO Corpus 集成测试 2 项通过；`compileall`、`git diff --check` 和秘密模式扫描通过。
 - 模型边界：本 Work Unit 不调用聊天模型或 embedding；后续 Hybrid Retriever 将以本接口输出进入 RRF，并在缺少 embedding 时记录 `LEXICAL_ONLY`。
+
+## 2026-07-22 — IDEA-REPORT-RETRIEVAL-001
+
+- 类型：首次报告 `F_i × D_j` 冻结词法检索编排。
+- 范围门禁：`PostgreSQLReportScopeRepository` 只加载源 Run 中 `corpus_availability=READY`、`deep_reviewed=true` 且 Version 本身为 READY 的绑定；无可用 Version、重复 Version/Document、无 required Feature 均 fail closed。
+- 检索矩阵：`InitialReportRetriever` 对每个 required Feature 与每个冻结 Version 发起独立 `allowed_version_ids=(version_id,)` 查询，验证返回命中的 query ID、Version、公开号和 rank，并检查完整笛卡尔积。
+- 审计持久化：新增幂等 `035_report_retrieval_schema.sql` 和 `report_retrieval_queries`，即使某一对零命中也保留 query/hit_count；Chunk 命中继续写入既有 `report_retrieval_hits`。Feature 以 `<run_id>:<F_i>` 稳定主键同步到 PostgreSQL。
+- 运维：`tools/rag_infra.py migrate` 追加执行 `035`，不删除表、卷或数据；本切片不调用模型 API，也不持久化模型凭证。
+- 验证：领域编排、PostgreSQL adapter、Schema、FTS 与 Infra 聚焦测试 27 项通过；完整离线套件 291 项通过、2 项按设计跳过；现有 PostgreSQL 卷真实执行 `020/030/035` 幂等迁移成功，`035` 首次登记并创建检索审计表；容器随后停止且保留数据卷。
+- 空间边界：验证后根文件系统可用 18G，高于至少保留 5G 的门槛。
