@@ -36,9 +36,7 @@ class PostgreSQLContextRepository:
         if not agent_name.strip():
             raise ContextAssemblyError("Context agent name must not be empty")
         selected = [dict(item) for item in context.selected_chunks]
-        allowed_versions = list(
-            dict.fromkeys(str(item["version_id"]) for item in selected)
-        )
+        allowed_versions = list(context.allowed_version_ids)
         manifest = {
             "context_id": context.context_id,
             "context_version": context.context_version,
@@ -48,12 +46,15 @@ class PostgreSQLContextRepository:
             "run_id": context.run_id,
             "turn_id": context.turn_id,
             "corpus_snapshot_hash": context.corpus_snapshot_hash,
+            "allowed_version_ids": allowed_versions,
             "messages": [
                 {"role": message.role, "content": message.content}
                 for message in context.messages
             ],
             "selected_chunks": selected,
             "excluded_chunks": [dict(item) for item in context.excluded_chunks],
+            "selected_notes": [dict(item) for item in context.selected_notes],
+            "excluded_notes": [dict(item) for item in context.excluded_notes],
             "input_budget": context.input_budget,
             "reserved_output_tokens": context.reserved_output_tokens,
             "used_input_tokens": context.used_input_tokens,

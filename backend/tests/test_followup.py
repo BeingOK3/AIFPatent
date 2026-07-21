@@ -64,6 +64,11 @@ class FollowupDomainTests(unittest.TestCase):
             self.assertNotIn("api_key", lowered)
             self.assertNotIn("authorization", lowered)
 
+    def test_record_retrieval_accepts_only_explicit_context_selection(self) -> None:
+        signature = inspect.signature(PostgreSQLFollowupRepository.record_retrieval)
+        selected = signature.parameters["selected_chunk_ids"]
+        self.assertEqual(selected.kind, inspect.Parameter.KEYWORD_ONLY)
+
 
 if __name__ == "__main__":
     unittest.main()

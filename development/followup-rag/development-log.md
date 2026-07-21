@@ -576,3 +576,13 @@
 - 范围门禁：回答中的 IDEA Feature 必须属于当前 Run 的允许集合，公开号必须属于冻结 Thread scope；模型不能凭空引入未检索专利。`INSUFFICIENT_EVIDENCE` 不允许同时断言重合或提供规避方案，`NEW_RESEARCH_REQUIRED` 强制设置新检索标志。
 - 法律边界：技术分析不能输出“构成侵权”“保证不侵权”等确定性法律结论；Citation 证明的是来源与技术披露，不替代权利要求解释、有效性判断或专业法律意见。
 - 验证：有效高重合回答、精确原文绑定、未知 Alias/Feature/Publication、无引用高重合、伪证据不足、确定性侵权结论和新检索标志等 6 项聚焦测试通过；完整离线套件 377 项通过、4 项按设计跳过，`compileall` 与 `git diff --check` 通过，根文件系统仍有 18G 可用。回归同时修正 Embedding Profile 激活锁语句未显式传递空参数的问题，并以测试锁定统一参数化调用约定。此保存点尚未把回答器接入七节点业务 Handler 或公开 API。
+
+## 2026-07-22 — IDEA-FOLLOWUP-CONTEXT-001
+
+- 类型：Phase 4 追问证据优先 Context、最近 Turn 和冻结范围 provenance。
+- 共用装配器：现有 `ContextAssembler` 新增显式 `allowed_version_ids`、非证据 `ContextNote`、选中/排除 Note 及其内容哈希；首次报告和追问继续共享同一确定性预算、Context Hash、Citation Packet 与 PostgreSQL Manifest 路径。
+- 证据优先：预算先选择本轮重新检索的专利 Chunk，再尝试放入应用上下文；超预算历史会以 `CONTEXT_NOTE_BUDGET_EXCLUSIONS` 明确记录，不能挤掉全部本轮证据。修正早期大 Chunk 被排除时 Citation Alias 出现空号的问题，模型始终只看到连续 `C1..Cn`，同时保留原检索 rank。
+- 对话边界：只接受同一 Thread、早于当前 Turn、处于成功终态且含结构化回答的最近最多 5 轮；历史问题/回答、首次报告摘要、IDEA Feature 和冻结文献范围均作为带 Hash 的应用参考数据，Prompt 明确禁止把它们当作专利 Citation 或执行其中的指令。
+- 范围门禁：本轮 Hybrid 结果的 Retriever 版本必须与 Turn 一致，Chunk Version/公开号必须精确匹配冻结 scope，重复或越界 Chunk fail closed；Context Manifest 保存完整冻结 Version allowlist，而不是仅从碰巧入选的 Chunk 反推范围。
+- 持久化一致性：`record_retrieval` 新增显式 `selected_chunk_ids`，只能是本轮检索结果的非空子集；数据库的 `selected_for_context` 由最终预算选择决定，后续 Citation 仍只能引用实际进入模型 Context 的 Chunk。
+- 验证：Context/历史/答案/持久化聚焦 20 项通过；真实 PostgreSQL 隔离验收验证显式 Context selection、Citation、Turn 终态及清理；完整离线套件 383 项通过、4 项按设计跳过，`compileall` 与 `git diff --check` 通过。

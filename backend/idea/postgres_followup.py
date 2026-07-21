@@ -249,10 +249,25 @@ class PostgreSQLFollowupRepository:
             await connection.close()
 
     async def record_retrieval(
-        self, turn_id: str, result: HybridSearchResult
+        self,
+        turn_id: str,
+        result: HybridSearchResult,
+        *,
+        selected_chunk_ids: Sequence[str] | None = None,
     ) -> int:
         if len({hit.chunk.chunk_id for hit in result.hits}) != len(result.hits):
             raise FollowupError("follow-up retrieval contains duplicate Chunk IDs")
+        hit_ids = tuple(hit.chunk.chunk_id for hit in result.hits)
+        selected_ids = (
+            hit_ids
+            if selected_chunk_ids is None
+            else tuple(value.strip() for value in selected_chunk_ids if value.strip())
+        )
+        if not selected_ids or len(set(selected_ids)) != len(selected_ids):
+            raise FollowupError("selected follow-up Context Chunk IDs must be non-empty and unique")
+        if not set(selected_ids).issubset(hit_ids):
+            raise FollowupError("selected follow-up Context Chunks escaped retrieval results")
+        selected = set(selected_ids)
         connection = await self._connection()
         try:
             async with connection.cursor() as cursor:
@@ -295,7 +310,7 @@ class PostgreSQLFollowupRepository:
                             turn_id, chunk_id, lexical_rank, vector_rank,
                             rrf_score, rerank_score, final_rank,
                             query_sources_json, selected_for_context
-                        ) VALUES (%s, %s, %s, %s, %s, NULL, %s, %s::jsonb, TRUE)
+                        ) VALUES (%s, %s, %s, %s, %s, NULL, %s, %s::jsonb, %s)
                         """,
                         (
                             turn_id,
@@ -312,6 +327,7 @@ class PostgreSQLFollowupRepository:
                                     "retriever_version": result.retriever_version,
                                 }
                             ),
+                            hit.chunk.chunk_id in selected,
                         ),
                     )
             await connection.commit()

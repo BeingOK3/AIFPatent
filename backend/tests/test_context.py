@@ -49,6 +49,7 @@ class ContextAssemblerTests(unittest.TestCase):
         self.assertEqual(first.context_hash, second.context_hash)
         self.assertEqual(first.context_id, second.context_id)
         self.assertTrue(first.context_id.startswith("CTX-"))
+        self.assertEqual(first.allowed_version_ids, ("cv-fixture",))
         self.assertEqual([item["alias"] for item in first.selected_chunks], ["C1", "C2", "C3"])
         first_binding = first.selected_chunks[0]
         self.assertEqual(first_binding["section_type"], "abstract")

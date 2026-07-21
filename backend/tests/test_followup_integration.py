@@ -149,7 +149,25 @@ class FollowupIntegrationTests(unittest.TestCase):
                 ),
                 limitations=("LEXICAL_ONLY",),
             )
-            self.assertEqual(await repository.record_retrieval(turn.turn_id, retrieval), 1)
+            self.assertEqual(
+                await repository.record_retrieval(
+                    turn.turn_id,
+                    retrieval,
+                    selected_chunk_ids=(chunk.chunk_id,),
+                ),
+                1,
+            )
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT selected_for_context
+                    FROM followup_retrieval_hits
+                    WHERE turn_id = %s AND chunk_id = %s
+                    """,
+                    (turn.turn_id, chunk.chunk_id),
+                )
+                selected_row = await cursor.fetchone()
+            self.assertEqual(selected_row, (True,))
             quote_start = chunk.start_offset
             quote_end = quote_start + len(chunk.text)
             citations = await repository.record_citations(

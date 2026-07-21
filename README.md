@@ -15,7 +15,7 @@ AIFPatent 当前 `develop` 版本提供可直接运行的首次报告 `LEXICAL_R
 - 报告 schema 2.0 Citation 只包含模型对 `DISCLOSED/PARTIAL` 实际输出的 `C#`，并在输出前回查当前 Run 的 READY Version 与真实 Chunk；
 - `./start.sh` 和 `./stop.sh` 管理完整 Docker 栈，停止不删除数据卷。
 
-开发中：部署级 Embedding Provider、PostgreSQL 缓存、严格 Version 范围的 pgvector 精确召回、RRF/章节权重/多样性内核、追问数据层、独立七节点固定 Workflow，以及结构化回答/Citation 门禁已具备，但默认关闭且尚未开放追问 API。尚未完成：七节点业务 Handler、首次报告/追问共享 HybridRetriever 运行时接入、追问 Context、SSE/UI、reranker、Citation 前端精细展开、专利族变体与法律状态增强、多租户/认证。这些边界记录在 `development/followup-rag/development-log.md`。
+开发中：部署级 Embedding Provider、PostgreSQL 缓存、严格 Version 范围的 pgvector 精确召回、RRF/章节权重/多样性内核、追问数据层、独立七节点固定 Workflow、证据优先追问 Context，以及结构化回答/Citation 门禁已具备，但默认关闭且尚未开放追问 API。尚未完成：七节点业务 Handler、首次报告/追问共享 HybridRetriever 运行时接入、SSE/UI、reranker、Citation 前端精细展开、专利族变体与法律状态增强、多租户/认证。这些边界记录在 `development/followup-rag/development-log.md`。
 
 ## 新机器直接运行
 
