@@ -315,3 +315,29 @@
 - 问题：Docker Compose 当前版本即使设置 `COMPOSE_BAKE=false` 仍通过 Buildx Bake，无法授权 MinIO Dockerfile 所需的 `network.host`，导致 `tools/rag_infra.py up` 在全新构建时失败。
 - 修正：`up` 现在先用 `docker buildx build --allow network.host --network host` 构建并加载 app 与 MinIO，再执行 `docker compose up --no-build --wait`；构建参数只读取公开的 Python/Go 镜像源和版本，不读取凭证。
 - 验证：使用 PyPI 清华镜像和 `goproxy.cn` 完整执行 `tools/rag_infra.py up`，应用、PostgreSQL、Redis、MinIO 全部 `healthy`。
+
+## 2026-07-21 — IDEA-CORPUS-STORE-001
+
+- 类型：Phase 2 耐久 Corpus Store 的 S3/MinIO ObjectStore 适配器。
+- 实现：新增 `S3ObjectStore`，通过延迟导入 boto3 兼容 MinIO/S3；所有阻塞 SDK 调用放入线程，保持现有异步 `ObjectStore` 端口；支持内容哈希 metadata、条件写、幂等复用、读取后哈希校验、对象状态查询和 Bucket healthcheck。
+- 安全边界：凭证只由构造参数注入，不进入日志或对象正文；对象 Key 拒绝绝对路径和穿越；缺失/非法 SHA-256 metadata 的对象 fail closed；`IfNoneMatch=*` 防止不同正文覆盖同一 Key。
+- 依赖：新增 `psycopg[binary]` 和 `boto3`，为后续 PostgreSQL Repository 与 MinIO 适配提供运行时依赖；模型 API 本切片不参与。
+- 涉及文件：`backend/idea/s3_object_store.py`、`backend/tests/test_s3_object_store.py`、`backend/requirements.txt`、`backend/idea/__init__.py`。
+- 验证：待运行 S3 适配器目标测试、完整离线套件和真实 MinIO Bucket/Object 往返测试。
+
+## 2026-07-21 — IDEA-CORPUS-STORE-001-POSTGRES
+
+- 类型：Phase 2 PostgreSQL Corpus Version Repository。
+- 实现：新增 `PostgreSQLCorpusVersionRepository`，把现有 `patent_documents` 的稳定 `document_id`、内容寻址 Blob 元数据和不可变 `patent_document_versions` 连接起来；写入使用 `ON CONFLICT DO NOTHING`，读取同时校验 Version、Blob 和原始专利身份关系。
+- 兼容语义：`CorpusVersion.document_id` 保持可选以兼容现有本地内存测试；PostgreSQL 持久化时优先使用它，否则按公开号/语言解析已有 `patent_documents`。
+- 安全边界：没有已有专利元数据行时拒绝 Version 写入；provider 只进入可审计 metadata JSON；DSN、用户名和密码只通过构造参数/环境注入。
+- 涉及文件：`backend/idea/postgres_corpus.py`、`backend/idea/corpus.py`、`backend/tests/test_postgres_corpus.py`、`backend/requirements.txt`、`backend/idea/__init__.py`。
+- 验证：待运行目标测试、完整离线套件和真实 PostgreSQL/MinIO Corpus 往返验收；模型 API 本切片不参与。
+
+## 2026-07-21 — IDEA-CORPUS-STORE-001-VERIFY
+
+- 类型：Corpus Store 运行态验收补记。
+- 结果：S3ObjectStore 目标测试 3 项、PostgreSQL Repository Contract 测试 3 项通过；真实 MinIO 创建临时 Bucket、幂等写入、读取和 SHA-256 校验通过；真实 PostgreSQL Repository 插入、幂等写入、读取和 healthcheck 通过。
+- 端到端：临时 `FetchedDocument` 经 `PatentCorpusService` 写入 MinIO 和 PostgreSQL，`get_ready` 与 `snapshot_hash` 成功；测试 Bucket、对象、Version、Blob 和专利元数据均按随机 ID 精确清理。
+- Python 验证：完整离线套件 246 项通过；compileall 和 `git diff --check` 通过。
+- 模型边界：本 Work Unit 不调用模型 API；DeepSeek API 留给后续首次报告 RAG/Context 接入的真实模型验收。
