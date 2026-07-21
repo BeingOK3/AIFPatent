@@ -402,3 +402,21 @@
 - CLI 冒烟：清空 PostgreSQL/S3 环境变量后，针对现有历史 SQLite 以 `--limit 1` 执行默认 dry-run，仍返回 `REHYDRATABLE`；未构造 Provider、Corpus、Cache 或外部连接，私有报告写入 `/tmp` 且不含正文或凭据。
 - 自动化验证：完整离线套件 278 项通过、2 项按设计跳过；`compileall`、`git diff --check`、秘密模式扫描和定向安全测试通过。
 - 空间边界：验收时根文件系统可用 18G，超过至少保留 5G 的门槛；测试完成后关闭 Compose 运行容器，保留可复用镜像和数据卷。
+
+## 2026-07-21 — IDEA-RAG-PGFTS-001
+
+- 类型：Phase 3 共享 PostgreSQL 词法检索、`pg_trgm` 与索引 repair。
+- Schema：新增独立、幂等的 `030_lexical_schema.sql`，为 `patent_chunks` 增加应用层规范化 `search_terms`、生成式 `search_text`/`search_tsv`，并建立 GIN FTS 与 trigram 索引；`tools/rag_infra.py migrate` 按顺序执行 Corpus 与 Lexical 增量迁移，不删除或重建卷。
+- 中英 tokenization：新增版本 `patent-lexical-v1`；NFKC/小写规范化保留英文术语、专利号、缩写、化学式与连接符标识符，中文连续文本同时写入完整词串和双字 token。新 Chunk 入库时原子写入 search terms 与 tokenizer 版本。
+- 强制范围：所有查询必须携带非空且唯一的 `allowed_version_ids`，SQL 在召回阶段使用 `version_id = ANY(%s)` 过滤，并可追加章节范围；用户文本只作为参数进入 `plainto_tsquery`、精确子串和 trigram 路径，不执行任意 tsquery 表达式。
+- 排名与审计：FTS rank、trigram similarity 和精确子串共同召回，按精确命中、词法分数、Chunk ID 确定性排序；返回 query ID、原始 rank、score、match kind 和完整 Chunk 身份，供后续 RRF/首次报告审计复用。
+- Repair：按显式 Version 范围回读旧 Chunk，重建 search terms/tokenizer metadata，再验证范围内不存在空索引或版本不一致；失败回滚。
+- 涉及文件：`backend/idea/lexical.py`、`backend/idea/postgres_lexical.py`、`backend/idea/postgres_corpus.py`、`deploy/rag/postgres-init/030_lexical_schema.sql`、`tools/rag_infra.py`、`backend/idea/__init__.py` 及对应测试。
+
+## 2026-07-21 — IDEA-RAG-PGFTS-001-VERIFY
+
+- 类型：PostgreSQL FTS/`pg_trgm` 真实运行态验收补记。
+- 真实验收：现有 PostgreSQL 卷成功幂等执行 `020` 与 `030` 迁移；随机隔离 Corpus Version 的 Chunk 完成 tokenizer repair，并以显式 Version 范围召回真实 FTS 命中。长中英 Chunk 的中文 bigram query、英文拼写误差 word-similarity query 均命中，错误章节范围返回空；测试 Version、Chunk、Blob 与对象随后精确清理。
+- 审查修正：trigram 候选改用 GIN 支持的 word-similarity 运算符，避免短查询与长 Chunk 的全串 similarity 稀释；中文 query 不再把 full run 与全部 bigram 强制 AND；repair 对缺失或混合 Version 范围精确比较并回滚。
+- 自动化验证：Lexical/Schema/Infra 聚焦测试 21 项通过；完整离线套件 285 项通过、2 项按设计跳过；真实 PostgreSQL/MinIO Corpus 集成测试 2 项通过；`compileall`、`git diff --check` 和秘密模式扫描通过。
+- 模型边界：本 Work Unit 不调用聊天模型或 embedding；后续 Hybrid Retriever 将以本接口输出进入 RRF，并在缺少 embedding 时记录 `LEXICAL_ONLY`。

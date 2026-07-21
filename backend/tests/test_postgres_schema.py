@@ -6,12 +6,14 @@ from pathlib import Path
 
 SCHEMA_PATH = Path("deploy/rag/postgres-init/010_core_schema.sql")
 CORPUS_SCHEMA_PATH = Path("deploy/rag/postgres-init/020_corpus_schema.sql")
+LEXICAL_SCHEMA_PATH = Path("deploy/rag/postgres-init/030_lexical_schema.sql")
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
     def setUp(self) -> None:
         self.sql = SCHEMA_PATH.read_text(encoding="utf-8")
         self.corpus_sql = CORPUS_SCHEMA_PATH.read_text(encoding="utf-8")
+        self.lexical_sql = LEXICAL_SCHEMA_PATH.read_text(encoding="utf-8")
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
         self.assertIn("BEGIN;", self.sql)
@@ -73,6 +75,17 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
         self.assertNotIn("DELETE FROM", upper)
+
+    def test_corpus_schema_has_generated_fts_and_trigram_indexes(self) -> None:
+        self.assertIn("BEGIN;", self.lexical_sql)
+        self.assertIn("search_terms TEXT NOT NULL DEFAULT ''", self.lexical_sql)
+        self.assertIn("search_tsv TSVECTOR GENERATED ALWAYS AS", self.lexical_sql)
+        self.assertIn("to_tsvector('english'::regconfig", self.lexical_sql)
+        self.assertIn("to_tsvector('simple'::regconfig", self.lexical_sql)
+        self.assertIn("USING GIN (search_tsv)", self.lexical_sql)
+        self.assertIn("gin_trgm_ops", self.lexical_sql)
+        self.assertIn("'030_lexical_schema'", self.lexical_sql)
+        self.assertNotIn("DROP TABLE", self.lexical_sql.upper())
 
 
 if __name__ == "__main__":

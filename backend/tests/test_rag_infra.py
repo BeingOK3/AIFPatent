@@ -53,6 +53,7 @@ class RagInfrastructureTests(unittest.TestCase):
         command = rag_infra._docker_command("migrate")
         self.assertEqual(command[-4:-1], ["postgres", "sh", "-ec"])
         self.assertIn("020_corpus_schema.sql", command[-1])
+        self.assertIn("030_lexical_schema.sql", command[-1])
         self.assertNotIn("$POSTGRES_PASSWORD", command[-1])
         self.assertNotIn("--volumes", command)
 

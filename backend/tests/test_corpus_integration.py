@@ -13,6 +13,7 @@ from idea.corpus import PatentCorpusIngestService, PatentCorpusService
 from idea.corpus_migration import HistoricalCorpusMigrator, MigrationStatus
 from idea.chunks import PatentChunkPersistenceService
 from idea.database import Database
+from idea.lexical import LexicalSearchRequest
 from idea.postgres_corpus import (
     PostgreSQLCorpusError,
     PostgreSQLCorpusPrerequisiteRepository,
@@ -22,6 +23,7 @@ from idea.postgres_corpus import (
     PostgreSQLPatentChunkRepository,
 )
 from idea.providers import FetchedDocument
+from idea.postgres_lexical import PostgreSQLLexicalSearchRepository
 from idea.s3_object_store import S3ObjectStore
 
 
@@ -197,7 +199,11 @@ class CorpusIntegrationTests(unittest.TestCase):
                         "Integration patent",
                         "en",
                         "https://example.test/integration",
-                        "Durable corpus integration content.",
+                        (
+                            "Durable corpus integration content with extensive patent "
+                            "context and implementation details. 缓存淘汰方法通过热度阈值"
+                            "选择数据块并降低缓存未命中率。"
+                        ),
                         1_784_592_000_000,
                         1_784_592_000_000,
                     ),
@@ -235,7 +241,11 @@ class CorpusIntegrationTests(unittest.TestCase):
                 language="en",
                 url="https://example.test/integration",
                 title="Integration patent",
-                abstract_text="Durable corpus integration content.",
+                abstract_text=(
+                    "Durable corpus integration content with extensive patent "
+                    "context and implementation details. 缓存淘汰方法通过热度阈值"
+                    "选择数据块并降低缓存未命中率。"
+                ),
                 raw_metadata={"fixture": True},
             )
             try:
@@ -253,6 +263,43 @@ class CorpusIntegrationTests(unittest.TestCase):
                 version_id = first.version_ids[0]
                 version = await corpus.get_ready(version_id)
                 self.assertTrue(await objects.get(version.object_key))
+
+                lexical = PostgreSQLLexicalSearchRepository(dsn)
+                self.assertEqual(await lexical.repair((version_id,)), 1)
+                hits = await lexical.search(
+                    LexicalSearchRequest(
+                        query_id="integration-query",
+                        text="durable corpus integration",
+                        allowed_version_ids=(version_id,),
+                    )
+                )
+                self.assertTrue(hits)
+                self.assertTrue(all(hit.chunk.version_id == version_id for hit in hits))
+                chinese_hits = await lexical.search(
+                    LexicalSearchRequest(
+                        query_id="integration-query-zh",
+                        text="缓存淘汰方法",
+                        allowed_version_ids=(version_id,),
+                    )
+                )
+                typo_hits = await lexical.search(
+                    LexicalSearchRequest(
+                        query_id="integration-query-typo",
+                        text="durabl corpus integrtion",
+                        allowed_version_ids=(version_id,),
+                    )
+                )
+                excluded = await lexical.search(
+                    LexicalSearchRequest(
+                        query_id="integration-query-section",
+                        text="durable corpus",
+                        allowed_version_ids=(version_id,),
+                        section_types=("claims",),
+                    )
+                )
+                self.assertTrue(chinese_hits)
+                self.assertTrue(typo_hits)
+                self.assertEqual(excluded, ())
 
                 stale_chunk_id = f"integration-stale-{suffix}"
                 await self._insert_stale_chunk(

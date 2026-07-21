@@ -8,6 +8,7 @@ from typing import Any
 
 from .chunks import PatentChunk
 from .corpus import CorpusRunLink, CorpusVersion, CorpusVersionSource
+from .lexical import lexical_search_terms
 from .ports import Repository
 
 
@@ -678,16 +679,22 @@ class PostgreSQLPatentChunkRepository:
             async with connection.cursor() as cursor:
                 created_at = PostgreSQLCorpusVersionRepository._millis(datetime.now(timezone.utc))
                 for chunk in chunks:
+                    terms = lexical_search_terms(
+                        text=chunk.text,
+                        publication_number=chunk.publication_number,
+                        section_type=chunk.section_type,
+                        section_label=chunk.section_label,
+                    )
                     await cursor.execute(
                         """
                         INSERT INTO patent_chunks(
                             chunk_id, version_id, publication_number, section_type,
                             section_label, claim_number, claim_kind, parent_claims_json,
                             start_offset, end_offset, text, text_hash, token_count,
-                            chunker_version, metadata_json, created_at
+                            chunker_version, search_terms, metadata_json, created_at
                         ) VALUES (
                             %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
-                            %s, %s, %s, %s, %s, %s, '{}'::jsonb, %s
+                            %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s
                         ) ON CONFLICT (chunk_id) DO NOTHING
                         """,
                         (
@@ -705,6 +712,8 @@ class PostgreSQLPatentChunkRepository:
                             chunk.text_hash,
                             chunk.token_count,
                             chunk.chunker_version,
+                            terms.value,
+                            json.dumps({"lexical_tokenizer_version": terms.version}),
                             created_at,
                         ),
                     )

@@ -30,6 +30,16 @@ from .corpus_migration import (
 )
 from .context import AssembledModelContext, ContextAssembler, ContextAssemblyError
 from .context_adapter import LangChainAdapterUnavailable, to_langchain_messages, to_message_dicts
+from .lexical import (
+    LEXICAL_TOKENIZER_VERSION,
+    LexicalHit,
+    LexicalSearchRequest,
+    LexicalTerms,
+    lexical_query_terms,
+    lexical_search_terms,
+    normalize_lexical_text,
+)
+from .postgres_lexical import PostgreSQLLexicalSearchRepository
 from .s3_object_store import S3ObjectStore
 from .postgres_corpus import (
     PostgreSQLCorpusError,
@@ -74,6 +84,14 @@ __all__ = [
     "ContextAssembler",
     "ContextAssemblyError",
     "LangChainAdapterUnavailable",
+    "LEXICAL_TOKENIZER_VERSION",
+    "LexicalHit",
+    "LexicalSearchRequest",
+    "LexicalTerms",
+    "PostgreSQLLexicalSearchRepository",
+    "lexical_query_terms",
+    "lexical_search_terms",
+    "normalize_lexical_text",
     "to_langchain_messages",
     "to_message_dicts",
     "load_config",
