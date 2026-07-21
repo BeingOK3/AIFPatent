@@ -115,3 +115,18 @@
 - 类型：Phase 0 SQLite 导出验证补记。
 - 结果：SQLite export 目标测试 4 项通过；完整离线套件 209 项通过；CLI 帮助、compileall 和 `git diff --check` 通过。
 - 安全检查：源数据库 mtime 在导出前后不变；导出文件拒绝覆盖、使用 `0600` 权限，输出只包含表/列/行哈希所需数据，不打印行正文。
+
+## 2026-07-21 — IDEA-PG-CORE-001
+
+- 类型：Phase 1 PostgreSQL 核心业务 Schema 桥接基线。
+- 实现：新增 `010_core_schema.sql`，覆盖 Case/Run/Run Input/Step、Stage/Tool Call、查询/命中、专利元数据、Evidence/Feature Mapping、新颖性/创造性/价值/审计、报告/Artifact、熔断和 `model_context_manifests`。
+- 兼容语义：当前桥接阶段保留 SQLite 的 TEXT ID 和毫秒 BIGINT 时间，JSON 字段升级为 JSONB；待导入核验通过后再评估 UUID/TIMESTAMPTZ 的生产迁移，不在此阶段静默转换数据。
+- 不可变性：PostgreSQL trigger 保留 Run 固定字段和 Run Input write-once 约束；初始化脚本无数据删除命令，可重复执行并记录 `aifpatent_schema_migrations`。
+- 涉及文件：`deploy/rag/postgres-init/010_core_schema.sql`、`backend/tests/test_postgres_schema.py`、本日志。
+- 验证：待运行 Schema 静态目标测试、完整离线套件、编译和格式检查；当前主机无 PostgreSQL 容器，未执行数据库运行态迁移。
+
+## 2026-07-21 — IDEA-PG-CORE-001-VERIFY
+
+- 类型：Phase 1 PostgreSQL Schema 验证补记。
+- 结果：Schema、SQLite export 和 ObjectStore 目标测试共 12 项通过；完整离线套件 212 项通过；compileall 和 `git diff --check` 通过。
+- 环境限制：主机没有 `psql`/Docker，因此 SQL 仅完成静态契约检查，未声称已经通过 PostgreSQL 运行态迁移。
