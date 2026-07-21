@@ -514,3 +514,13 @@
 - 配置：新增严格的部署级 `embedding` 配置段，默认预留本地 OpenAI-compatible BGE-M3 服务坐标，但不自动下载模型、不启动额外常驻服务，也不把专利正文发送到外部服务。
 - 验证：配置、Provider、缓存、维度/非有限值/非规范化缓存门禁、凭证隔离和 PostgreSQL 参数化写入聚焦测试通过；完整离线套件 340 项通过、2 项按设计跳过，compileall 与 `git diff --check` 通过。真实 PostgreSQL Cache/关联验收将在 `IDEA-VECTOR-001` 与向量检索一起执行。
 - 后续：`IDEA-VECTOR-001` 将补充 Chunk→Embedding 关联、严格 Version allowlist 的 pgvector 精确检索和真实数据库基准；此条不宣称混合 RAG 已启用。
+
+## 2026-07-22 — IDEA-VECTOR-001
+
+- 类型：Phase 4 `PgVectorIndex` 精确向量召回、Chunk 关联与小范围基准。
+- 范围门禁：`VectorSearchRequest` 强制显式、非空且去重的 Version allowlist；参数化 SQL 在计算距离前以物化 CTE 同时限定 Version、ACTIVE Profile、维度和可选章节，adapter 回读后再次检查 Version/章节，任何越界结果 fail closed。
+- 精确检索：当前关闭 index/bitmap scan 并使用 pgvector cosine distance，在单 Run 的少量深读 Version 内执行精确排序；返回 rank、distance 和 `index_mode=exact`，不把查询向量写入日志、Graph State 或 API。
+- 索引生命周期：Embedding Service 校验 Chunk ID、正文 SHA-256 和唯一性后建立 Chunk→缓存向量关联；Profile 只有在要求的全部 Chunk 已关联时才能激活。激活事务锁定 Profile 表，并将旧 ACTIVE Profile 退役，避免多 Worker 并发产生多个 active profile。
+- 基准：新增可复用的精确检索 benchmark 结果，记录请求数、命中数及 min/median/p95/max 延迟，不包含向量正文。
+- 真实验收：在现有 PostgreSQL/pgvector Corpus 中随机选择两个不同 READY Version 的 Chunk，使用隔离的 3 维测试 Profile 完成首次生成、二次缓存复用、关联、激活、单 Version 防越界召回和 5 次精确检索基准；真实测试 1 项通过且 p95 小于 1000ms，随后按随机 Profile 精确删除测试关联和向量。
+- 边界：默认 Embedding 仍关闭，未配置跨语言 Provider 时首次报告继续 `LEXICAL_RAG`；下一 Work Unit `IDEA-RAG-HYBRID-001` 才接入 RRF、章节权重和多样性。

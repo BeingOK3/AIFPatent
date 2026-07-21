@@ -77,6 +77,14 @@ class EmbeddingCache(Protocol):
 
     async def put_many(self, values: tuple[CachedEmbedding, ...]) -> None: ...
 
+    async def link_chunks(
+        self, profile_id: str, chunk_text_hashes: tuple[tuple[str, str], ...]
+    ) -> None: ...
+
+    async def activate_profile(
+        self, profile_id: str, required_chunk_ids: tuple[str, ...]
+    ) -> None: ...
+
 
 class OpenAICompatibleEmbeddingProvider:
     """Deployment-scoped adapter; it never uses per-Run chat BYOK credentials."""
@@ -212,6 +220,31 @@ class EmbeddingService:
             raise EmbeddingError("embedding query text must be non-empty")
         vector = await self.provider.embed_query(text)
         return self._normalize(vector)
+
+    async def index_chunks(self, chunks: Sequence[Any]) -> tuple[CachedEmbedding, ...]:
+        if not chunks:
+            raise EmbeddingError("embedding indexing requires at least one Chunk")
+        identities: list[tuple[str, str]] = []
+        texts: list[str] = []
+        for chunk in chunks:
+            chunk_id = str(getattr(chunk, "chunk_id", ""))
+            text = str(getattr(chunk, "text", ""))
+            text_hash = str(getattr(chunk, "text_hash", ""))
+            if not chunk_id or not text or self.text_hash(text) != text_hash:
+                raise EmbeddingError("Chunk identity or text hash is invalid")
+            identities.append((chunk_id, text_hash))
+            texts.append(text)
+        if len({chunk_id for chunk_id, _ in identities}) != len(identities):
+            raise EmbeddingError("embedding indexing Chunk IDs must be unique")
+        records = await self.embed_documents(texts)
+        await self.cache.link_chunks(self.profile.profile_id, tuple(identities))
+        return records
+
+    async def activate_for_chunks(self, chunk_ids: Sequence[str]) -> None:
+        values = tuple(dict.fromkeys(str(value) for value in chunk_ids))
+        if not values or any(not value for value in values):
+            raise EmbeddingError("embedding activation requires valid Chunk IDs")
+        await self.cache.activate_profile(self.profile.profile_id, values)
 
     @staticmethod
     def text_hash(text: str) -> str:

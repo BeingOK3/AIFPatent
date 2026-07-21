@@ -184,5 +184,97 @@ class PostgreSQLEmbeddingCache:
         finally:
             await connection.close()
 
+    async def link_chunks(
+        self, profile_id: str, chunk_text_hashes: tuple[tuple[str, str], ...]
+    ) -> None:
+        if not chunk_text_hashes:
+            return
+        chunk_ids = [value[0] for value in chunk_text_hashes]
+        text_hashes = [value[1] for value in chunk_text_hashes]
+        if len(set(chunk_ids)) != len(chunk_ids):
+            raise EmbeddingError("Chunk embedding links must have unique Chunk IDs")
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    WITH requested(chunk_id, text_hash) AS (
+                        SELECT * FROM unnest(%s::text[], %s::text[])
+                    ), inserted AS (
+                        INSERT INTO chunk_embeddings(chunk_id, embedding_id)
+                        SELECT c.chunk_id, ev.embedding_id
+                        FROM requested r
+                        JOIN patent_chunks c
+                          ON c.chunk_id = r.chunk_id AND c.text_hash = r.text_hash
+                        JOIN embedding_vectors ev
+                          ON ev.text_hash = r.text_hash AND ev.profile_id = %s
+                        ON CONFLICT (chunk_id, embedding_id) DO UPDATE
+                        SET chunk_id = EXCLUDED.chunk_id
+                        RETURNING chunk_id
+                    )
+                    SELECT chunk_id FROM inserted ORDER BY chunk_id
+                    """,
+                    (chunk_ids, text_hashes, profile_id),
+                )
+                rows = await cursor.fetchall()
+                linked = {str(row["chunk_id"] if isinstance(row, dict) else row[0]) for row in rows}
+                if linked != set(chunk_ids):
+                    raise EmbeddingError("Chunk embedding link scope is incomplete")
+            await connection.commit()
+        except Exception:
+            await connection.rollback()
+            raise
+        finally:
+            await connection.close()
+
+    async def activate_profile(
+        self, profile_id: str, required_chunk_ids: tuple[str, ...]
+    ) -> None:
+        if not required_chunk_ids or len(set(required_chunk_ids)) != len(required_chunk_ids):
+            raise EmbeddingError("profile activation requires unique Chunk IDs")
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    "LOCK TABLE embedding_profiles IN SHARE ROW EXCLUSIVE MODE"
+                )
+                await cursor.execute(
+                    """
+                    SELECT COUNT(DISTINCT ce.chunk_id)
+                    FROM chunk_embeddings ce
+                    JOIN embedding_vectors ev ON ev.embedding_id = ce.embedding_id
+                    WHERE ev.profile_id = %s AND ce.chunk_id = ANY(%s)
+                    """,
+                    (profile_id, list(required_chunk_ids)),
+                )
+                row = await cursor.fetchone()
+                count = int(row["count"] if isinstance(row, dict) else row[0])
+                if count != len(required_chunk_ids):
+                    raise EmbeddingError("embedding profile coverage is incomplete")
+                await cursor.execute(
+                    """
+                    UPDATE embedding_profiles
+                    SET state = CASE WHEN profile_id = %s THEN 'ACTIVE' ELSE 'RETIRED' END,
+                        activated_at = CASE WHEN profile_id = %s THEN %s ELSE activated_at END
+                    WHERE state = 'ACTIVE' OR profile_id = %s
+                    RETURNING profile_id, state
+                    """,
+                    (profile_id, profile_id, now_ms(), profile_id),
+                )
+                rows = await cursor.fetchall()
+                states = {
+                    str(row["profile_id"] if isinstance(row, dict) else row[0]):
+                    str(row["state"] if isinstance(row, dict) else row[1])
+                    for row in rows
+                }
+                if states.get(profile_id) != "ACTIVE":
+                    raise EmbeddingError("embedding profile does not exist or was not activated")
+            await connection.commit()
+        except Exception:
+            await connection.rollback()
+            raise
+        finally:
+            await connection.close()
+
 
 __all__ = ["PostgreSQLEmbeddingCache"]

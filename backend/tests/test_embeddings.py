@@ -20,6 +20,8 @@ class MemoryCache:
         self.profile = None
         self.values: dict[str, CachedEmbedding] = {}
         self.put_batches: list[tuple[CachedEmbedding, ...]] = []
+        self.links = ()
+        self.activated = ()
 
     async def ensure_profile(self, profile):
         self.profile = profile
@@ -34,6 +36,12 @@ class MemoryCache:
     async def put_many(self, values):
         self.put_batches.append(values)
         self.values.update({value.text_hash: value for value in values})
+
+    async def link_chunks(self, profile_id, chunk_text_hashes):
+        self.links = (profile_id, chunk_text_hashes)
+
+    async def activate_profile(self, profile_id, required_chunk_ids):
+        self.activated = (profile_id, required_chunk_ids)
 
 
 class FakeProvider:
@@ -83,6 +91,28 @@ class EmbeddingTests(unittest.TestCase):
 
         self.assertEqual(vector, (0.0, 1.0))
         self.assertEqual(cache.values, {})
+
+    def test_chunk_indexing_verifies_hash_links_and_activates_explicit_scope(self) -> None:
+        from types import SimpleNamespace
+
+        provider = FakeProvider()
+        cache = MemoryCache()
+        service = EmbeddingService(provider, cache)
+        text = "cache claim"
+        chunk = SimpleNamespace(
+            chunk_id="chunk-1", text=text, text_hash=service.text_hash(text)
+        )
+
+        asyncio.run(service.index_chunks([chunk]))
+        asyncio.run(service.activate_for_chunks(["chunk-1", "chunk-1"]))
+
+        self.assertEqual(cache.links[0], service.profile.profile_id)
+        self.assertEqual(cache.links[1], (("chunk-1", service.text_hash(text)),))
+        self.assertEqual(cache.activated, (service.profile.profile_id, ("chunk-1",)))
+
+        bad = SimpleNamespace(chunk_id="chunk-2", text=text, text_hash="a" * 64)
+        with self.assertRaisesRegex(EmbeddingError, "text hash"):
+            asyncio.run(service.index_chunks([bad]))
 
     def test_wrong_dimensions_and_non_finite_vectors_fail_closed(self) -> None:
         provider = FakeProvider()

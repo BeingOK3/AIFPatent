@@ -50,6 +50,31 @@ class FakeConnection:
         return None
 
 
+class LinkCursor(FakeCursor):
+    def __init__(self, *, linked=("chunk-1",), coverage=1) -> None:
+        super().__init__()
+        self.linked = linked
+        self.coverage = coverage
+
+    async def fetchone(self):
+        if "COUNT(DISTINCT" in self.last_sql:
+            return (self.coverage,)
+        return await super().fetchone()
+
+    async def fetchall(self):
+        if "WITH requested" in self.last_sql:
+            return [(value,) for value in self.linked]
+        if "UPDATE embedding_profiles" in self.last_sql:
+            return [("ep-test", "ACTIVE")]
+        return await super().fetchall()
+
+
+class LinkConnection(FakeConnection):
+    def __init__(self, *, linked=("chunk-1",), coverage=1) -> None:
+        super().__init__()
+        self.cursor_instance = LinkCursor(linked=linked, coverage=coverage)
+
+
 class PostgreSQLEmbeddingCacheTests(unittest.TestCase):
     def test_profile_and_vector_writes_are_parameterized_and_idempotent(self) -> None:
         connection = FakeConnection()
@@ -104,6 +129,61 @@ class PostgreSQLEmbeddingCacheTests(unittest.TestCase):
         with self.assertRaisesRegex(EmbeddingError, "conflicts"):
             asyncio.run(cache.ensure_profile(EmbeddingProfile("fixture", "multilingual-v1", 2)))
         self.assertTrue(connection.rolled_back)
+
+    def test_chunk_links_require_matching_chunk_hash_and_complete_scope(self) -> None:
+        connection = LinkConnection()
+
+        async def connect(_dsn):
+            return connection
+
+        cache = PostgreSQLEmbeddingCache("postgresql://test", connect=connect)
+        asyncio.run(cache.link_chunks("ep-test", (("chunk-1", "a" * 64),)))
+
+        sql, parameters = connection.cursor_instance.executions[0]
+        self.assertIn("c.text_hash = r.text_hash", sql)
+        self.assertIn("ev.profile_id = %s", sql)
+        self.assertEqual(parameters, (["chunk-1"], ["a" * 64], "ep-test"))
+        self.assertTrue(connection.committed)
+
+        incomplete = LinkConnection(linked=())
+
+        async def connect_incomplete(_dsn):
+            return incomplete
+
+        with self.assertRaisesRegex(EmbeddingError, "scope is incomplete"):
+            asyncio.run(
+                PostgreSQLEmbeddingCache(
+                    "postgresql://test", connect=connect_incomplete
+                ).link_chunks("ep-test", (("chunk-1", "a" * 64),))
+            )
+        self.assertTrue(incomplete.rolled_back)
+
+    def test_profile_activation_requires_complete_chunk_coverage(self) -> None:
+        connection = LinkConnection(coverage=1)
+
+        async def connect(_dsn):
+            return connection
+
+        cache = PostgreSQLEmbeddingCache("postgresql://test", connect=connect)
+        asyncio.run(cache.activate_profile("ep-test", ("chunk-1",)))
+
+        self.assertIn("LOCK TABLE embedding_profiles", connection.cursor_instance.executions[0][0])
+        update = connection.cursor_instance.executions[2]
+        self.assertIn("THEN 'ACTIVE' ELSE 'RETIRED'", update[0])
+        self.assertEqual(update[1][0], "ep-test")
+
+        incomplete = LinkConnection(coverage=0)
+
+        async def connect_incomplete(_dsn):
+            return incomplete
+
+        with self.assertRaisesRegex(EmbeddingError, "coverage is incomplete"):
+            asyncio.run(
+                PostgreSQLEmbeddingCache(
+                    "postgresql://test", connect=connect_incomplete
+                ).activate_profile("ep-test", ("chunk-1",))
+            )
+        self.assertTrue(incomplete.rolled_back)
 
 
 if __name__ == "__main__":
