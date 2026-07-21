@@ -270,3 +270,18 @@
 - 运维边界：命令不删除卷、不重建服务，专门解决 init 目录只在首次初始化时执行的问题。
 - 涉及文件：`tools/rag_infra.py`、`backend/tests/test_rag_infra.py`、`deploy/rag/README.md`。
 - 验证：待运行管理 CLI 目标测试；真实容器迁移需在 Docker 用户组已生效的终端执行 `tools/rag_infra.py migrate`。
+
+## 2026-07-21 — IDEA-APP-CONTAINER-001
+
+- 类型：跨环境部署的非 root 应用镜像基线。
+- 实现：新增固定 Python 3.12.13 Bookworm 官方镜像 digest 的应用 Dockerfile；安装后端依赖并只复制运行所需的 backend/frontend/config；Uvicorn 固定单 Worker，保持当前 SQLite、进程内任务和 BYOK 生命周期语义。
+- 安全边界：容器以 UID/GID 10001 运行；构建上下文排除 Git、虚拟环境、运行数据、报告、日志、`.env` 和本地 RAG 凭证；镜像不包含模型 API Key；健康检查使用 Python 标准库，不增加 apt 运行依赖。
+- 持久化边界：预创建 data、workspace 和 logs 目录，后续 Compose 必须将它们映射为持久卷；本工作单元尚未改变现有宿主机启动方式。
+- 涉及文件：`deploy/app/Dockerfile`、`.dockerignore`、`backend/tests/test_app_container.py`。
+- 验证：待运行容器静态契约、完整离线测试和真实镜像构建。
+
+## 2026-07-21 — IDEA-APP-CONTAINER-001-VERIFY
+
+- 类型：应用镜像运行态验收补记。
+- 结果：固定 Python 基础镜像和依赖安装成功；临时容器以 `10001:10001` 启动，`/api/health` 返回 200，OpenAPI 可读取；无模型 Token 时健康结果按现有语义为 `degraded`，不影响进程启动；测试容器已清理。
+- 网络说明：PyPI 官方源在当前网络约 15 KB/s，改用构建参数 `PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` 后依赖下载恢复到 MB/s 级；该参数只影响本地构建下载，不写入镜像运行环境。
