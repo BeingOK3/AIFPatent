@@ -145,3 +145,20 @@
 - 类型：Phase 1 Redis 限流验证补记。
 - 结果：Redis limiter 与端口目标测试共 7 项通过；完整离线套件 216 项通过；compileall 和 `git diff --check` 通过。
 - 环境限制：未安装 Redis/Docker，未声称通过真实多 Worker 租约竞争；Lua 脚本参数、key 隔离、lease token 和 cooldown 延迟逻辑已由 Mock 契约覆盖。
+
+## 2026-07-21 — IDEA-REDIS-JOBS-001
+
+- 类型：Phase 1 Redis JobQueue 基线。
+- 实现：新增 Redis List/Hash JobQueue，使用 Lua 原子完成幂等入队、pending→processing claim、lease 校验、完成、可重试失败和取消；JobLease 到期或 token 不匹配时拒绝状态变更。
+- 安全边界：JobRequest 和完成结果递归拒绝 API Key、Token、Password、Authorization、Secret 字段；Redis payload 只保存任务数据，不保存 BYOK；错误码要求单行。
+- 恢复语义：可重试失败重新回到 pending；不可重试失败进入 FAILED；取消同时清理 pending/processing 和 lease，已完成/失败/取消任务不可重复取消。
+- 连接边界：复用 `redis.asyncio` 注入式客户端，不创建全局连接；Redis connection pool 生命周期由应用装配层负责关闭。
+- 涉及文件：`backend/idea/redis_job_queue.py`、`backend/tests/test_redis_job_queue.py`、本日志。
+- 验证：待运行 JobQueue 目标测试、完整离线套件、编译和格式检查；当前无 Redis/Docker，未执行真实 lease 竞争。
+
+## 2026-07-21 — IDEA-REDIS-JOBS-001-VERIFY
+
+- 类型：Phase 1 Redis JobQueue 验证补记。
+- 结果：JobQueue 与 Redis limiter 目标测试共 8 项通过；完整离线套件 220 项通过；compileall 和 `git diff --check` 通过。
+- 安全检查：claim/complete/fail 使用 job-scoped lease token；payload/结果递归凭证字段拒绝；未把 Redis URL、密码或 BYOK 写入测试输出和日志。
+- 环境限制：未安装 Redis/Docker，未声称通过真实 Redis 原子脚本、租约过期和多 Worker 竞争；这些仍是目标环境验收项。
