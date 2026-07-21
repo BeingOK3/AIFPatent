@@ -229,3 +229,11 @@
 - 边界：仅影响 Docker build 阶段，不改变 MinIO 版本、运行时镜像、业务服务或 Python 依赖；基础镜像仍按 Dockerfile digest 锁定。
 - 涉及文件：`deploy/rag/Dockerfile.minio`、`deploy/rag/compose.yml`、本日志。
 - 验证：待用当前网络的可达 Go proxy 完成 MinIO 构建和三服务运行态验收。
+
+## 2026-07-21 — IDEA-INFRA-BUILD-NETWORK-001
+
+- 类型：开发环境 Docker Build 网络兼容性修正。
+- 实现：MinIO Dockerfile 的源码下载和运行时依赖安装步骤使用 BuildKit `--network=host`，仅用于构建阶段访问 WSL 宿主代理；最终对象存储容器仍由 Compose 使用隔离网络和回环端口。
+- 安全边界：没有扩大最终容器端口、卷或运行时网络；MinIO 版本和基础镜像 digest 不变。
+- 涉及文件：`deploy/rag/Dockerfile.minio`、本日志。
+- 验证：待重新构建 MinIO 并执行对象存储健康、持久化和三服务验收。

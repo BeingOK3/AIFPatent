@@ -5,11 +5,11 @@ ARG GOPROXY=https://proxy.golang.org,direct
 ENV CGO_ENABLED=0
 ENV GOPROXY=${GOPROXY}
 
-RUN GOBIN=/out go install "github.com/minio/minio@${MINIO_VERSION}"
+RUN --network=host GOBIN=/out go install "github.com/minio/minio@${MINIO_VERSION}"
 
 FROM debian:bookworm-slim
 
-RUN apt-get update \
+RUN --network=host apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 minio \
