@@ -79,6 +79,8 @@ class CorpusPrerequisiteRepository(Protocol):
         self, run_id: str, document_ids: tuple[str, ...]
     ) -> None: ...
 
+    async def sync_run_status(self, run_id: str) -> bool: ...
+
 
 class CorpusChunkPersistence(Protocol):
     async def persist(
@@ -317,6 +319,14 @@ class PatentCorpusIngestService:
         if not document_ids:
             raise ValueError("at least one document ID is required")
         await self.run_links.mark_deep_reviewed(run_id, document_ids)
+
+    async def sync_run_status(self, run_id: str) -> bool:
+        if self.prerequisites is None:
+            return False
+        sync = getattr(self.prerequisites, "sync_run_status", None)
+        if sync is None:
+            return False
+        return bool(await sync(run_id))
 
 
 __all__ = [

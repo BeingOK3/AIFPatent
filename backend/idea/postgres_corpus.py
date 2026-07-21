@@ -393,6 +393,44 @@ class PostgreSQLCorpusPrerequisiteRepository:
         finally:
             await connection.close()
 
+    async def sync_run_status(self, run_id: str) -> bool:
+        """Copy only mutable Run lifecycle fields after SQLite reaches a new state."""
+        run = self.database.get_run(run_id)
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    UPDATE idea_runs
+                    SET status = %s, limitation_json = %s::jsonb,
+                        started_at = %s, completed_at = %s,
+                        error_code = %s, error_message = %s
+                    WHERE run_id = %s
+                    RETURNING status, limitation_json, started_at, completed_at,
+                              error_code, error_message
+                    """,
+                    (
+                        run["status"],
+                        json.dumps(run["limitation_json"], ensure_ascii=False),
+                        run["started_at"],
+                        run["completed_at"],
+                        run["error_code"],
+                        run["error_message"],
+                        run_id,
+                    ),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    await connection.rollback()
+                    return False
+            await connection.commit()
+            return True
+        except Exception:
+            await connection.rollback()
+            raise
+        finally:
+            await connection.close()
+
 
 class PostgreSQLCorpusRunLinkRepository:
     """Write-once PostgreSQL binding from an IDEA run document to a Version."""

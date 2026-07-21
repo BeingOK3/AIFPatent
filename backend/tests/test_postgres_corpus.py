@@ -9,6 +9,7 @@ from idea.chunks import PatentChunk
 from idea.corpus import CorpusRunLink, CorpusVersion
 from idea.postgres_corpus import (
     PostgreSQLCorpusError,
+    PostgreSQLCorpusPrerequisiteRepository,
     PostgreSQLCorpusRunLinkRepository,
     PostgreSQLCorpusVersionRepository,
     PostgreSQLPatentChunkRepository,
@@ -51,6 +52,30 @@ class FakeConnection:
 
     async def close(self) -> None:
         return None
+
+
+class SyncCursor:
+    def __init__(self, row=("COMPLETED", [], 1, 2, None, None)) -> None:
+        self.row = row
+        self.executions = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return None
+
+    async def execute(self, query, parameters):
+        self.executions.append((query, parameters))
+
+    async def fetchone(self):
+        return self.row
+
+
+class SyncConnection(FakeConnection):
+    def __init__(self, row=("COMPLETED", [], 1, 2, None, None)) -> None:
+        super().__init__()
+        self.cursor_instance = SyncCursor(row)
 
 
 class PostgreSQLCorpusContractTests(unittest.TestCase):
@@ -122,6 +147,63 @@ class PostgreSQLCorpusContractTests(unittest.TestCase):
         self.assertEqual(len(connection.cursor_instance.executions), 2)
         self.assertIn("UPDATE run_document_versions", connection.cursor_instance.executions[0][0])
         self.assertIn("UPDATE run_documents", connection.cursor_instance.executions[1][0])
+
+    def test_terminal_run_status_sync_updates_only_mutable_bridge_fields(self) -> None:
+        connection = SyncConnection()
+
+        class SourceDatabase:
+            @staticmethod
+            def get_run(_run_id):
+                return {
+                    "status": "COMPLETED",
+                    "limitation_json": [],
+                    "started_at": 1,
+                    "completed_at": 2,
+                    "error_code": None,
+                    "error_message": None,
+                }
+
+        async def connect(_dsn):
+            return connection
+
+        synced = asyncio.run(
+            PostgreSQLCorpusPrerequisiteRepository(
+                SourceDatabase(), "postgresql://test", connect=connect
+            ).sync_run_status("run-1")
+        )
+
+        self.assertTrue(synced)
+        sql, parameters = connection.cursor_instance.executions[0]
+        self.assertIn("UPDATE idea_runs", sql)
+        self.assertIn("status = %s", sql)
+        for immutable in ("case_id", "evaluation_date", "model", "config_snapshot"):
+            self.assertNotIn(f"{immutable} =", sql)
+        self.assertEqual(parameters[-1], "run-1")
+        self.assertTrue(connection.committed)
+
+    def test_run_status_sync_is_noop_when_run_was_never_bridged(self) -> None:
+        connection = SyncConnection(row=None)
+
+        class SourceDatabase:
+            @staticmethod
+            def get_run(_run_id):
+                return {
+                    "status": "FAILED", "limitation_json": [],
+                    "started_at": None, "completed_at": 2,
+                    "error_code": "FAIL", "error_message": "failed",
+                }
+
+        async def connect(_dsn):
+            return connection
+
+        synced = asyncio.run(
+            PostgreSQLCorpusPrerequisiteRepository(
+                SourceDatabase(), "postgresql://test", connect=connect
+            ).sync_run_status("run-missing")
+        )
+
+        self.assertFalse(synced)
+        self.assertTrue(connection.rolled_back)
 
     def test_chunk_conversion_preserves_structure_and_offsets(self) -> None:
         row = {

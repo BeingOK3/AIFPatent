@@ -545,3 +545,15 @@
 - Context 关联：现有 `model_context_manifests.turn_id` 增加到追问 Turn 的外键，首次报告 Context 的 NULL turn 不受影响；删除源 Run 时按既有运维语义级联 Thread/Turn，但专利 Chunk 继续 RESTRICT 保护耐久证据。
 - 迁移：新增幂等 `050_followup_schema.sql` 并加入 `tools/rag_infra.py migrate`；现有 PostgreSQL 数据卷已成功执行，旧表/报告未修改，第二次执行将继续由 IF NOT EXISTS/迁移记录保护。
 - 验证：Schema 与基础设施 19 项聚焦测试通过，真实 PostgreSQL 迁移完整提交；此保存点只建立数据契约，尚未开放追问 API 或启用 `followup_rag`。
+
+## 2026-07-22 — IDEA-FOLLOWUP-DB-001-REPOSITORY
+
+- 类型：Phase 4 追问冻结范围、Thread/Turn 生命周期与 Retrieval/Citation 仓储。
+- Scope：Thread 只能从 PostgreSQL 中 `COMPLETED`/`COMPLETED_WITH_LIMITATIONS` 的源 Run 创建，并只冻结该 Run 的 `deep_reviewed=true`、Corpus/Version `READY` 文档；用户选择的公开号必须是该集合子集。Scope 记录 Document/Version/公开号/正文哈希并重算与 Corpus 相同的 snapshot hash，任何存储篡改在 adapter 回读时拒绝。
+- Thread/Turn：公开共享仓储提供创建/读取/列表/归档 Thread，以及创建、启动、保存计划、完成、失败和取消 Turn；父 Turn 必须属于同一 Thread 且已完成，归档 Thread 不接收新 Turn。Repository 方法不接收 API Key/Authorization，Turn 只保存模型名和版本化 Prompt/Retriever 坐标。
+- 检索审计：仅 RUNNING Turn 可写检索；`HybridSearchResult.retriever_version` 必须与 Turn 相同，所有 Chunk 必须真实存在且位于冻结 Version scope。允许模型调用前的受控重试替换命中，但已有 Citation 后禁止替换；final rank、双路 rank、RRF、query source/mode 均持久化，不保存查询向量。
+- Citation：只允许引用本 Turn `selected_for_context=true` 的 Chunk；公开号/章节从数据库复制，quote 必须与 Chunk 正文及精确 offset 一致，quote hash 与 citation ID 由后端确定性生成。伪造正文、偏移、未检索 Chunk 或跨 Version 引用均 fail closed。
+- 实际缺陷修正：真实验收发现 PostgreSQL 桥接的 5 个已有 Run 全部停留在 Corpus ingest 时的 `RUNNING`，导致合法历史报告无法创建 Thread。新增工作流 `finally` 终态同步，只更新 PostgreSQL Run 的 status/limitation/timestamps/error 等可变字段，不触碰不可变输入；新增 `tools/sync_postgres_run_status.py` 修复历史桥接。
+- 远程数据修复：维护工具从应用 SQLite 卷读取 6 个终态 Run，其中 5 个存在 PostgreSQL 桥接并成功同步；修复后 PostgreSQL 为 3 个 `COMPLETED_WITH_LIMITATIONS`、2 个 `FAILED`，未桥接的 1 个 Run 保持只在源库，不伪造记录。
+- 真实验收：使用随机 Case/Run/Thread 在真实数据库复用一个 READY Corpus Version，完成 Thread、限定单文献 Turn、计划、Hybrid retrieval、原文 Citation、`COMPLETED_WITH_LIMITATIONS`、终态篡改拒绝、子 Turn 失败与 Thread 归档；随后精确删除随机 Case 及级联测试记录。聚焦 28 项与真实集成 1 项通过。
+- 未完成：尚未实现固定追问 Workflow、回答 schema/引用完成门、API/SSE 和 UI；`followup_rag` 继续默认关闭。

@@ -2,7 +2,7 @@
 
 本目录独立承载耐久专利全文语料、首次 IDEA 评审 RAG、评审后追问、Citation、Variant 和二次研究相关的设计与后续开发记录，不与项目既有 `docs/` 混合。
 
-当前 `develop` 已完成首次报告 `LEXICAL_RAG` MVP：共享专利 Version/Chunk、PostgreSQL 词法检索、分析前 Context Manifest 和模型实际选择的可验证 Citation 已进入默认运行路径。`tools/e2e_lexical_rag.py` 会独立回查 PostgreSQL Context、allowed Version、Chunk 与模型选择，而不是让报告自行证明正确。Phase 4 已具备部署级 Embedding Provider、PostgreSQL 缓存、受冻结 Version 范围约束的 pgvector 精确召回、RRF/章节权重/多样性排序内核，以及追问 Thread/Turn/Retrieval/Citation Schema；这些能力默认仍关闭，尚未接入公开 API。
+当前 `develop` 已完成首次报告 `LEXICAL_RAG` MVP：共享专利 Version/Chunk、PostgreSQL 词法检索、分析前 Context Manifest 和模型实际选择的可验证 Citation 已进入默认运行路径。`tools/e2e_lexical_rag.py` 会独立回查 PostgreSQL Context、allowed Version、Chunk 与模型选择，而不是让报告自行证明正确。Phase 4 已具备部署级 Embedding Provider、PostgreSQL 缓存、受冻结 Version 范围约束的 pgvector 精确召回、RRF/章节权重/多样性排序内核，以及经过真实数据库验证的追问 Thread/Turn/Retrieval/Citation 仓储；这些能力默认仍关闭，尚未接入公开 API。
 
 仍未完成的后续范围：
 

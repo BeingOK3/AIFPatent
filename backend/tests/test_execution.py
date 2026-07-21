@@ -143,6 +143,7 @@ class FakeCorpusIngest:
     def __init__(self):
         self.calls = []
         self.reviewed = []
+        self.synced = []
 
     async def ingest_many(self, **kwargs):
         self.calls.append(kwargs)
@@ -154,6 +155,10 @@ class FakeCorpusIngest:
 
     async def mark_deep_reviewed(self, run_id, document_ids):
         self.reviewed.append((run_id, document_ids))
+
+    async def sync_run_status(self, run_id):
+        self.synced.append(run_id)
+        return True
 
 
 class FakeReportRag:
@@ -327,6 +332,7 @@ class WorkflowExecutorTests(unittest.TestCase):
 
         self.assertEqual(status, "COMPLETED")
         self.assertEqual(len(corpus.calls), 1)
+        self.assertEqual(corpus.synced, [run["run_id"]])
         self.assertEqual(corpus.reviewed[0][0], run["run_id"])
         self.assertEqual(
             set(corpus.reviewed[0][1]), set(corpus.calls[0]["document_ids"].values())

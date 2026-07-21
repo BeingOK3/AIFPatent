@@ -87,7 +87,11 @@ class WorkflowExecutor:
         )
 
     async def execute(self, run_id: str) -> str:
-        return await self.graph.execute(run_id)
+        try:
+            return await self.graph.execute(run_id)
+        finally:
+            if self.corpus_ingest is not None:
+                await self.corpus_ingest.sync_run_status(run_id)
 
     async def aclose(self) -> None:
         await self.graph.aclose()
