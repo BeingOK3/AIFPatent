@@ -2,9 +2,9 @@
 
 > 文档状态：待实现设计基线
 >
-> 版本：1.1
+> 版本：1.2
 >
-> 日期：2026-07-20
+> 日期：2026-07-21
 >
 > 适用范围：AIFPatent 专利全文语料、首次 IDEA 评审、评审后追问、混合 RAG、方案变体与二次研究
 >
@@ -281,6 +281,51 @@
 - 加入 IDEA F1..Fn、原特征映射和原结论；
 - 不把不受信任的专利文本当作模型指令；
 - 避免把全部聊天历史直接拼入提示词。
+
+#### 模型上下文所有权与 LangChain 边界
+
+模型上下文属于专利领域层，不属于 LangChain Agent Memory。`ContextAssembler` 必须输出版本化、可审计的 `AssembledModelContext`，至少包含：
+
+- `context_version`、`purpose`、`prompt_version`、`retriever_version`；
+- `run_id`、可选 `turn_id` 和冻结的 `corpus_snapshot_hash`；
+- 最终模型消息及其角色，但不包含 API Key；
+- 本次允许的 Document Version、选中 Chunk 和 Citation Packet；
+- token/字符预算、预留输出预算、各专利/章节实际占用；
+- 因预算被排除的候选及原因、降级项和限制；
+- 对上述稳定 Manifest 计算的 `context_hash`。
+
+业务 PostgreSQL 保存 Context Manifest、稳定 ID、预算、版本和哈希，以便重建并审计模型实际依据；完整专利正文继续由不可变 Version/Blob 提供，不在 Context Manifest、默认调试日志或 LangGraph Checkpoint 中重复保存。Prompt 模板、序列化器和 Token Counter 必须有版本，只有版本相同且源 Version/Chunk 未变化时才承诺可复现。
+
+上下文装配顺序固定为：
+
+```text
+FollowupScopeService / EvaluationEvidencePipeline
+→ HybridRetriever
+→ ContextAssembler
+→ AssembledModelContext
+→ LangChain Message/Prompt Adapter
+→ StructuredModelClient / ChatOpenAI
+→ Schema Validator / CitationVerifier
+```
+
+LangChain 可以复用：
+
+- `ChatOpenAI` 和标准消息类型；
+- Prompt 模板渲染；
+- 通过项目 `TokenCounter` 接口适配的模型 token 估算；
+- 不改变证据语义的消息序列化工具。
+
+LangChain 不得成为以下能力的权威实现：
+
+- Thread/Turn、专利事实、Document Version、Chunk 或 Citation 的持久化；
+- 检索范围、技术特征覆盖、专利/章节配额和上下文优先级；
+- 自动 Agent Memory、跨 Thread Long-term Memory 或把完整 Messages State 写入 Graph State；
+- 自动裁剪、自动摘要或中间件静默删除证据；
+- Retriever/VectorStore 返回结果的范围、哈希和引用合法性判断。
+
+如使用 LangChain 的 trim、summarization 或 token helper，只能封装在项目接口之后作为非权威工具。任何裁剪都必须先由 `ContextAssembler` 按领域规则生成新的 Manifest；达到预算仍无法保留强制摘要、全部独立权利要求、父权利要求链或指定专利最低配额时，必须显式失败或记录降级，不能静默截断。
+
+原始 Thread/Turn 始终不可变追加。历史摘要只能作为带来源 Turn ID、摘要模型/版本和验证状态的派生记录，不能替换原始消息，也不能作为专利事实证据；每轮专利事实仍必须由本轮 Retrieval Hit 和 Citation Packet 支持。
 
 #### `FollowupAnswerService`
 
@@ -1018,6 +1063,34 @@ PRIMARY KEY(run_id, version_id, feature_id, chunk_id, selection_reason)
 
 现有 Evidence/Feature Mapping 需要新增 `version_id` 和可空 `chunk_id`，使报告中的最终证据能够回到冻结全文。无法对应单一 Chunk 的组合证据使用独立关联表，不得把多个原文拼成一个伪造偏移。
 
+#### `model_context_manifests`
+
+首次报告和追问共用上下文审计表。该表保存重建上下文所需的稳定引用和版本，不重复保存完整 Prompt 或专利正文：
+
+```text
+context_id                 TEXT PRIMARY KEY
+purpose                    INITIAL_REVIEW | FOLLOWUP
+run_id                     TEXT NOT NULL
+turn_id                    TEXT
+agent_name                 TEXT NOT NULL
+context_version            TEXT NOT NULL
+prompt_version             TEXT NOT NULL
+retriever_version          TEXT NOT NULL
+token_counter_version      TEXT NOT NULL
+corpus_snapshot_hash       TEXT NOT NULL
+allowed_version_ids_json   TEXT NOT NULL
+selected_chunk_ids_json    TEXT NOT NULL
+citation_bindings_json     TEXT NOT NULL
+budget_json                TEXT NOT NULL
+omissions_json             TEXT NOT NULL
+limitations_json           TEXT NOT NULL
+manifest_json              TEXT NOT NULL
+context_hash               TEXT NOT NULL
+created_at                 INTEGER NOT NULL
+```
+
+`citation_bindings_json` 只保存 alias、Version/Chunk ID、位置和 quote hash 等稳定绑定；原文由 Chunk/Blob 和永久 Citation 表提供。`manifest_json` 使用确定性序列化，排除密钥、请求头、易变时间和 Provider 响应 ID。模型调用 attempt 可以分别引用同一 `context_id`；如纠错改变消息、Citation Packet 或预算，则必须创建新的 Manifest 和 `context_hash`。
+
 ### 11.2 对话表
 
 #### `followup_threads`
@@ -1271,6 +1344,14 @@ POST /api/idea/followups/turns/{turn_id}/research-runs
       "active_profile": "patent-multilingual-v1",
       "credentials_source": "deployment_secret",
       "batch_size": 32
+    },
+    "context": {
+      "contract_version": "patent-context/1.0",
+      "token_counter": "model_adapter_with_character_fallback",
+      "persist_manifest": true,
+      "persist_full_prompt": false,
+      "langchain_agent_memory_enabled": false,
+      "overflow_policy": "fail_or_explicit_degradation"
     }
   },
   "followup": {
@@ -1495,7 +1576,18 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 - 从属权利要求命中时正确补齐父权利要求链；
 - `NOT_DISCLOSED` 不会仅因普通 Top-K 未命中而产生。
 
-### 19.3 Answer 测试
+### 19.3 Model Context 测试
+
+- 相同 Scope、Retrieval Hit、模板和版本生成相同 Context Manifest 与 `context_hash`；
+- Manifest 中每个 Citation alias 都唯一绑定允许范围内的 Version/Chunk，且最终消息不能出现 Manifest 外的证据；
+- token/字符预算、输出预留、专利配额和章节配额均可重算；
+- 强制摘要、全部独立权利要求、父权利要求链和用户指定专利最低配额不会被普通 Top-K 或自动裁剪挤出；
+- 预算不足时显式失败或记录降级及被排除项，不静默截断；
+- 最近对话和派生摘要不能替代本轮证据检索，摘要不能覆盖原始 Turn；
+- 完整问题、专利正文、API Key 和最终模型上下文不会进入 LangGraph Checkpoint 或默认调试日志；
+- LangChain 消息、Prompt 或 Token helper 升级只能影响适配层，并由固定 fixture/golden test 检测序列化和预算变化。
+
+### 19.4 Answer 测试
 
 - 未知 Citation alias 被拒绝；
 - 跨文献 Citation 被拒绝；
@@ -1510,7 +1602,7 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 - 新 Run 报告的 Evidence 能定位到冻结的 `version_id/chunk_id`；
 - 确定性新颖性判断不跨文献拼接 Chunk。
 
-### 19.4 API/Workflow 测试
+### 19.5 API/Workflow 测试
 
 - 未完成 Run 无法创建 Thread；
 - Thread Snapshot 创建后不可变；
@@ -1523,7 +1615,7 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 - 公开 UI/API 不暴露数据库维护、Corpus GC 或任意删除入口；
 - 多 Worker 并发时 Google Provider 的网络临界区仍全局为 1，熔断在重启后有效。
 
-### 19.5 真实验收集
+### 19.6 真实验收集
 
 至少准备：
 
@@ -1591,8 +1683,9 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 1. `IDEA-RAG-PGFTS-001`：PostgreSQL FTS/`pg_trgm`、中英 tokenization 和 repair；
 2. `IDEA-REPORT-RETRIEVAL-001`：`F_i × D_j` 检索命中与审计表；
 3. `IDEA-REPORT-CLAIMS-001`：摘要、独立权利要求强制覆盖和父权利要求链；
-4. `IDEA-REPORT-RAG-001`：`ANALYZE_DOCUMENTS` 使用共享 Retriever/ContextAssembler；
-5. `IDEA-REPORT-CITATION-001`：报告 Evidence 绑定 Version/Chunk 并在 UI 展开原文。
+4. `IDEA-CONTEXT-CONTRACT-001`：`AssembledModelContext`、Context Manifest/Hash、TokenCounter、预算/配额、Prompt 版本和 LangChain 适配边界；
+5. `IDEA-REPORT-RAG-001`：`ANALYZE_DOCUMENTS` 使用共享 Retriever/ContextAssembler；
+6. `IDEA-REPORT-CITATION-001`：报告 Evidence 绑定 Version/Chunk 并在 UI 展开原文。
 
 完成门槛：新 Run 的首次报告不再依赖旧式说明书片段 Top-K 作为唯一输入；所有独立权利要求均被评估，报告 Evidence 能定位到耐久原文，并明确标记 `LEXICAL_RAG`。
 
@@ -1603,11 +1696,12 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 3. `IDEA-RAG-HYBRID-001`：RRF、章节权重和多样性；
 4. `IDEA-FOLLOWUP-DB-001`：Thread/Turn/Retrieval/Citation Schema；
 5. `IDEA-FOLLOWUP-WF-001`：独立固定追问 Workflow；
-6. `IDEA-FOLLOWUP-ANSWER-001`：结构化回答和引用门禁；
-7. `IDEA-FOLLOWUP-API-001`：公开 API、SSE、取消和 BYOK；
-8. `IDEA-FOLLOWUP-UI-001`：Thread、范围和引用展开；
-9. `IDEA-RERANK-001`：可选语义重排；
-10. `IDEA-RAG-EVAL-001`：首次报告与追问共用的离线检索/引用评测集。
+6. `IDEA-FOLLOWUP-CONTEXT-001`：最近 Turn、可验证派生摘要、本轮证据重检索和首次报告共用的 ContextAssembler；
+7. `IDEA-FOLLOWUP-ANSWER-001`：结构化回答和引用门禁；
+8. `IDEA-FOLLOWUP-API-001`：公开 API、SSE、取消和 BYOK；
+9. `IDEA-FOLLOWUP-UI-001`：Thread、范围和引用展开；
+10. `IDEA-RERANK-001`：可选语义重排；
+11. `IDEA-RAG-EVAL-001`：首次报告与追问共用的离线检索/引用评测集。
 
 完成门槛：首次报告和追问都使用同一混合 Retriever；相较纯词法检索提升相关证据召回率，且不增加范围越界；FIFO 清空后仍能对指定深读文献稳定追问。
 
@@ -1647,7 +1741,11 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 22. 新颖性不得跨文献拼接，技术重合、现有技术风险、权利要求相关性和法律侵权严格区分；
 23. Design-around 只生成候选，正式评审必须创建 Variant/子 Run；
 24. BYOK 凭证不持久化，服务重启后不能秘密恢复；
-25. 数据源授权不允许的全文不得以技术手段绕过限制持久化。
+25. 数据源授权不允许的全文不得以技术手段绕过限制持久化；
+26. 模型上下文由版本化 `ContextAssembler` 生成，业务 PostgreSQL 中的 Context Manifest 是装配审计来源，LangChain 仅作为可替换适配器；
+27. LangGraph Checkpoint 只保存轻量执行状态，不保存完整 Messages State、问题、专利正文、Citation Packet 或模型上下文；
+28. LangChain Agent Memory、自动裁剪和自动摘要不作为权威上下文或历史存储，任何裁剪、摘要和预算降级必须服从领域规则并可审计；
+29. 原始 Turn 不可变，派生摘要不能替代原始消息或本轮专利证据。
 
 ## 22. 推荐的首个开发切片
 
@@ -1663,6 +1761,7 @@ PostgreSQL/pgvector + Redis + ObjectStore
 → Patent-aware Chunking
 → PostgreSQL FTS 查询 CLI/测试接口
 → 新 Run 的 Feature × Patent 证据检索
+→ Context Contract / Manifest / Hash
 → 报告 Citation 展开
 → 一轮无历史的 Evidence QA
 → Citation Verifier

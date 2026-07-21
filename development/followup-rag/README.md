@@ -13,6 +13,7 @@
 
 - 原 IDEA 固定 11 步 Workflow、历史报告和 Manifest 保持不可变；
 - 新 Run 在深读全文入库后，逐步迁移到 `Feature × Patent` 的结构化 RAG 证据处理；
+- 模型上下文由项目的版本化 `ContextAssembler` 装配并保存可审计 Manifest；LangChain 仅复用 Message、Prompt、Token 和 `ChatOpenAI` 等适配能力，不使用通用 Agent Memory 作为业务事实来源；
 - 目标生产数据底座为 PostgreSQL + pgvector、S3/MinIO 兼容对象存储和 Redis；SQLite 仅代表迁移前的当前实现；
 - 只默认保存深度分析专利全文，普通候选仅保存检索元数据；
 - 当前采用 `public_shared`：不建设用户、组织、分组和租户权限，所有访客都可查看全部业务内容；

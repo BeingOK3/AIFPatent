@@ -34,3 +34,20 @@
 - 类型：文档验证补记。
 - 结果：三份开发文档 Markdown fence 数量为偶数，无行尾空白；前置文档 `docs/aifpatent-architecture.md` 存在；架构基线中未残留“SQLite 是新 RAG 业务事实来源”“FTS5/sqlite_exact 是新 MVP”等旧方向表述。
 - Git：`development/` 当前整体为未跟踪目录，因此普通 `git diff --check` 不覆盖这些新文件；已对三份实际文件独立执行格式扫描，工作树中其他已有代码与文档改动未被本 Work Unit 修改。
+
+## 2026-07-21 — AIF-CONTEXT-DESIGN-003
+
+- 类型：模型上下文所有权、LangChain 复用边界与实施计划补充。
+- 上下文所有权：专利模型上下文由项目的版本化 `ContextAssembler` 生成；新增目标逻辑表 `model_context_manifests`，记录 Scope、Version/Chunk、Citation 绑定、预算/配额、Prompt/Retriever/TokenCounter 版本、排除项、限制和 `context_hash`，业务 PostgreSQL 是装配审计来源。
+- LangChain 边界：继续复用 `ChatOpenAI`、标准消息、Prompt 渲染和经项目接口封装的 Token helper；不使用 Agent Memory、Long-term Memory、自动裁剪/摘要或 Retriever/VectorStore 作为专利事实、上下文范围、证据优先级和引用合法性的权威实现。
+- 状态边界：LangGraph Checkpoint 继续只保存轻量执行状态，不保存完整 Messages State、问题、专利正文、Citation Packet 或最终模型上下文；完整 Prompt 不进入默认调试日志。
+- 对话语义：原始 Thread/Turn 不可变追加；派生摘要必须绑定来源 Turn 和模型/版本并可验证，不能覆盖历史，也不能替代每轮重新检索的专利证据。
+- 实施路线：Phase 3 新增 `IDEA-CONTEXT-CONTRACT-001`，Phase 4 新增 `IDEA-FOLLOWUP-CONTEXT-001`，并补充确定性重建、预算溢出、强制证据配额、适配层升级和 Checkpoint 泄漏测试。
+- 涉及文件：`development/followup-rag/architecture.md`、`development/followup-rag/README.md`、`development/followup-rag/development-log.md`。
+- 验证：待完成术语、编号、JSON 示例、Markdown fence、内部链接和 diff 格式检查；本 Work Unit 只更新后续开发计划，不修改当前运行时代码。
+
+## 2026-07-21 — AIF-CONTEXT-DESIGN-003-VERIFY
+
+- 类型：文档验证补记。
+- 结果：配置 JSON 示例可解析；架构文档 Markdown fence 成对；三份开发文档无行尾空白；上下文逻辑表、Phase 3/4 Work Unit、固定架构决策和推荐开发切片相互对应；前置架构文档存在。
+- Git：`git diff --check` 通过；本次仅修改 `development/followup-rag/` 下三份计划文档，未修改运行时代码。
