@@ -13,6 +13,7 @@ from .agent_schemas import (
 )
 from .agents import AgentExecutionError, IdeaAgentService
 from .database import Database, canonical_json, now_ms
+from .citations import VerifiedCitation
 from .run_store import RunStore
 
 
@@ -45,10 +46,18 @@ JUDGMENT_LABELS = {
 
 
 class ReportService:
-    def __init__(self, database: Database, run_store: RunStore, agents: IdeaAgentService):
+    def __init__(
+        self,
+        database: Database,
+        run_store: RunStore,
+        agents: IdeaAgentService,
+        *,
+        citations: Any | None = None,
+    ):
         self.database = database
         self.run_store = run_store
         self.agents = agents
+        self.citations = citations
 
     async def generate(
         self,
@@ -68,6 +77,14 @@ class ReportService:
             ).fetchone():
                 raise AgentExecutionError("report already exists for this run")
         facts = self._load_facts(run_id)
+        verified_citations: tuple[VerifiedCitation, ...] = ()
+        if self.citations is not None:
+            verified_citations = tuple(await self.citations.for_run(run_id))
+            if not verified_citations:
+                raise AgentExecutionError(
+                    "initial report RAG produced no verified Citations"
+                )
+            self._attach_citations(facts["deep_reviews"], verified_citations)
         novelty_label = {
             "NOVEL": "具备新颖性",
             "NOT_NOVEL": "不具备新颖性",
@@ -123,8 +140,18 @@ class ReportService:
         all_limitations = self._collect_limitations(
             novelty, inventive_routes, value, limitations or [], facts["provider_limitations"]
         )
+        novelty_payload = novelty.model_dump(mode="json")
+        if verified_citations:
+            for matrix in novelty_payload["matrices"]:
+                for mapping in matrix["mappings"]:
+                    mapping["citations"] = [
+                        item.to_dict()
+                        for item in verified_citations
+                        if item.feature_id == mapping["feature_id"]
+                        and item.publication_number == matrix["publication_number"]
+                    ]
         report = {
-            "schema_version": "1.0",
+            "schema_version": "2.0" if verified_citations else "1.0",
             "run_id": run_id,
             "case_id": run["case_id"],
             "conclusion_overview": {
@@ -147,7 +174,8 @@ class ReportService:
             "provider_status": facts["provider_status"],
             "candidate_documents": facts["candidates"],
             "deep_review_documents": facts["deep_reviews"],
-            "novelty": novelty.model_dump(mode="json"),
+            "novelty": novelty_payload,
+            "citations": [item.to_dict() for item in verified_citations],
             "inventiveness": [route.model_dump(mode="json") for route in inventive_routes],
             "value_assessment": value.model_dump(mode="json"),
             "simulated_office_action": narrative.simulated_office_action,
@@ -179,10 +207,28 @@ class ReportService:
                 "schema_version": report["schema_version"],
                 "novelty_conclusion": novelty.conclusion,
                 "workflow_version": run["workflow_version"],
+                "citation_count": len(verified_citations),
+                "citation_context_ids": sorted(
+                    {item.context_id for item in verified_citations}
+                ),
             },
         )
         self._persist_report(run, manifest)
         return report
+
+    @staticmethod
+    def _attach_citations(
+        deep_reviews: list[dict[str, Any]],
+        citations: tuple[VerifiedCitation, ...],
+    ) -> None:
+        for document in deep_reviews:
+            for mapping in document["feature_mappings"]:
+                mapping["citations"] = [
+                    item.to_dict()
+                    for item in citations
+                    if item.feature_id == mapping["feature_id"]
+                    and item.publication_number == document["publication_number"]
+                ]
 
     def _load_facts(self, run_id: str) -> dict[str, Any]:
         with self.database.connect() as connection:
@@ -433,6 +479,19 @@ class ReportService:
         )
         if not report["deep_review_documents"]:
             lines.append("- 无深度核验文献。")
+        for document in report["deep_review_documents"]:
+            for mapping in document["feature_mappings"]:
+                citations = mapping.get("citations", [])
+                if not citations:
+                    continue
+                lines.append(
+                    f"- {mapping['feature_id']}：{mapping['status']}（置信度 {mapping['confidence']:.2f}）"
+                )
+                for citation in citations:
+                    lines.append(
+                        f"  - 依据：[{citation['alias']}] {citation['publication_number']}，{citation['section_label']}"
+                    )
+                    lines.append(f"    原文：{citation['excerpt']}")
         lines.extend([
             "", "## 8. 新颖性矩阵和结论", "", novelty["rationale"], "",
             f"- 最接近文献：{ReportService._publication_link(novelty['closest_publication_number'])}",

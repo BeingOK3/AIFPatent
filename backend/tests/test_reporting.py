@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from idea.agent_schemas import IdeaParserOutput, NoveltyResult, ReportComposerOutput, ValueAnalyzerOutput
 from idea.agents import AgentExecutionError, IdeaAgentService
+from idea.citations import VerifiedCitation
 from idea.database import Database
 from idea.model_client import AgentCallResult
 from idea.reporting import ReportService
@@ -99,8 +100,55 @@ class ReportingTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def service(self, model):
-        return ReportService(self.db, self.store, IdeaAgentService(self.db, model))
+    def service(self, model, citations=None):
+        return ReportService(
+            self.db, self.store, IdeaAgentService(self.db, model), citations=citations
+        )
+
+    def test_rag_report_emits_verified_citations_in_json_and_markdown(self) -> None:
+        with self.db.connect() as connection:
+            connection.execute(
+                """INSERT INTO idea_features(
+                    feature_id,run_id,ordinal,feature_text,source_type,metadata_json
+                ) VALUES(?,?,?,?,?,?)""",
+                (f"{self.run_id}:F1", self.run_id, 1, "token heat eviction",
+                 "normalized", '{"external_feature_id":"F1"}'),
+            )
+            connection.execute(
+                """INSERT INTO feature_mappings(
+                    mapping_id,run_id,document_id,feature_id,coverage_status,
+                    confidence,evidence_ids_json,rationale
+                ) VALUES(?,?,?,?,?,?,?,?)""",
+                ("map-1", self.run_id, "doc-1", f"{self.run_id}:F1",
+                 "PARTIAL", 0.7, '["E1"]', "partial disclosure"),
+            )
+        citation = VerifiedCitation(
+            context_id="CTX-fixture", feature_id="F1", alias="C1",
+            chunk_id="chunk-1", version_id="cv-1",
+            publication_number="US123456A1", section_type="claims",
+            section_label="claim-1", claim_number=1, start_offset=0,
+            end_offset=22, text_hash="a" * 64,
+            excerpt="1. A cache controller.",
+        )
+
+        class CitationRepository:
+            async def for_run(self, run_id):
+                self.run_id = run_id
+                return (citation,)
+
+        report = asyncio.run(
+            self.service(ReportModel(), CitationRepository()).generate(
+                self.run_id, idea(), novelty(), [], value(), []
+            )
+        )
+
+        self.assertEqual(report["schema_version"], "2.0")
+        self.assertEqual(report["citations"][0]["chunk_id"], "chunk-1")
+        mapping = report["deep_review_documents"][0]["feature_mappings"][0]
+        self.assertEqual(mapping["citations"][0]["alias"], "C1")
+        markdown = self.store.paths(self.run["case_id"], self.run_id).report_md.read_text()
+        self.assertIn("依据：[C1] US123456A1，claim-1", markdown)
+        self.assertIn("原文：1. A cache controller.", markdown)
 
     def test_authoritative_json_markdown_manifest_and_hashes_are_saved(self) -> None:
         report = asyncio.run(self.service(ReportModel()).generate(

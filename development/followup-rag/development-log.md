@@ -458,3 +458,13 @@
 - 工作流门禁：`initial_review_rag=true` 时缺少服务、Corpus snapshot hash、任一文档无可用证据或 Context 数量不完整均令 `ANALYZE_DOCUMENTS` fail closed；Checkpoint 只记录 Context ID 和 query 数，不存正文或凭证。
 - 运行时：开启特性时装配 PostgreSQL scope/chunk/context Repository 与 lexical retriever；关闭时完全不要求外部 RAG 依赖。
 - 验证：执行顺序、缺失服务、运行时装配、Context/检索聚焦测试 28 项通过；完整离线套件 298 项通过、2 项按设计跳过。
+
+## 2026-07-22 — IDEA-REPORT-CITATION-001
+
+- 类型：首次报告可验证 Citation 与 schema 2.0 输出。
+- 验证器：`CitationVerifier` 只接受 `C1..Cn`，逐字段比较 Context binding 与真实 `patent_chunks` 的 Chunk/Version/公开号/section/claim/offset/hash/text，并重新计算 excerpt SHA-256；任一字段、正文或别名被篡改即 fail closed。
+- PG 查询：`PostgreSQLCitationRepository` 从当前 Run 的 selected retrieval hit、INITIAL_REVIEW Context binding 和真实 Chunk 三方 JOIN，拒绝跨 Run feature，按 feature/context/chunk 去重后仅返回 `VerifiedCitation`。
+- JSON：启用 Citation Repository 的报告升级为 `schema_version=2.0`，顶层保留 Citation index，并在 deep-review feature mappings 与 novelty matrices 按 Feature/公开号附加 Citation。
+- Markdown：在深审文献的 Feature mapping 下输出 `依据：[C#] 公开号，章节` 和来自验证 Chunk 的原文 excerpt；Report Composer 仍无法创建或改写引用。
+- 完成门：启用 RAG 时零 Verified Citation 不允许生成报告；manifest 记录 citation count/context IDs，不记录 BYOK。
+- 验证：Citation 篡改、PG Run scope、JSON/Markdown 和兼容报告聚焦测试通过；完整离线套件 304 项通过、2 项按设计跳过。

@@ -1,6 +1,7 @@
 """Deterministic IDEA review harness."""
 
 from .config import AppConfig, ConfigError, load_config
+from .citations import CitationVerificationError, CitationVerifier, VerifiedCitation
 
 from .corpus import (
     CorpusError,
@@ -41,6 +42,7 @@ from .lexical import (
 )
 from .postgres_lexical import PostgreSQLLexicalSearchRepository
 from .postgres_context import PostgreSQLContextRepository
+from .postgres_citations import PostgreSQLCitationRepository
 from .postgres_report import PostgreSQLReportScopeRepository
 from .report_retrieval import (
     InitialReportRetriever,
@@ -64,6 +66,9 @@ from .postgres_corpus import (
 __all__ = [
     "AppConfig",
     "ConfigError",
+    "CitationVerificationError",
+    "CitationVerifier",
+    "VerifiedCitation",
     "CorpusError",
     "CorpusIngestResult",
     "CorpusMigrationError",
@@ -101,6 +106,7 @@ __all__ = [
     "LexicalTerms",
     "PostgreSQLLexicalSearchRepository",
     "PostgreSQLContextRepository",
+    "PostgreSQLCitationRepository",
     "PostgreSQLReportScopeRepository",
     "InitialReportRetriever",
     "ReportDocumentScope",

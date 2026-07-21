@@ -23,6 +23,7 @@ from .postgres_corpus import (
     PostgreSQLPatentChunkRepository,
 )
 from .postgres_context import PostgreSQLContextRepository
+from .postgres_citations import PostgreSQLCitationRepository
 from .postgres_lexical import PostgreSQLLexicalSearchRepository
 from .postgres_report import PostgreSQLReportScopeRepository
 from .providers import ExaMcpProvider, GooglePatentsProvider
@@ -166,7 +167,14 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
     )
     value = ValueAnalysisService(database, agents)
     audit = AuditService(database, agents, minimum_deep_reviews=minimum)
-    reporting = ReportService(database, run_store, agents)
+    citation_repository = None
+    if config.features.initial_review_rag:
+        citation_repository = PostgreSQLCitationRepository(
+            _required_environment("AIFPATENT_POSTGRES_DSN")
+        )
+    reporting = ReportService(
+        database, run_store, agents, citations=citation_repository
+    )
     corpus_ingest = build_corpus_ingest(config, database=database)
     report_rag = build_initial_report_rag(config)
     executor = WorkflowExecutor(
