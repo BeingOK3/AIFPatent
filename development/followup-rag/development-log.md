@@ -430,3 +430,12 @@
 - 运维：`tools/rag_infra.py migrate` 追加执行 `035`，不删除表、卷或数据；本切片不调用模型 API，也不持久化模型凭证。
 - 验证：领域编排、PostgreSQL adapter、Schema、FTS 与 Infra 聚焦测试 27 项通过；完整离线套件 291 项通过、2 项按设计跳过；现有 PostgreSQL 卷真实执行 `020/030/035` 幂等迁移成功，`035` 首次登记并创建检索审计表；容器随后停止且保留数据卷。
 - 空间边界：验证后根文件系统可用 18G，高于至少保留 5G 的门槛。
+
+## 2026-07-22 — IDEA-REPORT-CLAIMS-001
+
+- 类型：首次报告结构化强制证据覆盖。
+- 强制覆盖：对每个 required Feature 与冻结 Version，把全部摘要 Chunk 和全部 `claim_kind=independent` 的权利要求 Chunk 以 `forced_abstract`/`forced_claim` 原因加入检索审计；与 lexical 命中可共享 Chunk，但原因分别保留。
+- 父链完整性：当 lexical 命中从属权利要求时，递归加入 `parent_claim_numbers` 指向的父权利要求；缺失父权利要求、父链循环、Chunk 越出冻结 Version 或公开号不一致均 fail closed。
+- 降级语义：来源本身缺少摘要或可识别独立权利要求时，输出稳定 `MISSING_ABSTRACT`/`MISSING_INDEPENDENT_CLAIM` limitation，不伪造内容。
+- Repository：`PostgreSQLPatentChunkRepository.list_for_versions` 只接受非空唯一 Version 范围，确定性排序回读完整 Chunk，并拒绝部分缺失范围。
+- 验证：新增强制摘要、多个独立权利要求、递归父链和缺失父链测试；聚焦测试 15 项通过；完整离线套件 294 项通过、2 项按设计跳过。

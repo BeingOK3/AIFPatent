@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol, Sequence
 
 from .agent_schemas import IdeaFeature
+from .chunks import PatentChunk
 from .lexical import LexicalHit, LexicalSearchRequest
 
 
@@ -52,6 +53,7 @@ class ReportRetrievalResult:
     corpus_version_ids: tuple[str, ...]
     queries: tuple[ReportRetrievalQuery, ...]
     selections: tuple[ReportRetrievalSelection, ...]
+    limitations: tuple[str, ...] = ()
 
 
 class ReportScopeRepository(Protocol):
@@ -70,6 +72,12 @@ class LexicalSearch(Protocol):
     async def search(self, request: LexicalSearchRequest) -> Sequence[LexicalHit]: ...
 
 
+class ReportChunkSource(Protocol):
+    async def list_for_versions(
+        self, version_ids: tuple[str, ...]
+    ) -> Sequence[PatentChunk]: ...
+
+
 class InitialReportRetriever:
     """Runs an auditable lexical query for every required Feature × Version pair."""
 
@@ -78,6 +86,7 @@ class InitialReportRetriever:
         scope_repository: ReportScopeRepository,
         lexical_search: LexicalSearch,
         *,
+        chunk_repository: ReportChunkSource | None = None,
         per_pair_limit: int = 8,
         retriever_version: str = "initial-report-lexical-v1",
     ) -> None:
@@ -87,6 +96,7 @@ class InitialReportRetriever:
             raise ValueError("retriever version must not be empty")
         self.scope_repository = scope_repository
         self.lexical_search = lexical_search
+        self.chunk_repository = chunk_repository
         self.per_pair_limit = per_pair_limit
         self.retriever_version = retriever_version
 
@@ -117,6 +127,20 @@ class InitialReportRetriever:
 
         queries: list[ReportRetrievalQuery] = []
         selections: list[ReportRetrievalSelection] = []
+        limitations: list[str] = []
+        chunks_by_version: dict[str, tuple[PatentChunk, ...]] = {}
+        if self.chunk_repository is not None:
+            loaded = tuple(
+                await self.chunk_repository.list_for_versions(tuple(version_ids))
+            )
+            unexpected = {item.version_id for item in loaded} - set(version_ids)
+            if unexpected:
+                raise ReportRetrievalError("Chunk repository escaped the frozen Version scope")
+            for scope in scopes:
+                scoped = tuple(item for item in loaded if item.version_id == scope.version_id)
+                if any(item.publication_number != scope.publication_number for item in scoped):
+                    raise ReportRetrievalError("Chunk publication does not match frozen scope")
+                chunks_by_version[scope.version_id] = scoped
         for feature in required:
             for scope in scopes:
                 query_id = self._query_id(run_id, feature.feature_id, scope.version_id)
@@ -137,6 +161,16 @@ class InitialReportRetriever:
                             publication_number=scope.publication_number,
                             hit=hit,
                         )
+                    )
+                if self.chunk_repository is not None:
+                    self._append_forced_evidence(
+                        feature_id=feature.feature_id,
+                        scope=scope,
+                        query_id=query_id,
+                        chunks=chunks_by_version[scope.version_id],
+                        lexical_hits=hits,
+                        selections=selections,
+                        limitations=limitations,
                     )
                 queries.append(
                     ReportRetrievalQuery(
@@ -165,6 +199,7 @@ class InitialReportRetriever:
             corpus_version_ids=tuple(version_ids),
             queries=tuple(queries),
             selections=tuple(selections),
+            limitations=tuple(dict.fromkeys(limitations)),
         )
         await self.scope_repository.persist(result)
         return result
@@ -191,6 +226,84 @@ class InitialReportRetriever:
         if hit.rank < 1:
             raise ReportRetrievalError("lexical hit rank must be positive")
 
+    @classmethod
+    def _append_forced_evidence(
+        cls,
+        *,
+        feature_id: str,
+        scope: ReportDocumentScope,
+        query_id: str,
+        chunks: tuple[PatentChunk, ...],
+        lexical_hits: tuple[LexicalHit, ...],
+        selections: list[ReportRetrievalSelection],
+        limitations: list[str],
+    ) -> None:
+        abstracts = tuple(item for item in chunks if item.section_type == "abstract")
+        independent = tuple(
+            item
+            for item in chunks
+            if item.section_type == "claims" and item.claim_kind == "independent"
+        )
+        if not abstracts:
+            limitations.append(f"MISSING_ABSTRACT:{scope.version_id}")
+        if not independent:
+            limitations.append(f"MISSING_INDEPENDENT_CLAIM:{scope.version_id}")
+
+        existing = {
+            (item.feature_id, item.version_id, item.hit.chunk.chunk_id, item.selection_reason)
+            for item in selections
+        }
+
+        def append(chunk: PatentChunk, reason: str) -> None:
+            key = (feature_id, scope.version_id, chunk.chunk_id, reason)
+            if key in existing:
+                return
+            selections.append(
+                ReportRetrievalSelection(
+                    feature_id=feature_id,
+                    document_id=scope.document_id,
+                    version_id=scope.version_id,
+                    publication_number=scope.publication_number,
+                    hit=LexicalHit(
+                        query_id=query_id,
+                        rank=1,
+                        lexical_score=0.0,
+                        match_kind=reason,
+                        chunk=chunk,
+                    ),
+                    selection_reason=reason,
+                )
+            )
+            existing.add(key)
+
+        for item in (*abstracts, *independent):
+            append(item, "forced_abstract" if item.section_type == "abstract" else "forced_claim")
+
+        claims = {
+            item.claim_number: item
+            for item in chunks
+            if item.section_type == "claims" and item.claim_number is not None
+        }
+
+        def add_parents(item: PatentChunk, path: tuple[int, ...]) -> None:
+            for parent_number in item.parent_claim_numbers:
+                if parent_number in path:
+                    raise ReportRetrievalError(
+                        f"claim parent cycle in {scope.version_id}: {path + (parent_number,)}"
+                    )
+                parent = claims.get(parent_number)
+                if parent is None:
+                    raise ReportRetrievalError(
+                        f"missing parent claim {parent_number} in {scope.version_id}"
+                    )
+                append(parent, "forced_claim")
+                add_parents(parent, path + (parent_number,))
+
+        for hit in lexical_hits:
+            if hit.chunk.section_type == "claims" and hit.chunk.parent_claim_numbers:
+                current = hit.chunk.claim_number
+                add_parents(hit.chunk, (() if current is None else (current,)))
+
 
 __all__ = [
     "InitialReportRetriever",
@@ -200,4 +313,5 @@ __all__ = [
     "ReportRetrievalResult",
     "ReportRetrievalSelection",
     "ReportScopeRepository",
+    "ReportChunkSource",
 ]

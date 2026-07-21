@@ -745,6 +745,38 @@ class PostgreSQLPatentChunkRepository:
         finally:
             await connection.close()
 
+    async def list_for_versions(
+        self, version_ids: tuple[str, ...]
+    ) -> tuple[PatentChunk, ...]:
+        if not version_ids or len(set(version_ids)) != len(version_ids):
+            raise PostgreSQLCorpusError("Chunk read requires unique Version IDs")
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT chunk_id, version_id, publication_number, section_type,
+                           section_label, claim_number, claim_kind, parent_claims_json,
+                           start_offset, end_offset, text, text_hash, token_count,
+                           chunker_version
+                    FROM patent_chunks
+                    WHERE version_id = ANY(%s)
+                    ORDER BY version_id, section_type, section_label,
+                             start_offset, end_offset, chunk_id
+                    """,
+                    (list(version_ids),),
+                )
+                chunks = tuple(self._row_to_chunk(row) for row in await cursor.fetchall())
+            actual = {item.version_id for item in chunks}
+            missing = set(version_ids) - actual
+            if missing:
+                raise PostgreSQLCorpusError(
+                    f"Chunk read scope is incomplete for Versions: {sorted(missing)}"
+                )
+            return chunks
+        finally:
+            await connection.close()
+
     async def healthcheck(self) -> dict[str, Any]:
         connection = await self._connection()
         try:

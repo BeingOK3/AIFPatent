@@ -33,6 +33,35 @@ def chunk(version_id: str, publication_number: str, suffix: str) -> PatentChunk:
     )
 
 
+def structured_chunk(
+    version_id: str,
+    publication_number: str,
+    *,
+    section_type: str,
+    label: str,
+    claim_number: int | None = None,
+    claim_kind: str | None = None,
+    parents: tuple[int, ...] = (),
+) -> PatentChunk:
+    text = f"{label} evidence text"
+    return PatentChunk(
+        chunk_id=f"chunk-{version_id}-{label}",
+        version_id=version_id,
+        publication_number=publication_number,
+        section_type=section_type,
+        section_label=label,
+        claim_number=claim_number,
+        claim_kind=claim_kind,
+        parent_claim_numbers=parents,
+        start_offset=0,
+        end_offset=len(text),
+        text=text,
+        text_hash="b" * 64,
+        token_count=3,
+        chunker_version="claims-paragraphs-v1",
+    )
+
+
 class FakeScopeRepository:
     def __init__(self, scopes):
         self.scopes = tuple(scopes)
@@ -67,6 +96,15 @@ class FakeLexicalSearch:
                 chunk=chunk(version_id, publication, request.query_id[-2:]),
             ),
         )
+
+
+class FakeChunkRepository:
+    def __init__(self, chunks):
+        self.chunks = tuple(chunks)
+
+    async def list_for_versions(self, version_ids):
+        self.requested = tuple(version_ids)
+        return self.chunks
 
 
 class InitialReportRetrieverTests(unittest.TestCase):
@@ -150,6 +188,91 @@ class InitialReportRetrieverTests(unittest.TestCase):
                 InitialReportRetriever(
                     FakeScopeRepository(self.scopes), FakeLexicalSearch()
                 ).retrieve(run_id="run-1", features=(optional,))
+            )
+
+    def test_forces_abstract_and_every_independent_claim_for_each_document(self) -> None:
+        chunks = (
+            structured_chunk("cv-1", "CN1A", section_type="abstract", label="abstract"),
+            structured_chunk(
+                "cv-1", "CN1A", section_type="claims", label="claim-1",
+                claim_number=1, claim_kind="independent",
+            ),
+            structured_chunk(
+                "cv-1", "CN1A", section_type="claims", label="claim-5",
+                claim_number=5, claim_kind="independent",
+            ),
+        )
+        result = asyncio.run(
+            InitialReportRetriever(
+                FakeScopeRepository(self.scopes[:1]), FakeLexicalSearch(),
+                chunk_repository=FakeChunkRepository(chunks),
+            ).retrieve(run_id="run-1", features=self.features[:1])
+        )
+
+        forced = {
+            (item.selection_reason, item.hit.chunk.section_label)
+            for item in result.selections
+            if item.selection_reason.startswith("forced_")
+        }
+        self.assertEqual(
+            forced,
+            {
+                ("forced_abstract", "abstract"),
+                ("forced_claim", "claim-1"),
+                ("forced_claim", "claim-5"),
+            },
+        )
+
+    def test_selected_dependent_claim_recursively_adds_parent_chain(self) -> None:
+        claim_1 = structured_chunk(
+            "cv-1", "CN1A", section_type="claims", label="claim-1",
+            claim_number=1, claim_kind="independent",
+        )
+        claim_2 = structured_chunk(
+            "cv-1", "CN1A", section_type="claims", label="claim-2",
+            claim_number=2, claim_kind="dependent", parents=(1,),
+        )
+        claim_3 = structured_chunk(
+            "cv-1", "CN1A", section_type="claims", label="claim-3",
+            claim_number=3, claim_kind="dependent", parents=(2,),
+        )
+
+        class DependentLexical(FakeLexicalSearch):
+            async def search(self, request):
+                self.requests.append(request)
+                return (LexicalHit(request.query_id, 1, 0.9, "fts", claim_3),)
+
+        result = asyncio.run(
+            InitialReportRetriever(
+                FakeScopeRepository(self.scopes[:1]), DependentLexical(),
+                chunk_repository=FakeChunkRepository((claim_1, claim_2, claim_3)),
+            ).retrieve(run_id="run-1", features=self.features[:1])
+        )
+
+        forced_claims = {
+            item.hit.chunk.claim_number
+            for item in result.selections
+            if item.selection_reason == "forced_claim"
+        }
+        self.assertEqual(forced_claims, {1, 2})
+
+    def test_missing_parent_claim_fails_closed(self) -> None:
+        dependent = structured_chunk(
+            "cv-1", "CN1A", section_type="claims", label="claim-3",
+            claim_number=3, claim_kind="dependent", parents=(2,),
+        )
+
+        class DependentLexical(FakeLexicalSearch):
+            async def search(self, request):
+                self.requests.append(request)
+                return (LexicalHit(request.query_id, 1, 0.9, "fts", dependent),)
+
+        with self.assertRaisesRegex(ReportRetrievalError, "parent claim 2"):
+            asyncio.run(
+                InitialReportRetriever(
+                    FakeScopeRepository(self.scopes[:1]), DependentLexical(),
+                    chunk_repository=FakeChunkRepository((dependent,)),
+                ).retrieve(run_id="run-1", features=self.features[:1])
             )
 
 

@@ -145,7 +145,12 @@ class PostgreSQLReportScopeRepository:
                             result.run_id, selection.version_id,
                             f"{result.run_id}:{selection.feature_id}",
                             selection.hit.chunk.chunk_id, selection.selection_reason,
-                            selection.hit.rank, selection.selected_for_context,
+                            (
+                                selection.hit.rank
+                                if selection.selection_reason == "lexical"
+                                else None
+                            ),
+                            selection.selected_for_context,
                             result.retriever_version, timestamp,
                         ),
                     )
