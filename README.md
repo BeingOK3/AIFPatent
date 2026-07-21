@@ -144,6 +144,14 @@ tools/rag_infra.py up
 tools/rag_infra.py status
 ```
 
+受限网络首次构建时，可以先设置依赖镜像：
+
+```bash
+export AIFPATENT_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+export AIFPATENT_GOPROXY=https://goproxy.cn,direct
+tools/rag_infra.py up
+```
+
 当前也可以用同一个 Compose 栈启动应用容器和依赖服务：
 
 ```bash

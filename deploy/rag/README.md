@@ -14,7 +14,15 @@ The first `up` creates `deploy/rag/rag.env` atomically with random credentials a
 
 The application is published only on `127.0.0.1:8001` by default and runs as a single non-root Worker. Its SQLite data, workspace and logs use separate named volumes. This is a local/single-instance deployment baseline, not a public multi-worker production deployment.
 
-If PyPI is slow or unavailable, set `AIFPATENT_PIP_INDEX_URL` in the shell before `up`, for example `https://pypi.tuna.tsinghua.edu.cn/simple`; it only changes build-time dependency download.
+`up` uses Buildx with the narrowly scoped `network.host` build entitlement because the pinned MinIO source build may need a host-side proxy; the final containers still use the isolated Compose network. If PyPI or Go modules are slow or unavailable, set both build mirrors before `up`, for example:
+
+```bash
+export AIFPATENT_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+export AIFPATENT_GOPROXY=https://goproxy.cn,direct
+tools/rag_infra.py up
+```
+
+These variables only change build-time dependency download and are not runtime credentials.
 
 `migrate` applies the additive PostgreSQL migrations to an already-created volume. This is needed because Docker runs files in `postgres-init/` only when the database volume is initialized; it never deletes or recreates the volume.
 

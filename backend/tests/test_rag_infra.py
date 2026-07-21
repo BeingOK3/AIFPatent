@@ -85,6 +85,20 @@ class RagInfrastructureTests(unittest.TestCase):
             values = rag_infra._parse_environment(path)
             self.assertEqual(values["AIFPATENT_APP_PORT"], "8001")
             self.assertEqual(values["AIFPATENT_PIP_INDEX_URL"], "https://pypi.org/simple")
+            self.assertEqual(values["AIFPATENT_GOPROXY"], "https://proxy.golang.org,direct")
+
+    def test_up_builds_only_publicly_configured_images_before_no_build_compose_start(self) -> None:
+        app = rag_infra._build_command("app")
+        minio = rag_infra._build_command("object-store")
+        self.assertIn("--allow", app)
+        self.assertIn("network.host", app)
+        self.assertIn("deploy/app/Dockerfile", " ".join(app))
+        self.assertIn("deploy/rag/Dockerfile.minio", " ".join(minio))
+        self.assertIn("--load", app)
+        self.assertEqual(rag_infra._docker_command("up")[-4:], ["up", "--detach", "--no-build", "--wait"])
+        for command in (app, minio):
+            joined = " ".join(command).upper()
+            self.assertNotIn("PASSWORD", joined)
 
         init_sql = (rag_infra.DEPLOY_ROOT / "postgres-init" / "001_extensions.sql").read_text(
             encoding="utf-8"

@@ -49,6 +49,7 @@ def _new_environment() -> str:
         "AIFPATENT_MINIO_VERSION": "RELEASE.2025-10-15T17-29-55Z",
         "AIFPATENT_APP_PORT": "8001",
         "AIFPATENT_PIP_INDEX_URL": "https://pypi.org/simple",
+        "AIFPATENT_GOPROXY": "https://proxy.golang.org,direct",
     }
     return "".join(f"{key}={value}\n" for key, value in values.items())
 
@@ -109,7 +110,7 @@ def _docker_command(action: str) -> list[str]:
         str(COMPOSE_PATH),
     ]
     commands = {
-        "up": ["up", "--detach", "--build", "--wait"],
+        "up": ["up", "--detach", "--no-build", "--wait"],
         "down": ["down"],
         "status": ["ps"],
         "check": ["config", "--quiet"],
@@ -128,12 +129,64 @@ def _docker_command(action: str) -> list[str]:
     return prefix + commands[action]
 
 
+def _build_command(service: str) -> list[str]:
+    values = _parse_environment(ENV_PATH)
+    if service == "app":
+        image = "aifpatent-rag-app"
+        dockerfile = DEPLOY_ROOT.parent / "app" / "Dockerfile"
+        args = [
+            "--build-arg",
+            "PIP_INDEX_URL="
+            + os.environ.get(
+                "AIFPATENT_PIP_INDEX_URL",
+                values.get("AIFPATENT_PIP_INDEX_URL", "https://pypi.org/simple"),
+            ),
+        ]
+    elif service == "object-store":
+        image = "aifpatent-rag-object-store"
+        dockerfile = DEPLOY_ROOT / "Dockerfile.minio"
+        args = [
+            "--build-arg",
+            "MINIO_VERSION="
+            + values.get("AIFPATENT_MINIO_VERSION", "RELEASE.2025-10-15T17-29-55Z"),
+            "--build-arg",
+            "GOPROXY="
+            + os.environ.get(
+                "AIFPATENT_GOPROXY",
+                values.get("AIFPATENT_GOPROXY", "https://proxy.golang.org,direct"),
+            ),
+        ]
+    else:
+        raise InfraError(f"unsupported build service: {service}")
+    return [
+        "docker",
+        "buildx",
+        "build",
+        "--allow",
+        "network.host",
+        "--network",
+        "host",
+        *args,
+        "--file",
+        str(dockerfile),
+        "--tag",
+        image,
+        "--load",
+        str(PROJECT_ROOT),
+    ]
+
+
 def run(action: str) -> int:
     if shutil.which("docker") is None:
         raise InfraError("docker with the Compose plugin is required")
     created = ensure_environment()
     if created:
         print(f"created local credential file: {ENV_PATH.relative_to(PROJECT_ROOT)}")
+    if action == "up":
+        for service in ("app", "object-store"):
+            built = subprocess.run(_build_command(service), cwd=PROJECT_ROOT, check=False)
+            if built.returncode != 0:
+                return built.returncode
     completed = subprocess.run(_docker_command(action), cwd=PROJECT_ROOT, check=False)
     return completed.returncode
 

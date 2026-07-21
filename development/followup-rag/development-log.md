@@ -308,3 +308,10 @@
 - 结果：四个服务均为 `healthy`；应用 OpenAPI 和前端首页可读取，容器以 `10001:10001` 运行；应用工作区命名卷写入临时标记、重启 app 后读回并清理成功。
 - 端口：应用 `127.0.0.1:8001`，PostgreSQL `127.0.0.1:5432`，Redis `127.0.0.1:6379`，MinIO `127.0.0.1:9000/9001`。
 - 更正结果：健康检查改用进程级 `/openapi.json`，业务 `/api/health` 继续保留用于真实组件健康状态；未把模型 API Key 写入镜像、Compose 或卷。
+
+## 2026-07-21 — IDEA-APP-COMPOSE-001-BUILD-ENTRYPOINT-VERIFY
+
+- 类型：统一 Compose 构建入口兼容性修正。
+- 问题：Docker Compose 当前版本即使设置 `COMPOSE_BAKE=false` 仍通过 Buildx Bake，无法授权 MinIO Dockerfile 所需的 `network.host`，导致 `tools/rag_infra.py up` 在全新构建时失败。
+- 修正：`up` 现在先用 `docker buildx build --allow network.host --network host` 构建并加载 app 与 MinIO，再执行 `docker compose up --no-build --wait`；构建参数只读取公开的 Python/Go 镜像源和版本，不读取凭证。
+- 验证：使用 PyPI 清华镜像和 `goproxy.cn` 完整执行 `tools/rag_infra.py up`，应用、PostgreSQL、Redis、MinIO 全部 `healthy`。
