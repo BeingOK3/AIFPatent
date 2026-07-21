@@ -29,6 +29,7 @@ class CorpusVersion:
     normalized_size: int
     created_at: datetime
     status: str = "READY"
+    document_id: str | None = None
 
 
 def _canonical_document(document: FetchedDocument) -> bytes:
