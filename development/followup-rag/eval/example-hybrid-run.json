@@ -1,0 +1,29 @@
+{
+  "schema_version": "rag-eval-run-v1",
+  "run_id": "synthetic-hybrid-v1",
+  "dataset_id": "synthetic-contract-v1",
+  "system_version": "example",
+  "retriever_version": "hybrid-example-v1",
+  "observations": [
+    {
+      "case_id": "report-feature-example",
+      "hits": [
+        {"chunk_id": "chunk-a", "version_id": "cv-example-1", "rank": 1, "sources": ["lexical", "vector"]},
+        {"chunk_id": "noise-a", "version_id": "cv-example-1", "rank": 2, "sources": ["lexical"]}
+      ],
+      "citations": [
+        {"chunk_id": "chunk-a", "version_id": "cv-example-1", "quote_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+      ]
+    },
+    {
+      "case_id": "followup-compare-example",
+      "hits": [
+        {"chunk_id": "chunk-c", "version_id": "cv-example-2", "rank": 1, "sources": ["lexical", "vector"]},
+        {"chunk_id": "chunk-a", "version_id": "cv-example-1", "rank": 2, "sources": ["vector"]}
+      ],
+      "citations": [
+        {"chunk_id": "chunk-c", "version_id": "cv-example-2", "quote_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+      ]
+    }
+  ]
+}

@@ -646,3 +646,13 @@
 - 缺陷留痕：同一 Thread 中保留前两轮 FAILED Turn，分别记录长词法 query 零召回与法律免责声明误报；它们未生成伪成功回答或 Citation，修正见 `IDEA-FOLLOWUP-E2E-FIX-001/002`。
 - 凭证边界：真实模型凭证仅随 Turn 请求进入进程内存，提交后立即从测试 shell 变量移除；凭证未进入仓库、配置、日志、Turn、Checkpoint 或 Context Manifest。
 - 完成结论：Phase 4 的报告内追问 MVP 已达到“用户从已完成报告创建 Thread 并获得带可验证 Citation 的结构化回答”的可用门槛。后续重点转向首次报告默认 Hybrid 切换、reranker 与统一 RAG 评测集，不再把追问 API/UI/E2E 列为未完成。
+
+## 2026-07-22 — IDEA-RAG-EVAL-001-CONTRACT
+
+- 类型：Phase 4 首次报告/追问共用的离线 RAG 评测契约、指标与 PostgreSQL 词法采集基线。
+- Ground truth：新增严格 `rag-eval-dataset-v1`，每个 Case 固定 `INITIAL_REPORT`/`FOLLOWUP`、问题、允许 Version、相关 Chunk 的 1～3 级相关性、比较型问题必须覆盖的 Version，以及精确 Citation quote hash；相关 Chunk 或 Citation target 越出冻结范围、身份重复或 hash 非法时拒绝加载。
+- 观测与指标：`rag-eval-run-v1` 记录待测系统实际返回的 Chunk/rank/source 与 Citation，不保存正文、查询向量、DSN 或凭证。评测输出 Precision@K、Recall@K、MRR@K、nDCG@K、Version coverage、Citation precision/recall，并把范围越界、引用未检索 Chunk、引用不匹配 ground truth 作为可配置的硬门禁。
+- 回归比较：`rag-eval-summary-v1` 可作为 baseline；candidate 必须满足显式 recall/nDCG/Citation delta，且不能新增范围或 Citation 违规。CLI 使用不同退出码区分质量门失败和候选回归，适合后续 CI/发布门禁。
+- 真实数据入口：`collect-postgres-lexical` 只从环境读取 DSN，对数据集中每个 Case 以参数化查询和原冻结 Version allowlist 采集 PostgreSQL 词法结果；collector 对任何 adapter 越界结果 fail closed。当前服务器已连接真实 Corpus 完成采集器冒烟，输出不含专利正文或连接信息。
+- 验证：指标精确值、双 Workflow 覆盖、数据契约、Case 覆盖、质量门、回归比较、越界/伪 Citation 和 collector fail-closed 共 8 项聚焦测试通过；合成 baseline→candidate 示例在 Recall@2 提升 `0.25`、nDCG@2 提升约 `0.1064` 且零新增违规时通过比较。
+- 边界：仓库中的 `example-*.json` 仅验证契约与工具，不是产品质量结论。首次报告切换 Hybrid 前仍需建立来自真实授权 Corpus、经人工复核且不泄露用户 IDEA/全文的私有评测集，并记录 lexical baseline 与 candidate 实测结果。

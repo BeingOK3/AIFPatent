@@ -1,0 +1,45 @@
+{
+  "schema_version": "rag-eval-dataset-v1",
+  "dataset_id": "synthetic-contract-v1",
+  "judgment_policy": "Synthetic examples for contract verification only; not a product quality benchmark.",
+  "cases": [
+    {
+      "case_id": "report-feature-example",
+      "workflow": "INITIAL_REPORT",
+      "query_text": "根据访问热度调整缓存淘汰优先级",
+      "allowed_version_ids": ["cv-example-1"],
+      "relevant_chunks": [
+        {"chunk_id": "chunk-a", "version_id": "cv-example-1", "relevance": 3},
+        {"chunk_id": "chunk-b", "version_id": "cv-example-1", "relevance": 1}
+      ],
+      "required_version_ids": ["cv-example-1"],
+      "citation_targets": [
+        {
+          "chunk_id": "chunk-a",
+          "version_id": "cv-example-1",
+          "quote_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "notes": "合成的首次报告 Feature × Version 示例。"
+    },
+    {
+      "case_id": "followup-compare-example",
+      "workflow": "FOLLOWUP",
+      "query_text": "比较两篇文献的访问热度机制",
+      "allowed_version_ids": ["cv-example-1", "cv-example-2"],
+      "relevant_chunks": [
+        {"chunk_id": "chunk-a", "version_id": "cv-example-1", "relevance": 2},
+        {"chunk_id": "chunk-c", "version_id": "cv-example-2", "relevance": 3}
+      ],
+      "required_version_ids": ["cv-example-1", "cv-example-2"],
+      "citation_targets": [
+        {
+          "chunk_id": "chunk-c",
+          "version_id": "cv-example-2",
+          "quote_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "notes": "合成的跨 Version 追问示例。"
+    }
+  ]
+}
