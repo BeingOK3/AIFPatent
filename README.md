@@ -15,9 +15,9 @@ AIFPatent 当前 `develop` 版本提供可直接运行的首次报告 `LEXICAL_R
 - 报告 schema 2.0 Citation 只包含模型对 `DISCLOSED/PARTIAL` 实际输出的 `C#`，并在输出前回查当前 Run 的 READY Version 与真实 Chunk；
 - `./start.sh` 和 `./stop.sh` 管理完整 Docker 栈，停止不删除数据卷。
 
-当前 `develop` 已默认启用报告内证据追问 MVP：可从完成的首次报告选择深读文献建立 Thread，每轮重新检索冻结 Corpus，运行独立七节点 Workflow，输出结构化回答并展开可回查的 Citation 原文；页面提供 SSE 状态与取消，模型 Base URL/Model/API Key 仍为刷新即丢失的瞬时 BYOK。首次报告默认仍使用已验收的 `LEXICAL_RAG`；追问在未配置部署级 Embedding 时明确降级为 `LEXICAL_ONLY`，不会伪装成向量混合召回。
+当前 `develop` 已默认启用并通过真实 DeepSeek 运行态验收的报告内证据追问 MVP：可从完成的首次报告选择深读文献建立 Thread，每轮重新检索冻结 Corpus，运行独立七节点 Workflow，输出结构化回答并展开可回查的 Citation 原文；页面提供 SSE 状态与取消，模型 Base URL/Model/API Key 仍为刷新即丢失的瞬时 BYOK。首次报告默认仍使用已验收的 `LEXICAL_RAG`；追问在未配置部署级 Embedding 时明确降级为 `LEXICAL_ONLY`，不会伪装成向量混合召回。
 
-尚未完成：真实 DeepSeek 追问运行态验收、首次报告默认 Hybrid 切换、reranker、专利族变体与法律状态增强、多租户/认证。详细边界记录在 `development/followup-rag/development-log.md`。
+尚未完成：首次报告默认 Hybrid 切换、reranker、统一离线 RAG 评测集、专利族变体与法律状态增强、多租户/认证。详细边界记录在 `development/followup-rag/development-log.md`。
 
 ## 新机器直接运行
 

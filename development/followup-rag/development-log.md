@@ -636,3 +636,13 @@
 - 失败留痕：修复零召回后，新 Turn 已完成计划、按 Version 证据补齐、Context 和回答模型调用，但模型在必填 `legal_boundary` 中写明“不能判断构成侵权或不构成侵权”；旧扫描器对整份 JSON 做禁语子串匹配，把免责声明误判为确定性法律结论，Turn 按 fail-closed 进入 FAILED，未落回答或 Citation。
 - 修正：确定性法律结论扫描只检查可能承载业务断言的直接回答、重合项、差异和规避候选；专门用于声明边界的 `legal_boundary` 与诚实限制 `limitations` 不参与禁语命中。直接回答或分析字段输出“构成侵权”“保证不侵权”等结论仍严格拒绝。
 - 验证：新增“免责声明可明确提及被禁止结论”的正向测试，原两项确定性侵权/不侵权负向测试继续通过；答案/Handler 聚焦 10 项通过；完整离线套件 400 项通过、4 项按设计跳过，`git diff --check` 通过。待重建镜像后第三轮复验。
+
+## 2026-07-22 — IDEA-FOLLOWUP-E2E-001
+
+- 类型：报告内证据追问 MVP 的真实 DeepSeek 端到端运行态验收。
+- 运行链路：在已完成首次报告 `a01f6ec9-17ea-4602-ab66-8c7bfb65dc25` 上创建 Thread `FT-02a364c2cdcd4237983f23e92975303d`，冻结 `CN101236530A` 与 `CN102760101A` 两个 READY Version；第三轮 Turn `FU-67ac89e82f594112a9874baab2500a6e` 完整通过计划、范围受限检索、Context 装配、结构化回答、回答验证、Citation 落库和终态持久化。
+- 结果：Turn 终态为 `COMPLETED_WITH_LIMITATIONS`，回答类型为 `OVERLAP_ANALYSIS`；限制明确包含 `LEXICAL_ONLY` 与 `MANDATORY_VERSION_EVIDENCE_FALLBACK`，没有把词法补齐伪装成语义匹配。模型输出 1 个重合项、3 个差异项，并对证据不足作出显式说明。
+- 独立回查：PostgreSQL 中存在 4 个 Retrieval Hit，全部进入本轮 Context；存在 1 份 FOLLOWUP Context Manifest、2 个 allowed Version、4 个 selected Chunk 和 2 条永久 Citation。Citation 分别绑定 `CN102760101A` 的 `claim-4` 与 `claim-11`，quote hash、answer path、Chunk 外键及冻结 snapshot 均由数据库事实层校验。
+- 缺陷留痕：同一 Thread 中保留前两轮 FAILED Turn，分别记录长词法 query 零召回与法律免责声明误报；它们未生成伪成功回答或 Citation，修正见 `IDEA-FOLLOWUP-E2E-FIX-001/002`。
+- 凭证边界：真实模型凭证仅随 Turn 请求进入进程内存，提交后立即从测试 shell 变量移除；凭证未进入仓库、配置、日志、Turn、Checkpoint 或 Context Manifest。
+- 完成结论：Phase 4 的报告内追问 MVP 已达到“用户从已完成报告创建 Thread 并获得带可验证 Citation 的结构化回答”的可用门槛。后续重点转向首次报告默认 Hybrid 切换、reranker 与统一 RAG 评测集，不再把追问 API/UI/E2E 列为未完成。
