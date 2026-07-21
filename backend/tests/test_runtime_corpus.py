@@ -18,12 +18,20 @@ from idea.postgres_corpus import (
 class RuntimeCorpusTests(unittest.TestCase):
     def setUp(self) -> None:
         config = load_config()
-        features = config.features.model_copy(update={"patent_corpus": True})
+        disabled = config.features.model_copy(
+            update={
+                "patent_corpus": False,
+                "initial_review_rag": False,
+                "followup_rag": False,
+            }
+        )
+        self.disabled = config.model_copy(update={"features": disabled})
+        features = disabled.model_copy(update={"patent_corpus": True})
         self.enabled = config.model_copy(update={"features": features})
 
     def test_disabled_feature_does_not_require_external_storage(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            self.assertIsNone(_build_corpus_ingest(load_config()))
+            self.assertIsNone(_build_corpus_ingest(self.disabled))
 
     def test_enabled_feature_fails_closed_when_storage_is_unconfigured(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -61,7 +69,7 @@ class RuntimeCorpusTests(unittest.TestCase):
         self.assertIsInstance(
             service.retriever.chunk_repository, PostgreSQLPatentChunkRepository
         )
-        self.assertIsNone(build_initial_report_rag(load_config()))
+        self.assertIsNone(build_initial_report_rag(self.disabled))
 
 
 if __name__ == "__main__":

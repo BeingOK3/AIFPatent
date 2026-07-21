@@ -10,8 +10,8 @@
     "pct": false,
     "value": false,
     "cfp": false,
-    "patent_corpus": false,
-    "initial_review_rag": false,
+    "patent_corpus": true,
+    "initial_review_rag": true,
     "followup_rag": false
   },
   "model": {

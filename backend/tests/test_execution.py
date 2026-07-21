@@ -250,6 +250,14 @@ class WorkflowExecutorTests(unittest.TestCase):
         self.db.initialize()
         self.store = RunStore(root / "runs")
         self.config = load_config()
+        disabled_features = self.config.features.model_copy(
+            update={
+                "patent_corpus": False,
+                "initial_review_rag": False,
+                "followup_rag": False,
+            }
+        )
+        self.config = self.config.model_copy(update={"features": disabled_features})
         self.graph_db = root / "langgraph.db"
         storage = self.config.storage.model_copy(
             update={"langgraph_database": self.graph_db}

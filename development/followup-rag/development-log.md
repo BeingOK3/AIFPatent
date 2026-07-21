@@ -468,3 +468,14 @@
 - Markdown：在深审文献的 Feature mapping 下输出 `依据：[C#] 公开号，章节` 和来自验证 Chunk 的原文 excerpt；Report Composer 仍无法创建或改写引用。
 - 完成门：启用 RAG 时零 Verified Citation 不允许生成报告；manifest 记录 citation count/context IDs，不记录 BYOK。
 - 验证：Citation 篡改、PG Run scope、JSON/Markdown 和兼容报告聚焦测试通过；完整离线套件 304 项通过、2 项按设计跳过。
+
+## 2026-07-22 — IDEA-RUNTIME-DEFAULT-001
+
+- 类型：LEXICAL_RAG 默认启用与一键 Docker 生命周期。
+- 默认配置：仓库默认 `patent_corpus=true`、`initial_review_rag=true`、`followup_rag=false`；完整首次报告链路默认开启，追问 RAG 继续关闭。
+- 启动：`./start.sh` 默认检查 Docker/Compose/Python/curl 和至少 5GiB 可用空间，幂等创建 mode 0600 的本地 `rag.env`，构建应用、启动四服务、确保 Bucket、执行增量迁移并等待 8001 健康；`--local` 保留旧纯本地兼容模式。
+- 停止：`./stop.sh` 默认停止并移除 Compose 容器/网络，但不传 `--volumes`，PostgreSQL、Redis、MinIO 和应用数据卷全部保留。
+- 网络故障修正：实际验收发现已缓存 MinIO 镜像仍被每次无条件重建，Docker Hub token 请求超时；根因修复为对象存储镜像存在时复用，仅缺失或设置 `AIFPATENT_REBUILD_OBJECT_STORE=1` 时重建。应用镜像仍随源码重建。
+- BYOK：启动/停止脚本与 Compose 均不接收、导出或保存模型 API Key；网页仍按 Run 输入 Base URL、Model、API Key，刷新后消失。
+- 真实验收：`./start.sh` 成功使 app/PostgreSQL/Redis/MinIO 全部 healthy，`127.0.0.1:8001/openapi.json` 可访问；`./stop.sh` 后 8001 不可访问、无容器残留且卷保留。
+- 空间边界：验收后根文件系统可用 18G，高于至少保留 5G 门槛；脚本/配置/Infra 聚焦测试 21 项通过；兼容路径测试已显式关闭 RAG、不再依赖仓库默认值；完整离线套件 308 项通过、2 项按设计跳过。

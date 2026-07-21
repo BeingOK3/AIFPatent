@@ -33,8 +33,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.model.default, "deepseek-v4-flash")
         self.assertEqual(config.search.providers.exa_mcp.fetch_tool, "web_fetch_exa")
         self.assertEqual(config.search.providers.exa_mcp.fetch_max_characters, 300_000)
-        self.assertFalse(config.features.patent_corpus)
-        self.assertFalse(config.features.initial_review_rag)
+        self.assertTrue(config.features.patent_corpus)
+        self.assertTrue(config.features.initial_review_rag)
         self.assertFalse(config.features.followup_rag)
         snapshot = config.snapshot()
         self.assertNotIn("api_key", snapshot["model"])
@@ -73,12 +73,14 @@ class ConfigTests(unittest.TestCase):
     def test_rag_feature_gates_follow_dependency_order(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             initial_without_corpus = json.loads(json.dumps(self.raw))
+            initial_without_corpus["features"]["patent_corpus"] = False
             initial_without_corpus["features"]["initial_review_rag"] = True
             with self.assertRaises(ConfigError):
                 load_config(self.write_config(initial_without_corpus, directory))
 
             followup_without_initial = json.loads(json.dumps(self.raw))
             followup_without_initial["features"]["patent_corpus"] = True
+            followup_without_initial["features"]["initial_review_rag"] = False
             followup_without_initial["features"]["followup_rag"] = True
             with self.assertRaises(ConfigError):
                 load_config(self.write_config(followup_without_initial, directory))

@@ -11,6 +11,19 @@ from tools import rag_infra
 
 
 class RagInfrastructureTests(unittest.TestCase):
+    def test_up_reuses_cached_object_store_image_unless_forced(self) -> None:
+        self.assertEqual(
+            rag_infra._build_services(lambda _image: True, force_object_store=False),
+            ("app",),
+        )
+        self.assertEqual(
+            rag_infra._build_services(lambda _image: False, force_object_store=False),
+            ("app", "object-store"),
+        )
+        self.assertEqual(
+            rag_infra._build_services(lambda _image: True, force_object_store=True),
+            ("app", "object-store"),
+        )
     def test_environment_is_created_once_with_private_random_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "rag.env"

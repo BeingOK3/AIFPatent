@@ -209,6 +209,22 @@ def _build_command(service: str) -> list[str]:
     ]
 
 
+def _image_exists(image: str) -> bool:
+    return subprocess.run(
+        ["docker", "image", "inspect", image],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0
+
+
+def _build_services(image_exists=_image_exists, *, force_object_store: bool = False) -> tuple[str, ...]:
+    services = ["app"]
+    if force_object_store or not image_exists("aifpatent-rag-object-store:latest"):
+        services.append("object-store")
+    return tuple(services)
+
+
 def run(action: str) -> int:
     if shutil.which("docker") is None:
         raise InfraError("docker with the Compose plugin is required")
@@ -216,7 +232,8 @@ def run(action: str) -> int:
     if created:
         print(f"created local credential file: {ENV_PATH.relative_to(PROJECT_ROOT)}")
     if action == "up":
-        for service in ("app", "object-store"):
+        force_object_store = os.environ.get("AIFPATENT_REBUILD_OBJECT_STORE") == "1"
+        for service in _build_services(force_object_store=force_object_store):
             built = subprocess.run(_build_command(service), cwd=PROJECT_ROOT, check=False)
             if built.returncode != 0:
                 return built.returncode
