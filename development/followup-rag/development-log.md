@@ -285,3 +285,26 @@
 - 类型：应用镜像运行态验收补记。
 - 结果：固定 Python 基础镜像和依赖安装成功；临时容器以 `10001:10001` 启动，`/api/health` 返回 200，OpenAPI 可读取；无模型 Token 时健康结果按现有语义为 `degraded`，不影响进程启动；测试容器已清理。
 - 网络说明：PyPI 官方源在当前网络约 15 KB/s，改用构建参数 `PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` 后依赖下载恢复到 MB/s 级；该参数只影响本地构建下载，不写入镜像运行环境。
+
+## 2026-07-21 — IDEA-APP-COMPOSE-001
+
+- 类型：应用容器接入本地 Compose。
+- 实现：Compose 新增 `app` 服务，依赖 PostgreSQL/Redis/MinIO 健康状态后启动；应用只绑定回环端口，使用独立 `app-data`、`app-workspace` 和 `app-logs` 命名卷，应用健康检查复用 `/api/health`。
+- 配置边界：新增应用端口和构建期 `PIP_INDEX_URL` 非秘密配置；`rag.env` 仍只在本地生成且被 Git 忽略，Compose 不注入模型 API Key。
+- 运行边界：应用仍使用 SQLite、LangGraph SQLite Checkpoint 和单 Worker；RAG 容器只是目标依赖，功能开关继续关闭。
+- 涉及文件：`deploy/rag/compose.yml`、`deploy/rag/rag.env.example`、`tools/rag_infra.py`、`deploy/rag/README.md`、根 `README.md`、`backend/tests/test_rag_infra.py`。
+- 验证：待执行 Compose 配置检查和三服务加应用的真实运行态验收。
+
+## 2026-07-21 — IDEA-APP-COMPOSE-001-VERIFY
+
+- 类型：应用 Compose 运行态验收补记。
+- 结果：Compose 配置解析通过；PostgreSQL、Redis、MinIO 均保持 `healthy`，应用进程正常启动并绑定 `127.0.0.1:8001`。
+- 更正：首次使用 `/api/health` 作为容器健康检查时，由于该接口会执行外部 Provider/模型健康语义，3 秒内可能超时并被误判为 unhealthy；健康检查改用本地 `/openapi.json` 进程探针，业务健康状态仍由 `/api/health` 对外报告。
+- 状态：修正后的镜像和 Compose 栈待重新构建/启动后完成最终健康验收。
+
+## 2026-07-21 — IDEA-APP-COMPOSE-001-RUNTIME-VERIFY
+
+- 类型：应用 Compose 最终运行态验收。
+- 结果：四个服务均为 `healthy`；应用 OpenAPI 和前端首页可读取，容器以 `10001:10001` 运行；应用工作区命名卷写入临时标记、重启 app 后读回并清理成功。
+- 端口：应用 `127.0.0.1:8001`，PostgreSQL `127.0.0.1:5432`，Redis `127.0.0.1:6379`，MinIO `127.0.0.1:9000/9001`。
+- 更正结果：健康检查改用进程级 `/openapi.json`，业务 `/api/health` 继续保留用于真实组件健康状态；未把模型 API Key 写入镜像、Compose 或卷。

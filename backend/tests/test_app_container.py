@@ -17,7 +17,7 @@ class ApplicationContainerTests(unittest.TestCase):
         self.assertIn("python:3.12.13-slim-bookworm@sha256:", self.dockerfile)
         self.assertIn("USER 10001:10001", self.dockerfile)
         self.assertIn('"--workers", "1"', self.dockerfile)
-        self.assertIn("HEALTHCHECK", self.dockerfile)
+        self.assertIn("/openapi.json", self.dockerfile)
         self.assertNotIn("API_KEY", self.dockerfile.upper())
         self.assertNotIn("COPY . ", self.dockerfile)
 

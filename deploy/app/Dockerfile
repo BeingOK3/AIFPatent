@@ -33,6 +33,6 @@ USER 10001:10001
 EXPOSE 8001
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/api/health', timeout=3).read()"]
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/openapi.json', timeout=3).read()"]
 
 CMD ["python", "-m", "uvicorn", "main:app", "--app-dir", "/app/backend", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]

@@ -144,6 +144,15 @@ tools/rag_infra.py up
 tools/rag_infra.py status
 ```
 
+当前也可以用同一个 Compose 栈启动应用容器和依赖服务：
+
+```bash
+tools/rag_infra.py up
+tools/rag_infra.py status
+```
+
+应用默认绑定 `127.0.0.1:8001`，SQLite 数据、工作区和日志使用独立命名卷；应用容器以非 root 单 Worker 运行。该容器化入口用于本地/单实例验收，尚未代表 SQLite 已切换为 PostgreSQL，也不等于可以直接开放公网。
+
 首次启动会生成 Git 忽略且权限为 `0600` 的本地随机凭证。详细说明见 `deploy/rag/README.md`。
 
 当前已实现架构见 `docs/aifpatent-architecture.md`。核心系统历史位于 `development/core/`；评审后追问、耐久全文语料和混合 RAG 属于独立后续开发域，位于 `development/followup-rag/`。

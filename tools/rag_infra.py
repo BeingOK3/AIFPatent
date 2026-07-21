@@ -47,6 +47,8 @@ def _new_environment() -> str:
         "AIFPATENT_MINIO_API_PORT": "9000",
         "AIFPATENT_MINIO_CONSOLE_PORT": "9001",
         "AIFPATENT_MINIO_VERSION": "RELEASE.2025-10-15T17-29-55Z",
+        "AIFPATENT_APP_PORT": "8001",
+        "AIFPATENT_PIP_INDEX_URL": "https://pypi.org/simple",
     }
     return "".join(f"{key}={value}\n" for key, value in values.items())
 

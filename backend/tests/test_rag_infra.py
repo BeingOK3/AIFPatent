@@ -66,12 +66,25 @@ class RagInfrastructureTests(unittest.TestCase):
 
     def test_compose_template_pins_services_and_contains_no_credentials(self) -> None:
         compose = rag_infra.COMPOSE_PATH.read_text(encoding="utf-8")
+        self.assertIn("dockerfile: deploy/app/Dockerfile", compose)
+        self.assertIn("app-data:/app/data", compose)
+        self.assertIn("app-workspace:/app/workspace", compose)
+        self.assertIn("app-logs:/app/logs", compose)
+        self.assertIn("127.0.0.1:${AIFPATENT_APP_PORT:-8001}:8001", compose)
         self.assertIn("pgvector/pgvector:0.8.2-pg17-bookworm", compose)
         self.assertIn("redis:8.4.4-alpine", compose)
         self.assertIn("Dockerfile.minio", compose)
         self.assertIn("127.0.0.1:", compose)
         self.assertNotIn("replace-with-a-random", compose)
         self.assertNotIn("--volumes", compose)
+
+    def test_new_environment_has_non_secret_application_build_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rag.env"
+            rag_infra.ensure_environment(path)
+            values = rag_infra._parse_environment(path)
+            self.assertEqual(values["AIFPATENT_APP_PORT"], "8001")
+            self.assertEqual(values["AIFPATENT_PIP_INDEX_URL"], "https://pypi.org/simple")
 
         init_sql = (rag_infra.DEPLOY_ROOT / "postgres-init" / "001_extensions.sql").read_text(
             encoding="utf-8"

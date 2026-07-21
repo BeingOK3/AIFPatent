@@ -1,6 +1,6 @@
-# RAG target dependencies
+# Local application and RAG stack
 
-This development-only stack provides PostgreSQL 17 + pgvector 0.8.2, Redis 8.4.4 and a locally built MinIO server. It does not switch the application away from the current SQLite runtime; the RAG feature flags remain disabled until their migration gates are complete.
+This development stack provides the AIFPatent application plus PostgreSQL 17 + pgvector 0.8.2, Redis 8.4.4 and a locally built MinIO server. The application remains on its current SQLite runtime; RAG feature flags remain disabled until their migration gates are complete.
 
 ```bash
 tools/rag_infra.py up
@@ -11,6 +11,10 @@ tools/rag_infra.py down
 ```
 
 The first `up` creates `deploy/rag/rag.env` atomically with random credentials and mode `0600`. The file is Git ignored. Commands never print its values. `down` preserves named volumes; this tool intentionally has no reset or volume-deletion command.
+
+The application is published only on `127.0.0.1:8001` by default and runs as a single non-root Worker. Its SQLite data, workspace and logs use separate named volumes. This is a local/single-instance deployment baseline, not a public multi-worker production deployment.
+
+If PyPI is slow or unavailable, set `AIFPATENT_PIP_INDEX_URL` in the shell before `up`, for example `https://pypi.tuna.tsinghua.edu.cn/simple`; it only changes build-time dependency download.
 
 `migrate` applies the additive PostgreSQL migrations to an already-created volume. This is needed because Docker runs files in `postgres-init/` only when the database volume is initialized; it never deletes or recreates the volume.
 
