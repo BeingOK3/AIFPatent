@@ -34,6 +34,8 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(config.embedding.enabled)
         self.assertEqual(config.embedding.model, "BAAI/bge-m3")
         self.assertEqual(config.embedding.dimensions, 1024)
+        self.assertEqual(config.rag.hybrid.rrf_k, 60)
+        self.assertEqual(config.rag.hybrid.final_limit, 12)
         self.assertEqual(config.search.providers.exa_mcp.fetch_tool, "web_fetch_exa")
         self.assertEqual(config.search.providers.exa_mcp.fetch_max_characters, 300_000)
         self.assertTrue(config.features.patent_corpus)
@@ -128,6 +130,17 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_config(self.write_config(invalid, directory))
 
+    def test_hybrid_retrieval_limits_are_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            invalid = json.loads(json.dumps(self.raw))
+            invalid["rag"]["hybrid"]["rrf_k"] = 0
+            with self.assertRaises(ConfigError):
+                load_config(self.write_config(invalid, directory))
+
+            invalid = json.loads(json.dumps(self.raw))
+            invalid["rag"]["hybrid"]["final_limit"] = 31
+            with self.assertRaises(ConfigError):
+                load_config(self.write_config(invalid, directory))
 
 if __name__ == "__main__":
     unittest.main()

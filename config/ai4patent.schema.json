@@ -4,7 +4,7 @@
   "title": "AIFPatent system configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["app", "features", "model", "embedding", "storage", "workflow", "search", "outputs", "logging"],
+  "required": ["app", "features", "model", "embedding", "rag", "storage", "workflow", "search", "outputs", "logging"],
   "properties": {
     "$schema": {"type": "string"},
     "app": {
@@ -70,6 +70,26 @@
         "normalization": {"const": "l2"},
         "batch_size": {"type": "integer", "minimum": 1, "maximum": 256},
         "timeout_seconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "rag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hybrid"],
+      "properties": {
+        "hybrid": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rrf_k", "lexical_limit", "vector_limit", "final_limit", "max_chunks_per_version", "max_chunks_per_section_label"],
+          "properties": {
+            "rrf_k": {"type": "integer", "minimum": 1, "maximum": 1000},
+            "lexical_limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            "vector_limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            "final_limit": {"type": "integer", "minimum": 1, "maximum": 30},
+            "max_chunks_per_version": {"type": "integer", "minimum": 1, "maximum": 30},
+            "max_chunks_per_section_label": {"type": "integer", "minimum": 1, "maximum": 10}
+          }
+        }
       }
     },
     "storage": {

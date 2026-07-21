@@ -65,6 +65,19 @@ class EmbeddingSettings(StrictModel):
     timeout_seconds: int = Field(ge=1)
 
 
+class HybridRetrievalSettings(StrictModel):
+    rrf_k: int = Field(ge=1, le=1000)
+    lexical_limit: int = Field(ge=1, le=50)
+    vector_limit: int = Field(ge=1, le=50)
+    final_limit: int = Field(ge=1, le=30)
+    max_chunks_per_version: int = Field(ge=1, le=30)
+    max_chunks_per_section_label: int = Field(ge=1, le=10)
+
+
+class RagSettings(StrictModel):
+    hybrid: HybridRetrievalSettings
+
+
 class CacheSettings(StrictModel):
     max_bytes: int = Field(gt=0)
     low_watermark_bytes: int = Field(ge=0)
@@ -205,6 +218,7 @@ class AppConfig(StrictModel):
     features: FeatureSettings
     model: ModelSettings
     embedding: EmbeddingSettings
+    rag: RagSettings
     storage: StorageSettings
     workflow: WorkflowSettings
     search: SearchSettings

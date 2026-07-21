@@ -35,6 +35,16 @@
     "batch_size": 32,
     "timeout_seconds": 120
   },
+  "rag": {
+    "hybrid": {
+      "rrf_k": 60,
+      "lexical_limit": 40,
+      "vector_limit": 40,
+      "final_limit": 12,
+      "max_chunks_per_version": 4,
+      "max_chunks_per_section_label": 2
+    }
+  },
   "storage": {
     "database": "data/aifpatent/aifpatent.db",
     "langgraph_database": "data/langgraph/checkpoints.db",

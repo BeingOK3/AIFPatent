@@ -524,3 +524,14 @@
 - 基准：新增可复用的精确检索 benchmark 结果，记录请求数、命中数及 min/median/p95/max 延迟，不包含向量正文。
 - 真实验收：在现有 PostgreSQL/pgvector Corpus 中随机选择两个不同 READY Version 的 Chunk，使用隔离的 3 维测试 Profile 完成首次生成、二次缓存复用、关联、激活、单 Version 防越界召回和 5 次精确检索基准；真实测试 1 项通过且 p95 小于 1000ms，随后按随机 Profile 精确删除测试关联和向量。
 - 边界：默认 Embedding 仍关闭，未配置跨语言 Provider 时首次报告继续 `LEXICAL_RAG`；下一 Work Unit `IDEA-RAG-HYBRID-001` 才接入 RRF、章节权重和多样性。
+
+## 2026-07-22 — IDEA-RAG-HYBRID-001
+
+- 类型：Phase 4 共享混合 Retriever 排序内核。
+- 融合：新增 `HybridRetriever`，词法 BM25 与 cosine 结果只按各自 rank 使用 Reciprocal Rank Fusion，默认 `k=60`；不直接相加不可比较的原始 lexical/vector score。Chunk 同时被两路召回时累加两个 rank 贡献，并保留 `lexical_rank`、`vector_rank`、来源与可解释最终分数。
+- 章节权重：按 `CLAIM_OVERLAP`、`TECHNICAL_EXPLANATION`、`NOVELTY`、`DESIGN_AROUND` 和 `GENERAL` 问题类型应用显式权重；权利要求重合/新颖性优先独立权利要求，原理解释优先说明书，权重只改变排序，不创造证据。
+- 多样性：融合后按精确 `text_hash` 去重，限制单 Version 和同一 section label 的 Chunk 数；比较型请求可在容量允许时先为每个有命中的指定 Version 保留一个证据，避免 Top-K 被单篇专利或超长权利要求滑窗垄断。
+- 安全与降级：词法和向量请求使用完全相同的冻结 Version/章节 allowlist，两个 adapter 的回读结果再次验 scope；Chunk ID 对应正文冲突、query ID/rank 异常或范围越界均 fail closed。缺少向量坐标时明确返回 `LEXICAL_ONLY` limitation，绝不伪装成混合召回。
+- 配置：新增严格 `rag.hybrid` 配置，版本化保存 RRF k、两路候选上限、最终上限和多样性配额；默认参数为 60/40/40/12/4/2。
+- 验证：RRF 双路增益、章节权重、跨 Version 配额、正文哈希去重、section/version 上限、词法降级、冲突与范围越界门禁及配置边界聚焦测试通过。完整回归在本 Work Unit 提交前执行。
+- 后续：当前为共享排序内核；首次报告切换与追问 Workflow 仍需分别接入同一 `HybridRetriever`，并在真实跨语言 embedding 评测通过后才能默认开启。
