@@ -100,3 +100,18 @@
 - 类型：Phase 1 本地 ObjectStore 验证补记。
 - 结果：ObjectStore、RAG infra、配置和端口目标测试共 21 项通过；完整离线套件 205 项通过；compileall 和 `git diff --check` 通过。
 - 安全检查：不同正文不能覆盖同一 Key；临时文件、对象文件和元数据文件均不向组/其他用户开放；符号链接、路径穿越和错误哈希均 fail closed。
+
+## 2026-07-21 — IDEA-SQLITE-EXPORT-001
+
+- 类型：Phase 0 SQLite→PostgreSQL 迁移演练基线。
+- 实现：新增只读 SQLite 导出器和 `tools/export_sqlite.py`；以 `mode=ro` 打开源库，先执行 integrity/foreign-key 检查，再按表名、列定义和规范化行值排序导出，记录 SQLite `user_version` 和确定性 `export_hash`。
+- 写入语义：导出文件使用同目录临时文件、fsync、不可覆盖 hard-link 和 `0600` 权限；已有目标文件一律拒绝覆盖；工具不修改源数据库、不删除源数据、不输出行内容。
+- 迁移边界：导出是 PostgreSQL 导入/哈希核验的只读输入，不代表生产切换，也不改变当前 SQLite 运行时。
+- 涉及文件：`backend/idea/sqlite_export.py`、`tools/export_sqlite.py`、`backend/tests/test_sqlite_export.py`、本日志。
+- 验证：待运行 SQLite export 目标测试、完整离线套件、编译和格式检查。
+
+## 2026-07-21 — IDEA-SQLITE-EXPORT-001-VERIFY
+
+- 类型：Phase 0 SQLite 导出验证补记。
+- 结果：SQLite export 目标测试 4 项通过；完整离线套件 209 项通过；CLI 帮助、compileall 和 `git diff --check` 通过。
+- 安全检查：源数据库 mtime 在导出前后不变；导出文件拒绝覆盖、使用 `0600` 权限，输出只包含表/列/行哈希所需数据，不打印行正文。
