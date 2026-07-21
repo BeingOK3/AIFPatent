@@ -341,3 +341,9 @@
 - 端到端：临时 `FetchedDocument` 经 `PatentCorpusService` 写入 MinIO 和 PostgreSQL，`get_ready` 与 `snapshot_hash` 成功；测试 Bucket、对象、Version、Blob 和专利元数据均按随机 ID 精确清理。
 - Python 验证：完整离线套件 246 项通过；compileall 和 `git diff --check` 通过。
 - 模型边界：本 Work Unit 不调用模型 API；DeepSeek API 留给后续首次报告 RAG/Context 接入的真实模型验收。
+
+## 2026-07-21 — IDEA-CORPUS-STORE-001-CONTAINER-VERIFY
+
+- 类型：新增 Corpus Store 运行时依赖后的应用镜像验收。
+- 结果：应用镜像重新安装 `psycopg[binary]`/`boto3` 后构建成功；统一 `tools/rag_infra.py up` 完成 app 与 MinIO 构建并启动，四个 Compose 服务均为 `healthy`。
+- 安全边界：构建只使用 PyPI/Go module 镜像参数，不注入模型 API Key；PostgreSQL/MinIO 凭证仍只来自本地 `rag.env`，未写入镜像或 Git。
