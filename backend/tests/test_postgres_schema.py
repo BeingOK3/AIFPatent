@@ -5,11 +5,13 @@ from pathlib import Path
 
 
 SCHEMA_PATH = Path("deploy/rag/postgres-init/010_core_schema.sql")
+CORPUS_SCHEMA_PATH = Path("deploy/rag/postgres-init/020_corpus_schema.sql")
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
     def setUp(self) -> None:
         self.sql = SCHEMA_PATH.read_text(encoding="utf-8")
+        self.corpus_sql = CORPUS_SCHEMA_PATH.read_text(encoding="utf-8")
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
         self.assertIn("BEGIN;", self.sql)
@@ -41,6 +43,36 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertNotIn("TRUNCATE", upper)
         self.assertNotIn("DELETE FROM", upper)
         self.assertNotIn("POSTGRES_PASSWORD=", upper)
+
+    def test_corpus_schema_is_versioned_and_scoped(self) -> None:
+        self.assertIn("BEGIN;", self.corpus_sql)
+        self.assertIn("COMMIT;", self.corpus_sql)
+        for table in (
+            "corpus_blobs",
+            "patent_document_versions",
+            "patent_version_sources",
+            "run_document_versions",
+            "patent_chunks",
+            "embedding_profiles",
+            "embedding_vectors",
+            "chunk_embeddings",
+            "report_retrieval_hits",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", self.corpus_sql)
+        self.assertIn("INSERT INTO aifpatent_schema_migrations(version)", self.corpus_sql)
+        self.assertIn("'020_corpus_schema'", self.corpus_sql)
+        self.assertIn("REFERENCES patent_document_versions(version_id)", self.corpus_sql)
+        self.assertIn("REFERENCES corpus_blobs(blob_hash)", self.corpus_sql)
+
+    def test_corpus_schema_has_immutability_checks_and_no_destructive_commands(self) -> None:
+        upper = self.corpus_sql.upper()
+        self.assertIn("NORMALIZED_CONTENT_HASH TEXT NOT NULL", upper)
+        self.assertIn("TEXT_HASH TEXT NOT NULL", upper)
+        self.assertIn("UNIQUE(DOCUMENT_ID, LANGUAGE, NORMALIZED_CONTENT_HASH)", upper)
+        self.assertIn("PRIMARY KEY(RUN_ID, DOCUMENT_ID)", upper)
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
 
 
 if __name__ == "__main__":

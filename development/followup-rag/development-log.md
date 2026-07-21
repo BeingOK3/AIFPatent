@@ -253,3 +253,12 @@
 - 构建说明：基础镜像按 Dockerfile 锁定 digest 加载；MinIO 固定源码版本构建成功；当前网络使用可覆盖的 Go module proxy 完成构建。
 - Python 验证：完整离线套件 232 项通过；compileall 和 `git diff --check` 通过。
 - 安全检查：测试凭证只从 `deploy/rag/rag.env` 注入当前进程，不打印、不写入对象、不进入 Git；测试桶和对象已清理。
+
+## 2026-07-21 — IDEA-CORPUS-SCHEMA-001
+
+- 类型：Phase 2 耐久 Corpus 的 PostgreSQL Schema。
+- 实现：新增 `020_corpus_schema.sql`，建立内容寻址 Blob、不可变专利 Version、来源记录、Run→Version 冻结绑定、结构化 Chunk、embedding profile/vector、Chunk 关联和首次报告检索命中审计表。
+- 不可变边界：正文/Chunk/向量以 SHA-256、Version、Chunker 和 embedding profile 版本区分；Run 绑定以 `(run_id, document_id)` 固定具体 Version；Schema 不覆盖旧的可更新 `patent_documents` 缓存。
+- 安全边界：哈希、状态、字节数、偏移、排序名次和分数均有数据库约束；外键删除策略禁止静默删除被引用语料；迁移可重复执行且不含数据删除命令。
+- 涉及文件：`deploy/rag/postgres-init/020_corpus_schema.sql`、`backend/tests/test_postgres_schema.py`。
+- 验证：待运行 Schema 目标测试和完整离线套件；已有 PostgreSQL 容器需要显式执行该迁移，初始化卷不会自动重跑旧 init 脚本。
