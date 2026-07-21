@@ -149,10 +149,16 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
         fetch_concurrency=config.workflow.document_agent_concurrency,
         debug_log=debug_log,
     )
+    citation_repository = None
+    if config.features.initial_review_rag:
+        citation_repository = PostgreSQLCitationRepository(
+            _required_environment("AIFPATENT_POSTGRES_DSN")
+        )
     documents = DocumentAnalysisService(
         database,
         agents,
         concurrency=config.workflow.document_agent_concurrency,
+        citations=citation_repository,
     )
     minimum = min(
         config.search.modes.quick.deep_review_min,
@@ -167,11 +173,6 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
     )
     value = ValueAnalysisService(database, agents)
     audit = AuditService(database, agents, minimum_deep_reviews=minimum)
-    citation_repository = None
-    if config.features.initial_review_rag:
-        citation_repository = PostgreSQLCitationRepository(
-            _required_environment("AIFPATENT_POSTGRES_DSN")
-        )
     reporting = ReportService(
         database, run_store, agents, citations=citation_repository
     )

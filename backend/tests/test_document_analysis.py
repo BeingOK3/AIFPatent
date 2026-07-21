@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 from idea.agent_schemas import DocumentAnalyzerOutput, IdeaParserOutput
 from idea.agents import AgentExecutionError, IdeaAgentService
+from idea.chunks import PatentChunk
+from idea.context import ContextAssembler
 from idea.database import Database
 from idea.document_analysis import DocumentAnalysisService
 from idea.model_client import AgentCallResult
@@ -120,6 +122,80 @@ class DocumentAnalysisTests(unittest.TestCase):
                 {"feature_id": "F2", "status": "DISCLOSED", "evidence_ids": [evidence_ids[1]], "rationale": "claim", "confidence": 0.9},
             ],
         })
+
+    def rag_context(self):
+        chunks = []
+        for index, (section_type, label, text, claim_number, claim_kind) in enumerate((
+            ("abstract", "abstract", "Token heat controls cache eviction.", None, None),
+            ("claims", "claim-1", "1. Evict cache according to token heat.", 1, "independent"),
+        ), start=1):
+            chunks.append(PatentChunk(
+                chunk_id=f"chunk-{index}", version_id="cv-1",
+                publication_number="US1A1", section_type=section_type,
+                section_label=label, claim_number=claim_number, claim_kind=claim_kind,
+                parent_claim_numbers=(), start_offset=0, end_offset=len(text), text=text,
+                text_hash=__import__("hashlib").sha256(text.encode()).hexdigest(),
+                token_count=6, chunker_version="v1",
+            ))
+        return ContextAssembler().assemble(
+            purpose="INITIAL_REVIEW", run_id=self.run["run_id"],
+            corpus_snapshot_hash="a" * 64, chunks=tuple(chunks),
+            system_prompt="Use C aliases only.", question="Evaluate F1 and F2.",
+            prompt_version="prompt-v1", retriever_version="retriever-v1",
+            input_budget=1000, reserved_output_tokens=100,
+        )
+
+    def test_rag_analysis_uses_frozen_context_and_records_only_model_citations(self) -> None:
+        class CitationRecorder:
+            def __init__(self): self.calls = []
+            async def record(self, **kwargs): self.calls.append(kwargs)
+
+        context = self.rag_context()
+        model = StubModel(self.output(["C1", "C2"]))
+        citations = CitationRecorder()
+        service = DocumentAnalysisService(
+            self.db, IdeaAgentService(self.db, model), citations=citations
+        )
+
+        result = asyncio.run(service.analyze_rag(
+            run_id=self.run["run_id"], idea=idea(), document=document(),
+            document_id=self.document_id, context=context,
+        ))
+
+        self.assertEqual(model.payload["context_id"], context.context_id)
+        self.assertEqual(model.payload["assembled_context"], context.messages[1].content)
+        selections = citations.calls[0]["selections"]
+        self.assertEqual(
+            [(item.feature_id, item.alias, item.chunk_id) for item in selections],
+            [("F1", "C1", "chunk-1"), ("F2", "C2", "chunk-2")],
+        )
+        self.assertTrue(all(item.startswith("E-") for item in result.feature_mappings[0].evidence_ids))
+
+    def test_rag_not_disclosed_mapping_cannot_cite_context(self) -> None:
+        context = self.rag_context()
+        invalid = self.output(["C1", "C2"]).model_copy(
+            update={
+                "feature_mappings": [
+                    self.output(["C1", "C2"]).feature_mappings[0].model_copy(
+                        update={"status": "NOT_DISCLOSED", "evidence_ids": ["C1"]}
+                    ),
+                    self.output(["C1", "C2"]).feature_mappings[1],
+                ]
+            }
+        )
+
+        class CitationRecorder:
+            async def record(self, **kwargs): raise AssertionError("must not record")
+
+        service = DocumentAnalysisService(
+            self.db, IdeaAgentService(self.db, StubModel(invalid)),
+            citations=CitationRecorder(),
+        )
+        with self.assertRaisesRegex(AgentExecutionError, "must not cite"):
+            asyncio.run(service.analyze_rag(
+                run_id=self.run["run_id"], idea=idea(), document=document(),
+                document_id=self.document_id, context=context,
+            ))
 
     def test_packet_uses_real_spans_and_valid_analysis_persists(self) -> None:
         placeholder_model = StubModel(None)

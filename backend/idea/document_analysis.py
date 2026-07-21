@@ -10,6 +10,8 @@ from typing import Any
 
 from .agent_schemas import DocumentAnalyzerOutput, IdeaParserOutput
 from .agents import AgentExecutionError, IdeaAgentService
+from .citations import ModelCitationSelection
+from .context import AssembledModelContext
 from .database import Database, canonical_json, now_ms
 from .providers import FetchedDocument
 
@@ -45,12 +47,169 @@ class DocumentAnalysisService:
         concurrency: int = 3,
         max_packet_characters: int = 40_000,
         max_description_spans: int = 12,
+        citations: Any | None = None,
     ):
         self.database = database
         self.agents = agents
         self.concurrency = concurrency
         self.max_packet_characters = max_packet_characters
         self.max_description_spans = max_description_spans
+        self.citations = citations
+
+    async def analyze_many_rag(
+        self,
+        *,
+        run_id: str,
+        idea: IdeaParserOutput,
+        documents: list[FetchedDocument],
+        document_ids: dict[str, str],
+        contexts: tuple[AssembledModelContext, ...],
+    ) -> dict[str, DocumentAnalyzerOutput]:
+        if self.citations is None:
+            raise AgentExecutionError("RAG document analysis requires a Citation repository")
+        contexts_by_publication: dict[str, AssembledModelContext] = {}
+        for context in contexts:
+            publications = {
+                str(item["publication_number"]) for item in context.selected_chunks
+            }
+            if context.run_id != run_id or context.purpose != "INITIAL_REVIEW":
+                raise AgentExecutionError("RAG Context escaped its Run or purpose")
+            if len(publications) != 1:
+                raise AgentExecutionError("RAG Context must contain exactly one patent")
+            publication = next(iter(publications))
+            if publication in contexts_by_publication:
+                raise AgentExecutionError("RAG Context publication is duplicated")
+            contexts_by_publication[publication] = context
+        expected_publications = {item.publication_number for item in documents}
+        if not expected_publications.issubset(contexts_by_publication):
+            raise AgentExecutionError("RAG Contexts do not cover every pending document")
+
+        semaphore = asyncio.Semaphore(self.concurrency)
+
+        async def analyze(document: FetchedDocument):
+            async with semaphore:
+                output = await self.analyze_rag(
+                    run_id=run_id,
+                    idea=idea,
+                    document=document,
+                    document_id=document_ids[document.publication_number],
+                    context=contexts_by_publication[document.publication_number],
+                )
+                return document.publication_number, output
+
+        tasks = [asyncio.create_task(analyze(document)) for document in documents]
+        try:
+            results = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        return dict(results)
+
+    async def analyze_rag(
+        self,
+        *,
+        run_id: str,
+        idea: IdeaParserOutput,
+        document: FetchedDocument,
+        document_id: str,
+        context: AssembledModelContext,
+    ) -> DocumentAnalyzerOutput:
+        if self.citations is None:
+            raise AgentExecutionError("RAG document analysis requires a Citation repository")
+        if len(context.messages) != 2:
+            raise AgentExecutionError("RAG Context must contain system and user messages")
+        aliases: dict[str, str] = {}
+        chunks_by_alias: dict[str, str] = {}
+        packet: list[EvidencePacketItem] = []
+        for binding in context.selected_chunks:
+            alias = str(binding["alias"])
+            chunk_id = str(binding["chunk_id"])
+            if alias in aliases:
+                raise AgentExecutionError("RAG Context contains a duplicate Citation alias")
+            durable_id = "E-" + hashlib.sha256(
+                f"{run_id}|{document_id}|{chunk_id}".encode("utf-8")
+            ).hexdigest()[:20]
+            aliases[alias] = durable_id
+            chunks_by_alias[alias] = chunk_id
+            packet.append(
+                EvidencePacketItem(
+                    evidence_id=durable_id,
+                    section_type=str(binding["section_type"]),
+                    section_label=str(binding["section_label"]),
+                    text=str(binding["excerpt"]),
+                    start_offset=int(binding["start_offset"]),
+                    end_offset=int(binding["end_offset"]),
+                    score=0.0,
+                )
+            )
+        if not packet:
+            raise AgentExecutionError("RAG Context contains no evidence")
+        self._persist_evidence(run_id, document_id, packet)
+        result = await self.agents.call_agent(
+            run_id,
+            "patent-document-analyzer",
+            system_prompt=context.messages[0].content,
+            input_payload={
+                "publication_number": document.publication_number,
+                "metadata": {
+                    "title": document.title,
+                    "assignee": document.assignee,
+                    "priority_date": document.priority_date,
+                    "publication_date": document.publication_date,
+                },
+                "features": [
+                    {
+                        "feature_id": feature.feature_id,
+                        "feature_text": feature.feature_text,
+                        "required": feature.required,
+                    }
+                    for feature in idea.features
+                ],
+                "context_id": context.context_id,
+                "assembled_context": context.messages[1].content,
+            },
+            input_size=sum(len(message.content) for message in context.messages),
+        )
+        output = result.output
+        if not isinstance(output, DocumentAnalyzerOutput):
+            raise AgentExecutionError("document analyzer returned wrong validated model")
+        self._validate_output_identity_and_features(output, idea, document)
+        selections: list[ModelCitationSelection] = []
+        for mapping in output.feature_mappings:
+            if mapping.status in {"NOT_DISCLOSED", "UNCERTAIN"} and mapping.evidence_ids:
+                raise AgentExecutionError(
+                    f"{mapping.status} mapping must not cite evidence: {mapping.feature_id}"
+                )
+            for alias in mapping.evidence_ids:
+                if re.fullmatch(r"C[1-9][0-9]*", alias) is None or alias not in aliases:
+                    raise AgentExecutionError(
+                        f"document analyzer cited unknown Context alias: {alias}"
+                    )
+                selections.append(
+                    ModelCitationSelection(
+                        feature_id=mapping.feature_id,
+                        alias=alias,
+                        chunk_id=chunks_by_alias[alias],
+                    )
+                )
+        await self.citations.record(
+            run_id=run_id,
+            document_id=document_id,
+            context=context,
+            selections=tuple(selections),
+        )
+        resolved = self._resolve_evidence_aliases(output, aliases)
+        if self._identifier(resolved.publication_number) != self._identifier(
+            document.publication_number
+        ):
+            resolved = resolved.model_copy(
+                update={"publication_number": document.publication_number}
+            )
+        self._persist_analysis(run_id, document_id, resolved)
+        self._release_rebuildable_text(document_id)
+        return resolved
 
     async def analyze_many(
         self,
@@ -141,12 +300,7 @@ class DocumentAnalysisService:
             output = output.model_copy(
                 update={"publication_number": document.publication_number}
             )
-        expected_features = {feature.feature_id for feature in idea.features if feature.required}
-        actual_features = {mapping.feature_id for mapping in output.feature_mappings}
-        if actual_features != expected_features:
-            raise AgentExecutionError(
-                f"document mappings do not match required features: expected={sorted(expected_features)} actual={sorted(actual_features)}"
-            )
+        self._validate_output_identity_and_features(output, idea, document)
         allowed_evidence = {item.evidence_id for item in packet}
         cited = {
             evidence_id
@@ -159,6 +313,19 @@ class DocumentAnalysisService:
         self._persist_analysis(run_id, document_id, output)
         self._release_rebuildable_text(document_id)
         return output
+
+    def _validate_output_identity_and_features(
+        self,
+        output: DocumentAnalyzerOutput,
+        idea: IdeaParserOutput,
+        document: FetchedDocument,
+    ) -> None:
+        expected_features = {feature.feature_id for feature in idea.features if feature.required}
+        actual_features = {mapping.feature_id for mapping in output.feature_mappings}
+        if actual_features != expected_features:
+            raise AgentExecutionError(
+                f"document mappings do not match required features: expected={sorted(expected_features)} actual={sorted(actual_features)}"
+            )
 
     @staticmethod
     def _resolve_evidence_aliases(

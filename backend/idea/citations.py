@@ -11,6 +11,13 @@ class CitationVerificationError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ModelCitationSelection:
+    feature_id: str
+    alias: str
+    chunk_id: str
+
+
+@dataclass(frozen=True)
 class VerifiedCitation:
     context_id: str
     feature_id: str
@@ -25,6 +32,10 @@ class VerifiedCitation:
     end_offset: int
     text_hash: str
     excerpt: str
+    corpus_snapshot_hash: str
+    prompt_version: str
+    retriever_version: str
+    context_hash: str
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -39,7 +50,11 @@ class CitationVerifier:
 
     @classmethod
     def verify(
-        cls, binding: Mapping[str, Any], chunk: Mapping[str, Any]
+        cls,
+        binding: Mapping[str, Any],
+        chunk: Mapping[str, Any],
+        *,
+        context_provenance: Mapping[str, Any] | None = None,
     ) -> VerifiedCitation:
         alias = str(binding.get("alias") or "")
         if cls._ALIAS.fullmatch(alias) is None:
@@ -61,6 +76,17 @@ class CitationVerifier:
         feature_id = str(binding.get("feature_id") or "")
         if not context_id.startswith("CTX-") or not re.fullmatch(r"F[1-9][0-9]*", feature_id):
             raise CitationVerificationError("Citation context or feature identity is invalid")
+        provenance = dict(context_provenance or {})
+        corpus_snapshot_hash = str(provenance.get("corpus_snapshot_hash") or "")
+        context_hash = str(provenance.get("context_hash") or "")
+        prompt_version = str(provenance.get("prompt_version") or "")
+        retriever_version = str(provenance.get("retriever_version") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", corpus_snapshot_hash):
+            raise CitationVerificationError("Citation Corpus snapshot hash is invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", context_hash):
+            raise CitationVerificationError("Citation Context hash is invalid")
+        if not prompt_version or not retriever_version:
+            raise CitationVerificationError("Citation prompt/retriever provenance is missing")
         return VerifiedCitation(
             context_id=context_id,
             feature_id=feature_id,
@@ -77,7 +103,16 @@ class CitationVerifier:
             end_offset=end,
             text_hash=str(binding["text_hash"]),
             excerpt=excerpt,
+            corpus_snapshot_hash=corpus_snapshot_hash,
+            prompt_version=prompt_version,
+            retriever_version=retriever_version,
+            context_hash=context_hash,
         )
 
 
-__all__ = ["CitationVerificationError", "CitationVerifier", "VerifiedCitation"]
+__all__ = [
+    "CitationVerificationError",
+    "CitationVerifier",
+    "ModelCitationSelection",
+    "VerifiedCitation",
+]

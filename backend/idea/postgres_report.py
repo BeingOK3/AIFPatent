@@ -105,6 +105,42 @@ class PostgreSQLReportScopeRepository:
         finally:
             await connection.close()
 
+    async def load_ready_for_analysis(
+        self, run_id: str, allowed_version_ids: tuple[str, ...]
+    ) -> tuple[ReportDocumentScope, ...]:
+        if not allowed_version_ids:
+            raise ReportRetrievalError("frozen report Version scope must not be empty")
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT rdv.document_id, rdv.version_id, pd.publication_number
+                    FROM run_document_versions AS rdv
+                    JOIN patent_document_versions AS pv ON pv.version_id = rdv.version_id
+                    JOIN patent_documents AS pd ON pd.document_id = rdv.document_id
+                    WHERE rdv.run_id = %s
+                      AND rdv.version_id = ANY(%s)
+                      AND rdv.corpus_availability = 'READY'
+                      AND pv.state = 'READY'
+                    ORDER BY pd.publication_number, rdv.document_id, rdv.version_id
+                    """,
+                    (run_id, list(allowed_version_ids)),
+                )
+                rows = await cursor.fetchall()
+            return tuple(
+                ReportDocumentScope(
+                    document_id=str(row["document_id"] if isinstance(row, dict) else row[0]),
+                    version_id=str(row["version_id"] if isinstance(row, dict) else row[1]),
+                    publication_number=str(
+                        row["publication_number"] if isinstance(row, dict) else row[2]
+                    ),
+                )
+                for row in rows
+            )
+        finally:
+            await connection.close()
+
     async def persist(self, result: ReportRetrievalResult) -> None:
         pairs = [(item.feature_id, item.version_id) for item in result.queries]
         if len(pairs) != len(set(pairs)):
@@ -135,8 +171,9 @@ class PostgreSQLReportScopeRepository:
                         """
                         INSERT INTO report_retrieval_hits(
                             run_id, version_id, feature_id, chunk_id, selection_reason,
-                            lexical_rank, selected_for_context, retriever_version, created_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            lexical_rank, selected_for_context, retriever_version, created_at,
+                            query_id, lexical_score, match_kind
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (
                             run_id, version_id, feature_id, chunk_id, selection_reason
                         ) DO NOTHING
@@ -151,7 +188,8 @@ class PostgreSQLReportScopeRepository:
                                 else None
                             ),
                             selection.selected_for_context,
-                            result.retriever_version, timestamp,
+                            result.retriever_version, timestamp, selection.hit.query_id,
+                            selection.hit.lexical_score, selection.hit.match_kind,
                         ),
                     )
                 await cursor.execute(

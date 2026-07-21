@@ -202,7 +202,39 @@ class WorkflowExecutor:
                 return checkpoint
             idea = self._idea(run_id)
             fetched, document_ids = self._pending_documents(run_id)
-            if fetched:
+            rag_context_ids: list[str] | None = None
+            rag_query_count: int | None = None
+            rag_limitations: list[str] = []
+            if self.config.features.initial_review_rag:
+                if self.report_rag is None:
+                    raise ExecutionGateError("initial report RAG service is required")
+                fetch_checkpoint = self._checkpoint(
+                    run_id, WorkflowStep.NORMALIZE_AND_FETCH
+                ) or {}
+                snapshot_hash = str(fetch_checkpoint.get("corpus_snapshot_hash") or "")
+                version_ids = tuple(fetch_checkpoint.get("corpus_version_ids") or ())
+                if not snapshot_hash or not version_ids:
+                    raise ExecutionGateError(
+                        "frozen Corpus snapshot and Version IDs are required for initial report RAG"
+                    )
+                prepared = await self.report_rag.prepare(
+                    run_id=run_id,
+                    idea=idea,
+                    corpus_snapshot_hash=snapshot_hash,
+                    allowed_version_ids=version_ids,
+                )
+                rag_context_ids = list(prepared.context_ids)
+                rag_query_count = prepared.retrieval_query_count
+                rag_limitations = list(prepared.limitations)
+                if fetched:
+                    await self.documents.analyze_many_rag(
+                        run_id=run_id,
+                        idea=idea,
+                        documents=fetched,
+                        document_ids=document_ids,
+                        contexts=prepared.contexts,
+                    )
+            elif fetched:
                 await self.documents.analyze_many(
                     run_id=run_id,
                     idea=idea,
@@ -226,26 +258,11 @@ class WorkflowExecutor:
                 fetch_checkpoint = self._checkpoint(run_id, WorkflowStep.NORMALIZE_AND_FETCH)
                 document_ids = tuple((fetch_checkpoint or {}).get("document_ids", {}).values())
                 await self.corpus_ingest.mark_deep_reviewed(run_id, document_ids)
-            rag_context_ids: list[str] | None = None
-            rag_query_count: int | None = None
-            if self.config.features.initial_review_rag:
-                if self.report_rag is None:
-                    raise ExecutionGateError("initial report RAG service is required")
-                fetch_checkpoint = self._checkpoint(run_id, WorkflowStep.NORMALIZE_AND_FETCH) or {}
-                snapshot_hash = str(fetch_checkpoint.get("corpus_snapshot_hash") or "")
-                if not snapshot_hash:
-                    raise ExecutionGateError("Corpus snapshot hash is required for initial report RAG")
-                prepared = await self.report_rag.prepare(
-                    run_id=run_id,
-                    idea=idea,
-                    corpus_snapshot_hash=snapshot_hash,
-                )
-                rag_context_ids = list(prepared.context_ids)
-                rag_query_count = prepared.retrieval_query_count
             value = {"deep_reviewed_count": reviewed, "pending_count": pending}
             if rag_context_ids is not None:
                 value["rag_context_ids"] = rag_context_ids
                 value["rag_retrieval_query_count"] = rag_query_count
+                value["limitations"] = rag_limitations
             return self._save_checkpoint(run_id, step, value)
         if step == WorkflowStep.DETERMINE_NOVELTY:
             checkpoint = self._checkpoint(run_id, step)

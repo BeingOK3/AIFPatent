@@ -135,6 +135,7 @@ class RagInfrastructureTests(unittest.TestCase):
         migrate = " ".join(rag_infra._docker_command("migrate"))
         self.assertIn("030_lexical_schema.sql", migrate)
         self.assertIn("035_report_retrieval_schema.sql", migrate)
+        self.assertIn("040_report_citation_schema.sql", migrate)
 
 
 if __name__ == "__main__":

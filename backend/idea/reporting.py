@@ -78,13 +78,29 @@ class ReportService:
                 raise AgentExecutionError("report already exists for this run")
         facts = self._load_facts(run_id)
         verified_citations: tuple[VerifiedCitation, ...] = ()
+        rag_context_provenance: tuple[dict[str, str], ...] = ()
         if self.citations is not None:
             verified_citations = tuple(await self.citations.for_run(run_id))
-            if not verified_citations:
-                raise AgentExecutionError(
-                    "initial report RAG produced no verified Citations"
-                )
             self._attach_citations(facts["deep_reviews"], verified_citations)
+            self._validate_citation_coverage(facts["deep_reviews"])
+            provenance_loader = getattr(
+                self.citations, "context_provenance_for_run", None
+            )
+            if provenance_loader is not None:
+                rag_context_provenance = tuple(await provenance_loader(run_id))
+            else:
+                rag_context_provenance = tuple(
+                    {
+                        "context_id": item.context_id,
+                        "corpus_snapshot_hash": item.corpus_snapshot_hash,
+                        "prompt_version": item.prompt_version,
+                        "retriever_version": item.retriever_version,
+                        "context_hash": item.context_hash,
+                    }
+                    for item in verified_citations
+                )
+            if not rag_context_provenance:
+                raise AgentExecutionError("initial report RAG Context provenance is missing")
         novelty_label = {
             "NOVEL": "具备新颖性",
             "NOT_NOVEL": "不具备新颖性",
@@ -151,7 +167,7 @@ class ReportService:
                         and item.publication_number == matrix["publication_number"]
                     ]
         report = {
-            "schema_version": "2.0" if verified_citations else "1.0",
+            "schema_version": "2.0" if self.citations is not None else "1.0",
             "run_id": run_id,
             "case_id": run["case_id"],
             "conclusion_overview": {
@@ -197,6 +213,27 @@ class ReportService:
                 "action_recommendations": narrative.action_recommendations,
             },
         }
+        if self.citations is not None:
+            report["rag_provenance"] = {
+                "corpus_snapshot_hashes": sorted(
+                    {item["corpus_snapshot_hash"] for item in rag_context_provenance}
+                ),
+                "retriever_versions": sorted(
+                    {item["retriever_version"] for item in rag_context_provenance}
+                ),
+                "prompt_versions": sorted(
+                    {item["prompt_version"] for item in rag_context_provenance}
+                ),
+                "context_hashes": sorted(
+                    {item["context_hash"] for item in rag_context_provenance}
+                ),
+                "context_ids": sorted(
+                    {item["context_id"] for item in rag_context_provenance}
+                ),
+                "citation_text_hashes": sorted(
+                    {item.text_hash for item in verified_citations}
+                ),
+            }
         markdown = self._markdown(report)
         manifest = self.run_store.write_reports(
             run["case_id"],
@@ -209,7 +246,22 @@ class ReportService:
                 "workflow_version": run["workflow_version"],
                 "citation_count": len(verified_citations),
                 "citation_context_ids": sorted(
-                    {item.context_id for item in verified_citations}
+                    {item["context_id"] for item in rag_context_provenance}
+                ),
+                "corpus_snapshot_hashes": sorted(
+                    {item["corpus_snapshot_hash"] for item in rag_context_provenance}
+                ),
+                "retriever_versions": sorted(
+                    {item["retriever_version"] for item in rag_context_provenance}
+                ),
+                "prompt_versions": sorted(
+                    {item["prompt_version"] for item in rag_context_provenance}
+                ),
+                "context_hashes": sorted(
+                    {item["context_hash"] for item in rag_context_provenance}
+                ),
+                "citation_text_hashes": sorted(
+                    {item.text_hash for item in verified_citations}
                 ),
             },
         )
@@ -229,6 +281,22 @@ class ReportService:
                     if item.feature_id == mapping["feature_id"]
                     and item.publication_number == document["publication_number"]
                 ]
+
+    @staticmethod
+    def _validate_citation_coverage(deep_reviews: list[dict[str, Any]]) -> None:
+        for document in deep_reviews:
+            for mapping in document["feature_mappings"]:
+                citations = mapping.get("citations", [])
+                if mapping["status"] in {"DISCLOSED", "PARTIAL"} and not citations:
+                    raise AgentExecutionError(
+                        "DISCLOSED/PARTIAL report mapping lacks a verified Citation: "
+                        f"{document['publication_number']} {mapping['feature_id']}"
+                    )
+                if mapping["status"] in {"NOT_DISCLOSED", "UNCERTAIN"} and citations:
+                    raise AgentExecutionError(
+                        "negative report mapping must not contain a Citation: "
+                        f"{document['publication_number']} {mapping['feature_id']}"
+                    )
 
     def _load_facts(self, run_id: str) -> dict[str, Any]:
         with self.database.connect() as connection:

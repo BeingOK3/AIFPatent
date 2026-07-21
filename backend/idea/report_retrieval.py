@@ -65,6 +65,10 @@ class ReportScopeRepository(Protocol):
         self, run_id: str
     ) -> tuple[ReportDocumentScope, ...]: ...
 
+    async def load_ready_for_analysis(
+        self, run_id: str, allowed_version_ids: tuple[str, ...]
+    ) -> tuple[ReportDocumentScope, ...]: ...
+
     async def persist(self, result: ReportRetrievalResult) -> None: ...
 
 
@@ -101,7 +105,11 @@ class InitialReportRetriever:
         self.retriever_version = retriever_version
 
     async def retrieve(
-        self, *, run_id: str, features: Sequence[IdeaFeature]
+        self,
+        *,
+        run_id: str,
+        features: Sequence[IdeaFeature],
+        allowed_version_ids: tuple[str, ...] | None = None,
     ) -> ReportRetrievalResult:
         if not run_id.strip():
             raise ReportRetrievalError("run ID must not be empty")
@@ -113,7 +121,25 @@ class InitialReportRetriever:
             raise ReportRetrievalError("required feature IDs must be unique")
 
         await self.scope_repository.prepare_features(run_id, required)
-        scopes = tuple(await self.scope_repository.load_ready_deep_reviewed(run_id))
+        if allowed_version_ids is None:
+            scopes = tuple(await self.scope_repository.load_ready_deep_reviewed(run_id))
+        else:
+            if not allowed_version_ids or len(set(allowed_version_ids)) != len(
+                allowed_version_ids
+            ):
+                raise ReportRetrievalError(
+                    "frozen report Version scope must be nonempty and unique"
+                )
+            scopes = tuple(
+                await self.scope_repository.load_ready_for_analysis(
+                    run_id, allowed_version_ids
+                )
+            )
+            actual_version_ids = {scope.version_id for scope in scopes}
+            if actual_version_ids != set(allowed_version_ids):
+                raise ReportRetrievalError(
+                    "READY report scope does not match the frozen Version checkpoint"
+                )
         if not scopes:
             raise ReportRetrievalError(
                 "initial report requires a READY deep-reviewed Corpus Version"
@@ -242,12 +268,17 @@ class InitialReportRetriever:
         independent = tuple(
             item
             for item in chunks
-            if item.section_type == "claims" and item.claim_kind == "independent"
+            if item.section_type == "claims"
+            and (item.claim_kind == "independent" or item.claim_number == 1)
         )
         if not abstracts:
-            limitations.append(f"MISSING_ABSTRACT:{scope.version_id}")
+            raise ReportRetrievalError(
+                f"mandatory abstract evidence is missing for {scope.version_id}"
+            )
         if not independent:
-            limitations.append(f"MISSING_INDEPENDENT_CLAIM:{scope.version_id}")
+            raise ReportRetrievalError(
+                f"mandatory independent-claim evidence is missing for {scope.version_id}"
+            )
 
         existing = {
             (item.feature_id, item.version_id, item.hit.chunk.chunk_id, item.selection_reason)
@@ -300,7 +331,11 @@ class InitialReportRetriever:
                 add_parents(parent, path + (parent_number,))
 
         for hit in lexical_hits:
-            if hit.chunk.section_type == "claims" and hit.chunk.parent_claim_numbers:
+            if (
+                hit.chunk.section_type == "claims"
+                and hit.chunk.claim_number != 1
+                and hit.chunk.parent_claim_numbers
+            ):
                 current = hit.chunk.claim_number
                 add_parents(hit.chunk, (() if current is None else (current,)))
 

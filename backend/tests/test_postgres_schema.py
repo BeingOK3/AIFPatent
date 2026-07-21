@@ -8,6 +8,7 @@ SCHEMA_PATH = Path("deploy/rag/postgres-init/010_core_schema.sql")
 CORPUS_SCHEMA_PATH = Path("deploy/rag/postgres-init/020_corpus_schema.sql")
 LEXICAL_SCHEMA_PATH = Path("deploy/rag/postgres-init/030_lexical_schema.sql")
 REPORT_RETRIEVAL_SCHEMA_PATH = Path("deploy/rag/postgres-init/035_report_retrieval_schema.sql")
+REPORT_CITATION_SCHEMA_PATH = Path("deploy/rag/postgres-init/040_report_citation_schema.sql")
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -16,6 +17,7 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.corpus_sql = CORPUS_SCHEMA_PATH.read_text(encoding="utf-8")
         self.lexical_sql = LEXICAL_SCHEMA_PATH.read_text(encoding="utf-8")
         self.report_retrieval_sql = REPORT_RETRIEVAL_SCHEMA_PATH.read_text(encoding="utf-8")
+        self.report_citation_sql = REPORT_CITATION_SCHEMA_PATH.read_text(encoding="utf-8")
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
         self.assertIn("BEGIN;", self.sql)
@@ -97,6 +99,15 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("'035_report_retrieval_schema'", sql)
         self.assertNotIn("DROP TABLE", sql.upper())
         self.assertNotIn("TRUNCATE", sql.upper())
+        self.assertNotIn("DELETE FROM", sql.upper())
+
+    def test_report_citation_schema_binds_only_model_cited_chunks(self) -> None:
+        sql = self.report_citation_sql
+        self.assertIn("CREATE TABLE IF NOT EXISTS report_model_citations", sql)
+        self.assertIn("context_id TEXT NOT NULL REFERENCES model_context_manifests", sql)
+        self.assertIn("chunk_id TEXT NOT NULL REFERENCES patent_chunks", sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS lexical_score", sql)
+        self.assertIn("'040_report_citation_schema'", sql)
         self.assertNotIn("DELETE FROM", sql.upper())
 
 

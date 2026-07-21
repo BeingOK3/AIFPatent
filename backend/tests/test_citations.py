@@ -6,6 +6,14 @@ import unittest
 from idea.citations import CitationVerificationError, CitationVerifier
 
 
+PROVENANCE = {
+    "corpus_snapshot_hash": "a" * 64,
+    "prompt_version": "prompt-v1",
+    "retriever_version": "retriever-v1",
+    "context_hash": "b" * 64,
+}
+
+
 def binding():
     text = "1. A cache controller using a heat score."
     return {
@@ -36,7 +44,9 @@ def chunk_row():
 
 class CitationVerifierTests(unittest.TestCase):
     def test_exact_binding_becomes_verified_citation(self) -> None:
-        citation = CitationVerifier.verify(binding(), chunk_row())
+        citation = CitationVerifier.verify(
+            binding(), chunk_row(), context_provenance=PROVENANCE
+        )
         self.assertEqual(citation.alias, "C2")
         self.assertEqual(citation.feature_id, "F1")
         self.assertEqual(citation.excerpt, chunk_row()["text"])
@@ -54,13 +64,21 @@ class CitationVerifierTests(unittest.TestCase):
                 changed = binding()
                 changed[field] = value
                 with self.assertRaises(CitationVerificationError):
-                    CitationVerifier.verify(changed, chunk_row())
+                    CitationVerifier.verify(
+                        changed, chunk_row(), context_provenance=PROVENANCE
+                    )
 
     def test_unknown_alias_format_is_rejected(self) -> None:
         changed = binding()
         changed["alias"] = "E1"
         with self.assertRaisesRegex(CitationVerificationError, "alias"):
-            CitationVerifier.verify(changed, chunk_row())
+            CitationVerifier.verify(
+                changed, chunk_row(), context_provenance=PROVENANCE
+            )
+
+    def test_missing_context_provenance_is_rejected(self) -> None:
+        with self.assertRaisesRegex(CitationVerificationError, "snapshot"):
+            CitationVerifier.verify(binding(), chunk_row())
 
 
 if __name__ == "__main__":

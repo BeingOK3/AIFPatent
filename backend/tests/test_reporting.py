@@ -129,6 +129,10 @@ class ReportingTests(unittest.TestCase):
             section_label="claim-1", claim_number=1, start_offset=0,
             end_offset=22, text_hash="a" * 64,
             excerpt="1. A cache controller.",
+            corpus_snapshot_hash="b" * 64,
+            prompt_version="patent-document-analyzer-rag-v1",
+            retriever_version="initial-report-lexical-v1",
+            context_hash="c" * 64,
         )
 
         class CitationRepository:
@@ -144,11 +148,16 @@ class ReportingTests(unittest.TestCase):
 
         self.assertEqual(report["schema_version"], "2.0")
         self.assertEqual(report["citations"][0]["chunk_id"], "chunk-1")
+        self.assertEqual(report["rag_provenance"]["corpus_snapshot_hashes"], ["b" * 64])
         mapping = report["deep_review_documents"][0]["feature_mappings"][0]
         self.assertEqual(mapping["citations"][0]["alias"], "C1")
         markdown = self.store.paths(self.run["case_id"], self.run_id).report_md.read_text()
         self.assertIn("依据：[C1] US123456A1，claim-1", markdown)
         self.assertIn("原文：1. A cache controller.", markdown)
+        manifest = json.loads(
+            self.store.paths(self.run["case_id"], self.run_id).manifest.read_text()
+        )
+        self.assertEqual(manifest["metadata"]["context_hashes"], ["c" * 64])
 
     def test_authoritative_json_markdown_manifest_and_hashes_are_saved(self) -> None:
         report = asyncio.run(self.service(ReportModel()).generate(
@@ -171,6 +180,46 @@ class ReportingTests(unittest.TestCase):
             row = connection.execute("SELECT * FROM reports WHERE run_id = ?", (self.run_id,)).fetchone()
         manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
         self.assertEqual(row["report_json_hash"], manifest["files"]["report.json"]["sha256"])
+
+    def test_rag_report_allows_zero_citations_when_every_mapping_is_negative(self) -> None:
+        with self.db.connect() as connection:
+            connection.execute(
+                """INSERT INTO idea_features(
+                    feature_id,run_id,ordinal,feature_text,source_type,metadata_json
+                ) VALUES(?,?,?,?,?,?)""",
+                (f"{self.run_id}:F1", self.run_id, 1, "token heat eviction",
+                 "normalized", '{"external_feature_id":"F1"}'),
+            )
+            connection.execute(
+                """INSERT INTO feature_mappings(
+                    mapping_id,run_id,document_id,feature_id,coverage_status,
+                    confidence,evidence_ids_json,rationale
+                ) VALUES(?,?,?,?,?,?,?,?)""",
+                ("map-negative", self.run_id, "doc-1", f"{self.run_id}:F1",
+                 "NOT_DISCLOSED", 0.8, "[]", "not present"),
+            )
+
+        class CitationRepository:
+            async def for_run(self, run_id): return ()
+            async def context_provenance_for_run(self, run_id):
+                return ({
+                    "context_id": "CTX-fixture",
+                    "corpus_snapshot_hash": "b" * 64,
+                    "prompt_version": "prompt-v1",
+                    "retriever_version": "retriever-v1",
+                    "context_hash": "c" * 64,
+                },)
+
+        report = asyncio.run(
+            self.service(ReportModel(), CitationRepository()).generate(
+                self.run_id, idea(), novelty(), [], value(), []
+            )
+        )
+        self.assertEqual(report["schema_version"], "2.0")
+        self.assertEqual(report["citations"], [])
+        self.assertEqual(
+            report["deep_review_documents"][0]["feature_mappings"][0]["citations"], []
+        )
 
     def test_contradictory_novelty_narrative_is_rejected_before_writes(self) -> None:
         with self.assertRaisesRegex(AgentExecutionError, "contradicts"):

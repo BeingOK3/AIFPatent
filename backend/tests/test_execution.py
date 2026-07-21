@@ -126,7 +126,16 @@ class FakeRetrieval:
 
 
 class FakeDocuments:
+    def __init__(self):
+        self.legacy_calls = []
+        self.rag_calls = []
+
     async def analyze_many(self, **kwargs):
+        self.legacy_calls.append(kwargs)
+        return {}
+
+    async def analyze_many_rag(self, **kwargs):
+        self.rag_calls.append(kwargs)
         return {}
 
 
@@ -153,13 +162,18 @@ class FakeReportRag:
         self.calls = []
 
     async def prepare(self, **kwargs):
-        if not self.corpus.reviewed:
-            raise AssertionError("RAG context must be built after deep-review state is durable")
+        if self.corpus.reviewed:
+            raise AssertionError("RAG context must be built before deep-review state is durable")
         self.calls.append(kwargs)
         return type(
             "PreparedRag",
             (),
-            {"context_ids": ("CTX-fixture",), "retrieval_query_count": 1},
+            {
+                "context_ids": ("CTX-fixture",),
+                "retrieval_query_count": 1,
+                "contexts": (),
+                "limitations": (),
+            },
         )()
 
 
@@ -321,7 +335,7 @@ class WorkflowExecutorTests(unittest.TestCase):
         self.assertEqual(checkpoint["corpus_version_ids"], ["cv-1"])
         self.assertEqual(checkpoint["corpus_snapshot_hash"], "a" * 64)
 
-    def test_enabled_initial_report_rag_freezes_context_after_deep_review(self) -> None:
+    def test_enabled_initial_report_rag_freezes_context_before_deep_review(self) -> None:
         run = self.create_run()
         features = self.config.features.model_copy(
             update={"patent_corpus": True, "initial_review_rag": True}
@@ -338,6 +352,7 @@ class WorkflowExecutorTests(unittest.TestCase):
         self.assertEqual(status, "COMPLETED")
         self.assertEqual(len(rag.calls), 1)
         self.assertEqual(rag.calls[0]["corpus_snapshot_hash"], "a" * 64)
+        self.assertEqual(rag.calls[0]["allowed_version_ids"], ("cv-1",))
         checkpoint = executor._checkpoint(run["run_id"], WorkflowStep.ANALYZE_DOCUMENTS)
         self.assertEqual(checkpoint["rag_context_ids"], ["CTX-fixture"])
 

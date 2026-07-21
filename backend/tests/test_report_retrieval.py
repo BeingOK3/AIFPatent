@@ -75,6 +75,12 @@ class FakeScopeRepository:
         self.loaded_run_id = run_id
         return self.scopes
 
+    async def load_ready_for_analysis(self, run_id, allowed_version_ids):
+        self.loaded_for_analysis = (run_id, tuple(allowed_version_ids))
+        return tuple(
+            item for item in self.scopes if item.version_id in allowed_version_ids
+        )
+
     async def persist(self, result):
         self.persisted.append(result)
 
@@ -178,6 +184,30 @@ class InitialReportRetrieverTests(unittest.TestCase):
         self.assertEqual({item.feature_id for item in result.queries}, {"F1", "F2"})
         self.assertEqual(len(lexical.requests), 2)
 
+    def test_frozen_checkpoint_versions_are_used_before_deep_review(self) -> None:
+        repository = FakeScopeRepository(self.scopes)
+        result = asyncio.run(
+            InitialReportRetriever(repository, FakeLexicalSearch()).retrieve(
+                run_id="run-1",
+                features=self.features[:1],
+                allowed_version_ids=("cv-2",),
+            )
+        )
+        self.assertEqual(repository.loaded_for_analysis, ("run-1", ("cv-2",)))
+        self.assertEqual(result.corpus_version_ids, ("cv-2",))
+
+    def test_frozen_checkpoint_scope_must_match_database_exactly(self) -> None:
+        with self.assertRaisesRegex(ReportRetrievalError, "does not match"):
+            asyncio.run(
+                InitialReportRetriever(
+                    FakeScopeRepository(self.scopes[:1]), FakeLexicalSearch()
+                ).retrieve(
+                    run_id="run-1",
+                    features=self.features[:1],
+                    allowed_version_ids=("cv-1", "cv-2"),
+                )
+            )
+
     def test_empty_required_feature_set_fails_closed(self) -> None:
         optional = IdeaFeature(
             feature_id="F1", feature_text="optional",
@@ -236,6 +266,9 @@ class InitialReportRetrieverTests(unittest.TestCase):
             "cv-1", "CN1A", section_type="claims", label="claim-3",
             claim_number=3, claim_kind="dependent", parents=(2,),
         )
+        abstract = structured_chunk(
+            "cv-1", "CN1A", section_type="abstract", label="abstract"
+        )
 
         class DependentLexical(FakeLexicalSearch):
             async def search(self, request):
@@ -245,7 +278,7 @@ class InitialReportRetrieverTests(unittest.TestCase):
         result = asyncio.run(
             InitialReportRetriever(
                 FakeScopeRepository(self.scopes[:1]), DependentLexical(),
-                chunk_repository=FakeChunkRepository((claim_1, claim_2, claim_3)),
+                chunk_repository=FakeChunkRepository((abstract, claim_1, claim_2, claim_3)),
             ).retrieve(run_id="run-1", features=self.features[:1])
         )
 
@@ -257,6 +290,13 @@ class InitialReportRetrieverTests(unittest.TestCase):
         self.assertEqual(forced_claims, {1, 2})
 
     def test_missing_parent_claim_fails_closed(self) -> None:
+        abstract = structured_chunk(
+            "cv-1", "CN1A", section_type="abstract", label="abstract"
+        )
+        independent = structured_chunk(
+            "cv-1", "CN1A", section_type="claims", label="claim-1",
+            claim_number=1, claim_kind="independent",
+        )
         dependent = structured_chunk(
             "cv-1", "CN1A", section_type="claims", label="claim-3",
             claim_number=3, claim_kind="dependent", parents=(2,),
@@ -271,9 +311,58 @@ class InitialReportRetrieverTests(unittest.TestCase):
             asyncio.run(
                 InitialReportRetriever(
                     FakeScopeRepository(self.scopes[:1]), DependentLexical(),
-                    chunk_repository=FakeChunkRepository((dependent,)),
+                    chunk_repository=FakeChunkRepository((abstract, independent, dependent)),
                 ).retrieve(run_id="run-1", features=self.features[:1])
             )
+
+    def test_missing_mandatory_abstract_or_independent_claim_fails_closed(self) -> None:
+        abstract = structured_chunk(
+            "cv-1", "CN1A", section_type="abstract", label="abstract"
+        )
+        independent = structured_chunk(
+            "cv-1", "CN1A", section_type="claims", label="claim-1",
+            claim_number=1, claim_kind="independent",
+        )
+        for available, expected in (
+            ((independent,), "abstract evidence"),
+            ((abstract,), "independent-claim evidence"),
+        ):
+            with self.subTest(expected=expected), self.assertRaisesRegex(
+                ReportRetrievalError, expected
+            ):
+                asyncio.run(
+                    InitialReportRetriever(
+                        FakeScopeRepository(self.scopes[:1]), FakeLexicalSearch(),
+                        chunk_repository=FakeChunkRepository(available),
+                    ).retrieve(run_id="run-1", features=self.features[:1])
+                )
+
+    def test_merged_claim_one_is_independent_despite_later_reference_noise(self) -> None:
+        abstract = structured_chunk(
+            "cv-1", "CN1A", section_type="abstract", label="abstract"
+        )
+        merged_claim_one = structured_chunk(
+            "cv-1", "CN1A", section_type="claims", label="claim-1",
+            claim_number=1, claim_kind="dependent", parents=(6,),
+        )
+
+        class MergedClaimLexical(FakeLexicalSearch):
+            async def search(self, request):
+                self.requests.append(request)
+                return (LexicalHit(request.query_id, 1, 0.9, "fts", merged_claim_one),)
+
+        result = asyncio.run(
+            InitialReportRetriever(
+                FakeScopeRepository(self.scopes[:1]), MergedClaimLexical(),
+                chunk_repository=FakeChunkRepository((abstract, merged_claim_one)),
+            ).retrieve(run_id="run-1", features=self.features[:1])
+        )
+
+        forced = [
+            item for item in result.selections
+            if item.selection_reason == "forced_claim"
+        ]
+        self.assertEqual([item.hit.chunk.claim_number for item in forced], [1])
 
 
 if __name__ == "__main__":

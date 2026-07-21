@@ -479,3 +479,28 @@
 - BYOK：启动/停止脚本与 Compose 均不接收、导出或保存模型 API Key；网页仍按 Run 输入 Base URL、Model、API Key，刷新后消失。
 - 真实验收：`./start.sh` 成功使 app/PostgreSQL/Redis/MinIO 全部 healthy，`127.0.0.1:8001/openapi.json` 可访问；`./stop.sh` 后 8001 不可访问、无容器残留且卷保留。
 - 空间边界：验收后根文件系统可用 18G，高于至少保留 5G 门槛；脚本/配置/Infra 聚焦测试 21 项通过；兼容路径测试已显式关闭 RAG、不再依赖仓库默认值；完整离线套件 308 项通过、2 项按设计跳过。
+
+## 2026-07-22 — IDEA-LEXICAL-RAG-E2E-001
+
+- 类型：真实 DeepSeek 首次报告全链路与交付文档验收。
+- E2E 工具：新增 `tools/e2e_lexical_rag.py`，只从临时环境变量读取 BYOK，创建真实 Case/Run，等待终态并校验 schema 2.0、Citation 字段、excerpt SHA-256 以及 deep-review mapping 引用；成功输出只含 Run ID 和计数，不打印报告正文或凭证。
+- 模型兼容：DeepSeek `/models` 实际返回规范 ID `deepseek-v4-flash`，展示名大小写写法被 API 以 400 拒绝；README 已明确模型 ID 大小写敏感，通用运行时不擅自改写供应商 ID。
+- 真实缺陷修正：首个到达报告阶段的 Run 被 Citation 完成门拦截，原因是 PostgreSQL `claim_number TEXT` 回读为字符串而领域 binding 为整数；修复位于 `PostgreSQLCitationRepository` adapter，将数据库值恢复为 `int | None` 后仍由严格 verifier 逐字段核验，不放宽安全条件，并新增真实 PG 类型回归测试。
+- 真实结果：修复后 Run `b69e0cd9-705e-4c5d-be9a-2acd35c0991b` 完成全部 11 步并进入 `COMPLETED_WITH_LIMITATIONS`，生成 schema 2.0 报告；10 篇公开号、10 个 Context、78 个 Citation 全部通过 E2E hash/结构校验。
+- 基础设施：真实 PostgreSQL/MinIO Corpus 集成测试 2 项通过；一键栈四服务 healthy。模型凭证仅经关闭终端回显的 stdin 进入临时进程，调用后 unset，未写入 `rag.env`、Git、报告或测试工具。
+- 未完成范围：评审后追问聊天、Embedding/pgvector 检索、RRF、reranker、Citation 前端精细展开、Variant/法律状态增强和多租户认证继续留在后续阶段。
+- 最终验证：报告 Markdown 包含 78 条 `依据：[C#]` 与 78 条 Chunk 原文，一一对应；完整离线套件 310 项通过、2 项按设计跳过；`compileall`、`git diff --check` 通过；仓库文本秘密模式扫描和应用容器环境检查均未发现模型凭证；测试栈已停止且 named volumes 保留；根文件系统可用 18G。待最终代码复审、提交推送和远端 SHA 对齐。
+
+## 2026-07-22 — IDEA-LEXICAL-RAG-E2E-REVIEW-FIX-002
+
+- 类型：首次报告 LEXICAL_RAG 语义纠正、模型实际 Citation 与独立数据库验收。本文明确取代 `IDEA-REPORT-RAG-001`、`IDEA-REPORT-CITATION-001` 和 `IDEA-LEXICAL-RAG-E2E-001` 中“旧分析完成后才建 Context”“全部 selected hit 作为 Citation”“报告自验 hash 即完成”的旧实现描述；历史记录保留用于说明发现过程。
+- 正确顺序：`NORMALIZE_AND_FETCH` 冻结 Corpus snapshot/Version IDs 后，先在完全相同的 allowlist 上执行 `F_i × D_j` 词法检索和 mandatory evidence，再持久化每篇文献的 Context Manifest，然后才把该 Context 交给 DeepSeek 文档分析；所有分析成功后才同步 PostgreSQL deep-reviewed 状态。
+- 模型实际引用：文档分析只接受当前 Context 中的 `C1..Cn`；`DISCLOSED/PARTIAL` 必须引用，`NOT_DISCLOSED/UNCERTAIN` 必须为空。新增 `report_model_citations` 只保存模型实际选择，并在重试时按 Run/Document/Context 同一事务先删旧选择再写新选择，避免失败尝试污染最终报告；全部负向披露时允许合法的零 Citation schema 2.0 报告。
+- 强制证据与真实源缺陷：摘要和独立权利要求缺失、或预算排除任一 mandatory Chunk 时直接 fail closed。真实 E2E 发现 Google Patents 把 `CN120670335B` 的 1–9 项双语权利要求合并为单个 `claim-1`，后续文本引用 claim 6 导致旧 metadata 误标 dependent；修正只应用法律上严格成立的 `claim_number=1` 独立项不变量，并忽略该合并文本污染出的 later-parent，不放宽其他 claim 或摘要门禁。
+- 审计与 provenance：retrieval hit 保留 `query_id`、`lexical_score`、`match_kind`；Citation 回读同时验证 Run scope、`corpus_availability=READY`、`deep_reviewed=true`、Version `state=READY`、Context binding 与 Chunk 全字段。报告及 Manifest 记录所有 Context IDs、Corpus snapshot、Prompt/Retriever/Context hashes 和 Citation text hashes。
+- 独立 E2E：验收工具始终遍历报告 `rag_provenance.context_ids`，回查每个 PostgreSQL Context 及其 allowed Versions；非空 Citation 再逐条回查 Chunk 和 `report_model_citations`。因此即使合法零 Citation，也不能绕过 Version/Context 验证。
+- 真实结果：最终 Run `a01f6ec9-17ea-4602-ab66-8c7bfb65dc25` 完成 11 步并进入 `COMPLETED_WITH_LIMITATIONS`；schema 2.0 报告的 20 条模型实际 Citation、10 个 Context、10 个冻结 Version 全部通过独立 PostgreSQL 验证，Citation 覆盖 6 个公开号。限制来自 Provider/来源范围，不是 RAG 或 Citation 验证失败。
+- 安全：DeepSeek BYOK 仍只经关闭回显的 stdin 进入一次性进程环境，调用结束即 unset；没有写入 Git、`rag.env`、Context、报告、Manifest 或容器持久环境。规范模型 ID 为大小写敏感的 `deepseek-v4-flash`。
+- 最终验证：完整离线套件 329 项通过、2 项按设计跳过；真实 PostgreSQL/MinIO 集成测试 2 项通过；`compileall`、`git diff --check` 通过。最终 Run 留存 40 个 Feature×Version query、140 个 retrieval hit（`query_id/lexical_score/match_kind` 缺失数为 0）、10 个 READY deep-reviewed Version、10 个 Context 和 20 个模型 Citation。三轮针对性代码复审最终均为 READY。
+- 空间与生命周期：验收时根文件系统 40G 中可用 18G，高于至少保留 5G 的门槛；测试结束使用 `./stop.sh` 停止容器并保留 named volumes。
+- 未完成范围不变：评审后追问聊天、Embedding/pgvector、RRF、reranker、Citation 前端精细展开、Variant/法律状态增强与多租户认证继续作为后续阶段，不伪装为本次完成项。

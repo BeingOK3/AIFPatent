@@ -1,169 +1,127 @@
-# AIFPatent — LangGraph 专利 IDEA 工作台
+# AIFPatent — 可验证 Citation 的专利 IDEA 评估
 
-AIFPatent 是从 AI4Patent 当前工作树独立孵化的新项目。它拥有全新的 Git 历史和远程仓库，目标是在保留专利证据、审计、不可变 Run 与 BYOK 安全语义的前提下，将执行编排迁移到 LangGraph，并使用 LangChain 统一模型结构化调用。
+AIFPatent 当前 `develop` 版本提供可直接运行的首次报告 `LEXICAL_RAG` 闭环：检索专利、深读全文、保存不可变 Corpus Version 与结构化 Chunk，按 `Feature × Patent` 检索证据，强制覆盖摘要和全部独立权利要求，最终生成带可回查 Citation 的 JSON/Markdown 报告。
 
-当前仓库不继承原项目的 `.git`、运行数据、缓存、日志或凭证。已完成的迁移记录和核心开发历史保存在 `development/core/`，不与当前产品文档混合。
+## 当前版本
 
-AIFPatent 当前只对外启用“专利 IDEA 评估”。系统把检索、全文核验、新颖性、创造性、价值分析、审计和报告固化为后端 Workflow；CLI 只负责提交任务、等待持久终态和读取权威报告，不能自行跳步或模拟工具结果。
+已完成：
 
-## 当前能力
+- 固定 11 步 LangGraph Workflow、不可变 Case/Run、重试、取消、审计和 Manifest；
+- Google Patents 与 EXA MCP 检索、全文抓取、候选去重和最少 10 篇深读门禁；
+- PostgreSQL Corpus Version/Chunk、MinIO 正文对象、Redis 基础设施；
+- PostgreSQL FTS/`pg_trgm` 词法检索，严格限制在源 Run 的冻结 Version；
+- 每个 `F_i × D_j` 检索审计，强制摘要、全部独立权利要求和父权利要求链；
+- 在文档分析前生成的确定性 Context Manifest，DeepSeek 只使用其中的 `C#` 证据；
+- 报告 schema 2.0 Citation 只包含模型对 `DISCLOSED/PARTIAL` 实际输出的 `C#`，并在输出前回查当前 Run 的 READY Version 与真实 Chunk；
+- `./start.sh` 和 `./stop.sh` 管理完整 Docker 栈，停止不删除数据卷。
 
-- 固定 11 步 Workflow，每一步都有 attempt、状态、错误码和 write-once 检查点。
-- Google Patents 与 EXA MCP 在同轮统一调度，结果独立留痕、归一化、合并去重；EXA 可并发，Google 实际网络请求全局串行；单路故障可降级。
-- 先基于标题/摘要和中英双语概念组筛选，再对相关候选读取全文；所有模式的深读下限不得低于 10 篇，deep 默认下限为 20 篇。
-- 新颖性遵守单篇文献原则，可直接输出“具备新颖性”，同时给出置信度、最接近文献、缺失特征、检索范围和局限。
-- 创造性、价值、模拟审查意见和证据审计均使用严格 JSON Schema；模型不能伪造 evidence ID。
-- 价值维度使用 1–5 分制；面向用户的判断文字统一为中文，报告中的专利公开号可直接打开原文。
-- Case/Run、输入快照、报告和 Manifest 持久保存；历史不自动删除，只支持用户手动删除。
-- 页面实时显示 Workflow 步骤和 Tool Call；详细事件追加到 Git 忽略的 JSONL 调试日志。
-- 可重建缓存使用 1 GiB 上限和 FIFO 清理，不会清理 Case/Run 权威结果。
+尚未完成：评审后追问聊天、Embedding/pgvector 召回、RRF、reranker、Citation 前端精细展开、专利族变体与法律状态增强、多租户/认证。这些边界记录在 `development/followup-rag/development-log.md`。
 
-## 快速开始
+## 新机器直接运行
 
-环境要求：Linux、Python 3.10+、`bash`、`curl`，以及可访问模型 API 和至少一个专利检索 Provider 的网络。
+需要 Linux、Git、Docker Engine、Docker Compose plugin、Python 3 和 curl。先按 Docker 官方方式安装 Engine/Compose，并让当前用户可执行 Docker；重新登录后确认：
 
 ```bash
-git clone git@github.com:BeingOK3/AIFPatent.git
+docker version
+docker compose version
+```
+
+克隆并启动：
+
+```bash
+git clone --branch develop git@github.com:BeingOK3/AIFPatent.git
 cd AIFPatent
-./install.sh
-```
-
-存储、缓存、检索 Provider 和预算统一配置在 `config/ai4patent.json`。每个网页 Run 的模型 Base URL、API Key 和 Model 由使用者临时输入；API Key 不写入配置文件、数据库、历史、日志或浏览器存储。
-
-启动服务：
-
-```bash
 ./start.sh
-# 浏览器访问 http://localhost:8001
 ```
 
-打开页面后，在“模型 API（本页临时使用）”中输入自己的 Base URL、API Key 和 Model。三项内容在刷新、关闭、重新进入页面或点击左侧“＋”后都会清空；API Key 只在当前页面和对应 Run 的进程内存中使用。
+首次启动会检查至少 5GiB 可用空间，创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env`，启动 app/PostgreSQL/Redis/MinIO，执行幂等迁移、创建 Corpus Bucket 并等待健康检查。`rag.env` 只有本机基础设施随机凭证，不含模型密钥。
 
-开发模式与停止：
+浏览器访问 `http://localhost:8001`。停止服务并保留数据：
 
 ```bash
-./dev.sh
 ./stop.sh
 ```
 
-## 使用方式
+如果通过 VS Code Remote SSH 使用服务器，并已配置：
 
-网页为三栏 IDEA 工作区：
-
-1. 左侧查看共享 Case/Run 历史和终态。Case 是同一技术方案的历史分组，名称必须唯一；每个 Run 都是带独立输入哈希的不可变快照，不会覆盖其他 Run。
-2. 中间输入本页临时 Base URL、API Key、Model 和技术方案，选择评估日、quick/standard/deep、候选上限和深读上下限。
-3. 运行中查看 11 步持久进度，以及实时 Workflow、Tool Call、耗时、结果数和错误；刷新或断线后可从持久状态恢复显示。
-4. 右侧查看中文新颖性、创造性、1–5 分价值、审计、Provider 状态和限制；专利号可打开原文，并可导出 Markdown。
-
-点击 Case 会打开其最新 Run，点击任意 Run 会把当次 IDEA、评估日、日期依据和检索预算恢复到中栏。编辑这些历史输入后提交会在当前 Case 下创建新 Run；“重新运行”会复制原 Run 的输入和预算。两种方式都只新增记录，不修改旧 Run。修复前已经生成的英文历史报告保持 Manifest 不变，页面会显示中文兼容说明；新 Run 的创造性、价值、审计、限制和报告说明必须通过中文语言门禁，否则模型调用会自动重试。
-
-默认检索预算：
-
-| 模式 | 候选上限 | 深读下限 | 深读上限 |
-|---|---:|---:|---:|
-| quick | 30 | 10 | 10 |
-| standard | 80 | 10 | 20 |
-| deep | 150 | 20 | 40 |
-
-系统会根据 IDEA 的宽窄在上下限之间确定目标。用户可以修改上限，但深读下限不能低于 10，候选上限不能小于深读上限。
-
-## CLI
-
-服务启动后可直接运行确定性 CLI：
-
-CLI 不接受明文 `--api-key` 参数；启动 Run 时只从当前进程的环境变量读取 Token：
-
-```bash
-export LLM_API_KEY='your-key'
-tools/idea_workflow.py health
-
-tools/idea_workflow.py run \
-  --model-base-url https://api.deepseek.com \
-  --model deepseek-v4-flash \
-  --idea '一种具体的技术方案……' \
-  --evaluation-date 2026-07-16 \
-  --mode quick \
-  --candidate-max 30 \
-  --deep-min 10 \
-  --deep-max 10
+```sshconfig
+LocalForward 8001 127.0.0.1:8001
 ```
 
-CLI 只有在 Run 到达成功终态后才返回报告；失败、取消、健康门禁失败或输入非法均返回非零退出码。
+则在 Mac 浏览器打开 `http://localhost:8001` 即可访问服务器应用，不需要开放公网端口。
 
-服务重启不会恢复任何 Token。重启时尚未结束的 Run 会进入 `FAILED / RUNTIME_API_KEY_REQUIRED_AFTER_RESTART`；在网页重新输入 Token 后使用“重新运行”创建新 Run，历史记录仍保留。
+## 模型 BYOK
 
-## 运行状态与故障语义
+Base URL、Model 和 API Key 必须在网页“模型 API（本页临时使用）”中按 Run 输入。它们不会写入 `rag.env`。API Key 只进入该 Run 的进程内存，刷新、关闭页面、新建工作区或服务重启后消失；未完成 Run 在服务重启后会明确失败，要求重新输入凭证并重跑。
 
-- `COMPLETED`：11 步、审计和 Manifest 全部通过。
-- `COMPLETED_WITH_LIMITATIONS`：报告有效，但存在明确限制，例如一路 Provider 降级。
-- `FAILED`：步骤重试耗尽或完成门禁失败，不会生成伪成功报告。
-- `CANCELLED`：用户取消，保留已产生的审计记录。
+模型 ID 按供应商规则区分大小写。DeepSeek 当前接口返回的是 `deepseek-v4-flash`/`deepseek-v4-pro` 这类规范小写 ID；页面应填写接口实际返回的 ID，而不是展示标题。
 
-本地 Google Patents 不需要单独服务，但仍依赖当前主机访问 `patents.google.com`；“本地”指工具由本项目实现，并不等于离线镜像。EXA MCP 是独立的调用备路，但当前同样定向 Google Patents 页面，不代表独立专利数据库。两路都不可用时检索会失败，模型记忆不能替代真实检索。FIFO 缓存可复用已经成功抓取的数据，但不是完整专利数据库。
+CLI 也只从当前进程环境读取凭证，不接受明文 `--api-key`：
 
-健康检查：
+```bash
+read -s LLM_API_KEY
+export LLM_API_KEY
+tools/idea_workflow.py run \
+  --model-base-url https://api.deepseek.com \
+  --model YOUR_MODEL_NAME \
+  --idea '一种根据访问热度调整缓存淘汰优先级的方法……' \
+  --mode quick --candidate-max 30 --deep-min 10 --deep-max 10
+unset LLM_API_KEY
+```
+
+## 运行与故障语义
+
+- `COMPLETED`：工作流、审计、Citation 和 Manifest 全部通过；
+- `COMPLETED_WITH_LIMITATIONS`：报告有效，但 Provider 降级或来源缺字段等限制已明确记录；
+- `FAILED`：步骤重试耗尽、证据/Citation 不一致或完成门禁失败，不生成伪成功报告；
+- `CANCELLED`：用户取消，已生成的审计记录保留。
+
+健康和调试：
 
 ```bash
 curl http://127.0.0.1:8001/api/system/health
 curl http://127.0.0.1:8001/api/system/cache
-# 将 RUN_ID 替换为实际值，查看持久步骤、Tool Call 和 JSONL 事件
 curl http://127.0.0.1:8001/api/idea/runs/RUN_ID/debug
 ```
 
-## 测试
+## 开发与测试
+
+纯 SQLite 兼容开发模式仍可使用：
+
+```bash
+./install.sh
+./start.sh --local
+./stop.sh --local
+```
+
+完整离线测试：
 
 ```bash
 PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s backend/tests -q
 python3 -m compileall -q backend tools
 ```
 
-测试使用 fixture 或 fake transport 时不依赖外网；真实 E2E 需要模型密钥和检索网络。
+真实 LEXICAL_RAG 验收工具只读取临时环境变量并只打印计数摘要；它会独立回查 PostgreSQL 中的 Context、冻结 Version、Chunk 与模型 Citation 选择：
 
-## 主要目录
+```bash
+tools/e2e_lexical_rag.py \
+  --model-base-url https://api.deepseek.com \
+  --model YOUR_MODEL_NAME \
+  --idea '一种具体、完整、可检索的技术方案……'
+```
+
+主要目录：
 
 ```text
-backend/idea/              Workflow、Provider、Agent Schema、审计和报告
-backend/tests/             离线单元/合约/集成测试
-frontend/                  IDEA 单页工作区
-config/ai4patent.json      唯一系统设置入口（不含密钥）
-tools/idea_workflow.py     确定性 HTTP CLI（不含模型编排）
-data/aifpatent/            SQLite 业务数据（Git 忽略）
-data/langgraph/            LangGraph 检查点（Git 忽略）
-workspace/idea-runs/       不可自动删除的 Run 输入与报告（Git 忽略）
-workspace/debug/idea-runs/  逐 Run JSONL 调试日志（Git 忽略，不记录 API Key）
-workspace/cache/           1 GiB FIFO 可重建缓存（Git 忽略）
-docs/                      与当前实现一致的产品文档
-development/core/          核心系统开发与迁移历史
-development/followup-rag/  追问、耐久语料和混合 RAG 后续设计
+backend/idea/                 Workflow、Corpus、检索、Context、Citation、报告
+backend/tests/                单元、合约与可选真实集成测试
+frontend/                     IDEA 单页工作区（BYOK 不持久化）
+config/ai4patent.json         系统设置（不含模型密钥）
+deploy/rag/                   Docker Compose 与幂等 PostgreSQL 迁移
+tools/idea_workflow.py        确定性 HTTP CLI
+tools/e2e_lexical_rag.py      真实首次报告验收与 Citation 校验
+development/followup-rag/     本开发域设计、日志和未完成项
 ```
-
-后续 RAG 开发使用隔离的目标依赖栈；它不会自动切换当前 SQLite 运行时：
-
-```bash
-tools/rag_infra.py up
-tools/rag_infra.py status
-```
-
-受限网络首次构建时，可以先设置依赖镜像：
-
-```bash
-export AIFPATENT_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-export AIFPATENT_GOPROXY=https://goproxy.cn,direct
-tools/rag_infra.py up
-```
-
-当前也可以用同一个 Compose 栈启动应用容器和依赖服务：
-
-```bash
-tools/rag_infra.py up
-tools/rag_infra.py status
-```
-
-应用默认绑定 `127.0.0.1:8001`，SQLite 数据、工作区和日志使用独立命名卷；应用容器以非 root 单 Worker 运行。该容器化入口用于本地/单实例验收，尚未代表 SQLite 已切换为 PostgreSQL，也不等于可以直接开放公网。
-
-首次启动会生成 Git 忽略且权限为 `0600` 的本地随机凭证。详细说明见 `deploy/rag/README.md`。
-
-当前已实现架构见 `docs/aifpatent-architecture.md`。核心系统历史位于 `development/core/`；评审后追问、耐久全文语料和混合 RAG 属于独立后续开发域，位于 `development/followup-rag/`。
 
 ## License
 

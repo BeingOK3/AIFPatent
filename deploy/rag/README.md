@@ -1,31 +1,37 @@
-# Local application and RAG stack
+# AIFPatent 本地/单机 LEXICAL_RAG 栈
 
-This development stack provides the AIFPatent application plus PostgreSQL 17 + pgvector 0.8.2, Redis 8.4.4 and a locally built MinIO server. The application remains on its current SQLite runtime; RAG feature flags remain disabled until their migration gates are complete.
+标准入口是仓库根目录的 `./start.sh` 与 `./stop.sh`。栈包含应用、PostgreSQL 17 + pgvector 0.8.2、Redis 8.4.4 和固定版本 MinIO，全部只绑定 `127.0.0.1`。
+
+`start.sh` 会创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env`，生成本机随机基础设施凭证，启动服务、确保 Bucket 并执行 `020/030/035` 增量迁移。该文件不保存模型 Base URL、Model 或 API Key。
 
 ```bash
-tools/rag_infra.py up
-tools/rag_infra.py status
-tools/rag_infra.py check
-tools/rag_infra.py migrate
-tools/rag_infra.py down
+./start.sh
+./stop.sh
 ```
 
-The first `up` creates `deploy/rag/rag.env` atomically with random credentials and mode `0600`. The file is Git ignored. Commands never print its values. `down` preserves named volumes; this tool intentionally has no reset or volume-deletion command.
+`stop.sh` 不使用 `--volumes`，所以数据库、对象、Redis 和应用数据均保留。项目没有自动删除卷的命令。
 
-The application is published only on `127.0.0.1:8001` by default and runs as a single non-root Worker. Its SQLite data, workspace and logs use separate named volumes. This is a local/single-instance deployment baseline, not a public multi-worker production deployment.
+底层维护命令：
 
-`up` uses Buildx with the narrowly scoped `network.host` build entitlement because the pinned MinIO source build may need a host-side proxy; the final containers still use the isolated Compose network. If PyPI or Go modules are slow or unavailable, set both build mirrors before `up`, for example:
+```bash
+python3 tools/rag_infra.py status
+python3 tools/rag_infra.py check
+python3 tools/rag_infra.py migrate
+python3 tools/rag_infra.py down
+```
+
+首次缺少对象存储镜像时会从固定 MinIO 源码版本构建；后续启动复用该镜像。只有升级 MinIO 构建定义时才显式执行：
+
+```bash
+AIFPATENT_REBUILD_OBJECT_STORE=1 ./start.sh
+```
+
+受限网络可在启动前设置非秘密构建镜像：
 
 ```bash
 export AIFPATENT_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 export AIFPATENT_GOPROXY=https://goproxy.cn,direct
-tools/rag_infra.py up
+./start.sh
 ```
 
-These variables only change build-time dependency download and are not runtime credentials.
-
-`migrate` applies the additive PostgreSQL migrations to an already-created volume. This is needed because Docker runs files in `postgres-init/` only when the database volume is initialized; it never deletes or recreates the volume.
-
-The MinIO community server is built from the pinned `RELEASE.2025-10-15T17-29-55Z` source tag rather than an older prebuilt image. The initial build therefore needs access to Go module sources. PostgreSQL initializes the `vector` and `pg_trgm` extensions only when its named volume is first created.
-
-Ports bind to `127.0.0.1` by default and can be changed in `rag.env`. These credentials and services are for local development only.
+默认应用端口为 8001；需要避免本机冲突时，只修改 Git 忽略的 `rag.env` 中 `AIFPATENT_APP_PORT`。此 Compose 基线适合本地或单服务器经 SSH 隧道使用，不是公网、多 Worker、多租户生产部署。
