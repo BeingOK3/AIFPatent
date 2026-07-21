@@ -192,3 +192,18 @@
 - 类型：结构化 Chunk 验证补记。
 - 结果：Chunk 目标测试 3 项通过；Chunk ID、父权利要求链和 Version scope 约束通过；compileall 和 `git diff --check` 通过。
 - 环境限制：索引持久化和运行态 PostgreSQL/pgvector 尚未接入。
+
+## 2026-07-21 — IDEA-CONTEXT-ASSEMBLER-001
+
+- 类型：Phase 3 领域上下文装配基线。
+- 实现：新增 `ContextAssembler` 和 `AssembledModelContext`；按固定消息顺序、输入预算和候选 Chunk 顺序生成证据消息、Citation alias、选中/排除清单、限制项及确定性 `context_hash`。
+- 所有权：模型上下文选择、预算裁剪、Citation 绑定和哈希属于项目领域层；LangChain 只能消费最终 `ModelMessage`，不能使用 Agent Memory 或自动裁剪改变 Manifest。
+- 安全语义：证据明确标记为不可信数据；API Key 等凭证不进入消息；预算无法容纳任何 Chunk 时 fail closed，预算排除显式写入 Manifest。
+- 涉及文件：`backend/idea/context.py`、`backend/tests/test_context.py`、`backend/idea/__init__.py`、本日志。
+- 验证：待运行 Context 目标测试、完整离线套件、编译和 diff 格式检查。
+
+## 2026-07-21 — IDEA-CONTEXT-ASSEMBLER-001-VERIFY
+
+- 类型：上下文装配验证补记。
+- 结果：Context 目标测试 3 项通过；相同输入哈希稳定、Citation alias 有范围绑定、预算排除可审计、无可用证据时 fail closed；compileall 和 `git diff --check` 通过。
+- 环境限制：本切片只实现领域 Contract，尚未接入 PostgreSQL Manifest Repository 或 LangChain 运行时适配器。
