@@ -177,3 +177,18 @@
 - 类型：语料版本基线验证补记。
 - 结果：Corpus 目标测试 4 项通过；compileall 和 `git diff --check` 通过；当前工作区未写入 API Key 或对象正文日志。
 - 环境限制：本次使用本地 FileObjectStore 与内存 Repository 验证领域契约，尚未连接 PostgreSQL/MinIO 运行态。
+
+## 2026-07-21 — IDEA-CORPUS-CHUNK-001
+
+- 类型：Phase 1 版本内结构化 Chunk 基线。
+- 实现：新增 `PatentChunker`，按摘要、单项权利要求和说明书段落生成结构化 Chunk；记录章节标签、Claim 依赖、字符偏移、文本哈希、词数和 `chunker_version`。
+- 稳定性：Chunk ID 由 `Version ID + section + label + offsets + chunker_version` 计算；同一 Version 重建结果一致，不同 Version 不复用 ID；不修改源正文，不做跨文献拼接。
+- 范围：本切片尚未写 PostgreSQL FTS/pgvector，也未宣称完成 token 级分块；后续按配置补充超长段落滑窗和索引持久化。
+- 涉及文件：`backend/idea/chunks.py`、`backend/tests/test_chunks.py`、`backend/idea/__init__.py`、本日志。
+- 验证：待运行 Chunk 目标测试、完整离线套件、编译和 diff 格式检查。
+
+## 2026-07-21 — IDEA-CORPUS-CHUNK-001-VERIFY
+
+- 类型：结构化 Chunk 验证补记。
+- 结果：Chunk 目标测试 3 项通过；Chunk ID、父权利要求链和 Version scope 约束通过；compileall 和 `git diff --check` 通过。
+- 环境限制：索引持久化和运行态 PostgreSQL/pgvector 尚未接入。
