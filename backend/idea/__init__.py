@@ -2,4 +2,13 @@
 
 from .config import AppConfig, ConfigError, load_config
 
-__all__ = ["AppConfig", "ConfigError", "load_config"]
+from .corpus import CorpusError, CorpusVersion, PatentCorpusService
+
+__all__ = [
+    "AppConfig",
+    "ConfigError",
+    "CorpusError",
+    "CorpusVersion",
+    "PatentCorpusService",
+    "load_config",
+]

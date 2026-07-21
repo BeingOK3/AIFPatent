@@ -162,3 +162,18 @@
 - 结果：JobQueue 与 Redis limiter 目标测试共 8 项通过；完整离线套件 220 项通过；compileall 和 `git diff --check` 通过。
 - 安全检查：claim/complete/fail 使用 job-scoped lease token；payload/结果递归凭证字段拒绝；未把 Redis URL、密码或 BYOK 写入测试输出和日志。
 - 环境限制：未安装 Redis/Docker，未声称通过真实 Redis 原子脚本、租约过期和多 Worker 竞争；这些仍是目标环境验收项。
+
+## 2026-07-21 — IDEA-CORPUS-VERSION-001
+
+- 类型：Phase 1 专利语料不可变版本基线。
+- 实现：新增 `PatentCorpusService`，将已验证的 `FetchedDocument` 规范化为稳定 JSON，计算内容 SHA-256，写入 `ObjectStore` 内容寻址 Blob，并以确定性 Version ID 写入版本仓储。
+- 幂等语义：相同公开号、语言和正文哈希复用既有 Version/Blob；正文变化创建新 Version，禁止覆盖旧对象；`snapshot_hash` 对排序后的 Version 清单确定性计算。
+- 完整性：读取 Version 前检查 READY 状态和 Blob 哈希；缺失或损坏对象 fail closed。Chunk、FTS、embedding 和 Run 绑定留给后续 Work Unit。
+- 涉及文件：`backend/idea/corpus.py`、`backend/idea/__init__.py`、`backend/tests/test_corpus.py`、本日志。
+- 验证：待运行 Corpus 目标测试、完整离线套件、编译和 diff 格式检查。
+
+## 2026-07-21 — IDEA-CORPUS-VERSION-001-VERIFY
+
+- 类型：语料版本基线验证补记。
+- 结果：Corpus 目标测试 4 项通过；compileall 和 `git diff --check` 通过；当前工作区未写入 API Key 或对象正文日志。
+- 环境限制：本次使用本地 FileObjectStore 与内存 Repository 验证领域契约，尚未连接 PostgreSQL/MinIO 运行态。
