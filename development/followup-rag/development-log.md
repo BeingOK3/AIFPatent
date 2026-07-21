@@ -262,3 +262,11 @@
 - 安全边界：哈希、状态、字节数、偏移、排序名次和分数均有数据库约束；外键删除策略禁止静默删除被引用语料；迁移可重复执行且不含数据删除命令。
 - 涉及文件：`deploy/rag/postgres-init/020_corpus_schema.sql`、`backend/tests/test_postgres_schema.py`。
 - 验证：待运行 Schema 目标测试和完整离线套件；已有 PostgreSQL 容器需要显式执行该迁移，初始化卷不会自动重跑旧 init 脚本。
+
+## 2026-07-21 — IDEA-CORPUS-SCHEMA-001-MIGRATE
+
+- 类型：已有 PostgreSQL 卷的增量迁移入口。
+- 实现：`tools/rag_infra.py migrate` 通过 Compose 在 PostgreSQL 容器内执行 `020_corpus_schema.sql`，使用容器已有的 `POSTGRES_USER/POSTGRES_DB` 环境变量，不把凭证拼进命令或输出；迁移 SQL 具备幂等记录，可重复执行。
+- 运维边界：命令不删除卷、不重建服务，专门解决 init 目录只在首次初始化时执行的问题。
+- 涉及文件：`tools/rag_infra.py`、`backend/tests/test_rag_infra.py`、`deploy/rag/README.md`。
+- 验证：待运行管理 CLI 目标测试；真实容器迁移需在 Docker 用户组已生效的终端执行 `tools/rag_infra.py migrate`。

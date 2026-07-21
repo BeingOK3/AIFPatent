@@ -49,6 +49,13 @@ class RagInfrastructureTests(unittest.TestCase):
         self.assertNotIn("-v", down)
         self.assertEqual(rag_infra._docker_command("check")[-2:], ["config", "--quiet"])
 
+    def test_migrate_applies_additive_corpus_schema_without_exposing_credentials(self) -> None:
+        command = rag_infra._docker_command("migrate")
+        self.assertEqual(command[-4:-1], ["postgres", "sh", "-ec"])
+        self.assertIn("020_corpus_schema.sql", command[-1])
+        self.assertNotIn("$POSTGRES_PASSWORD", command[-1])
+        self.assertNotIn("--volumes", command)
+
     def test_missing_docker_fails_before_environment_creation(self) -> None:
         with patch("tools.rag_infra.shutil.which", return_value=None), patch(
             "tools.rag_infra.ensure_environment"

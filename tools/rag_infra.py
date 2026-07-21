@@ -111,6 +111,17 @@ def _docker_command(action: str) -> list[str]:
         "down": ["down"],
         "status": ["ps"],
         "check": ["config", "--quiet"],
+        # The init directory is only read when a Postgres volume is created.
+        # Apply the current additive migration explicitly for existing volumes.
+        "migrate": [
+            "exec",
+            "--no-TTY",
+            "postgres",
+            "sh",
+            "-ec",
+            'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
+            "-f /docker-entrypoint-initdb.d/020_corpus_schema.sql",
+        ],
     }
     return prefix + commands[action]
 
@@ -129,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Manage the local PostgreSQL/Redis/S3-compatible RAG dependencies."
     )
-    parser.add_argument("action", choices=("init", "up", "down", "status", "check"))
+    parser.add_argument("action", choices=("init", "up", "down", "status", "check", "migrate"))
     return parser
 
 
