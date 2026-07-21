@@ -237,3 +237,11 @@
 - 安全边界：没有扩大最终容器端口、卷或运行时网络；MinIO 版本和基础镜像 digest 不变。
 - 涉及文件：`deploy/rag/Dockerfile.minio`、本日志。
 - 验证：待重新构建 MinIO 并执行对象存储健康、持久化和三服务验收。
+
+## 2026-07-21 — IDEA-INFRA-MINIO-RUNTIME-001
+
+- 类型：MinIO 开发镜像网络减负修正。
+- 实现：移除运行时 Debian apt 安装的 `curl`，健康检查改用 MinIO 自带 `--version`；宿主机验收仍通过 `http://127.0.0.1:9000/minio/health/live` 验证真实 HTTP 服务。
+- 影响：运行镜像不再依赖构建时 Debian 软件源，保持固定 MinIO 源码版本、非 root 用户和数据卷不变。
+- 涉及文件：`deploy/rag/Dockerfile.minio`、`deploy/rag/compose.yml`、本日志。
+- 验证：待完成最终镜像构建、容器健康检查和对象持久化冒烟。

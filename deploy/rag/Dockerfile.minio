@@ -9,10 +9,7 @@ RUN --network=host GOBIN=/out go install "github.com/minio/minio@${MINIO_VERSION
 
 FROM debian:bookworm-slim
 
-RUN --network=host apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 10001 minio \
+RUN groupadd --system --gid 10001 minio \
     && useradd --system --uid 10001 --gid minio --home-dir /nonexistent minio \
     && mkdir /data \
     && chown minio:minio /data
