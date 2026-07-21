@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -174,7 +175,14 @@ class FollowupAnswerVerifier:
                 used_aliases,
             )
 
-        raw = answer.model_dump_json(exclude_none=True)
+        assertions = answer.model_dump(
+            mode="json",
+            exclude={"legal_boundary", "limitations"},
+            exclude_none=True,
+        )
+        raw = json.dumps(
+            assertions, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
         lowered = raw.lower()
         forbidden = [value for value in _FORBIDDEN_LEGAL_CONCLUSIONS if value in lowered]
         if forbidden:

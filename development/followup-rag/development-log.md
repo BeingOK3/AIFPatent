@@ -629,3 +629,10 @@
 - 修正：完成所有模型 query 后，逐个检查计划中的冻结 Version；没有任何命中的 Version 使用“该 Version 自身公开号”作为参数化 seed query，先在计划章节（无章节时默认 claims）取最多 2 个 Chunk，仍无结果才放宽章节但不放宽 Version。命中标记 `MANDATORY_VERSION_EVIDENCE_FALLBACK`，章节放宽另记 `SECTION_FILTER_FALLBACK`，不能伪装为语义相关命中。
 - 安全：seed query 只来自已验证公开号，每次只允许单个冻结 Version；返回后继续执行 Version scope、正文哈希去重、全局多样性和 Context/Citation 门禁。它只保证比较型问题至少读到每篇指定文献的耐久证据，不把未命中推断为重合。
 - 验证：零命中长查询→单 Version claims seed→可审计证据的聚焦测试新增并通过；追问 Handler/Hybrid 聚焦 12 项通过；完整离线套件 399 项通过、4 项按设计跳过，`compileall` 与 `git diff --check` 通过。待重建镜像后以同一 Thread 新 Turn 复验。
+
+## 2026-07-22 — IDEA-FOLLOWUP-E2E-FIX-002
+
+- 类型：第二轮真实 DeepSeek 追问验收发现的法律免责声明误报修正。
+- 失败留痕：修复零召回后，新 Turn 已完成计划、按 Version 证据补齐、Context 和回答模型调用，但模型在必填 `legal_boundary` 中写明“不能判断构成侵权或不构成侵权”；旧扫描器对整份 JSON 做禁语子串匹配，把免责声明误判为确定性法律结论，Turn 按 fail-closed 进入 FAILED，未落回答或 Citation。
+- 修正：确定性法律结论扫描只检查可能承载业务断言的直接回答、重合项、差异和规避候选；专门用于声明边界的 `legal_boundary` 与诚实限制 `limitations` 不参与禁语命中。直接回答或分析字段输出“构成侵权”“保证不侵权”等结论仍严格拒绝。
+- 验证：新增“免责声明可明确提及被禁止结论”的正向测试，原两项确定性侵权/不侵权负向测试继续通过；答案/Handler 聚焦 10 项通过；完整离线套件 400 项通过、4 项按设计跳过，`git diff --check` 通过。待重建镜像后第三轮复验。

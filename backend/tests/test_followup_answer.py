@@ -104,6 +104,12 @@ class FollowupAnswerVerifierTests(unittest.TestCase):
                 with self.assertRaisesRegex(FollowupError, "legal conclusion boundary"):
                     self.verify(answer(direct_answer=conclusion))
 
+    def test_legal_boundary_may_explicitly_disclaim_forbidden_conclusions(self) -> None:
+        verified = self.verify(answer(
+            legal_boundary="本回答只比较技术披露，不能判断构成侵权或不构成侵权。"
+        ))
+        self.assertIn("不能判断", verified.answer.legal_boundary)
+
     def test_answer_schema_rejects_bad_aliases_and_false_insufficient_claims(self) -> None:
         with self.assertRaises(ValidationError):
             answer(citation_aliases=["citation-1"])
