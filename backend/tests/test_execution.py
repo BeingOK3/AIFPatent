@@ -147,6 +147,22 @@ class FakeCorpusIngest:
         self.reviewed.append((run_id, document_ids))
 
 
+class FakeReportRag:
+    def __init__(self, corpus):
+        self.corpus = corpus
+        self.calls = []
+
+    async def prepare(self, **kwargs):
+        if not self.corpus.reviewed:
+            raise AssertionError("RAG context must be built after deep-review state is durable")
+        self.calls.append(kwargs)
+        return type(
+            "PreparedRag",
+            (),
+            {"context_ids": ("CTX-fixture",), "retrieval_query_count": 1},
+        )()
+
+
 class FakeNovelty:
     def determine(self, run_id, **kwargs):
         return novelty_result()
@@ -265,6 +281,7 @@ class WorkflowExecutorTests(unittest.TestCase):
         agents=None,
         reporting=None,
         corpus_ingest=None,
+        report_rag=None,
         config=None,
     ):
         harness = WorkflowHarness(self.db, self.store, max_step_attempts=2)
@@ -274,6 +291,7 @@ class WorkflowExecutorTests(unittest.TestCase):
             FakeInventiveness(), FakeValue(), audit or FakeAudit(),
             reporting or FakeReporting(self.db, self.store),
             corpus_ingest=corpus_ingest,
+            report_rag=report_rag,
         )
 
     def test_enabled_corpus_is_ingested_before_document_analysis(self) -> None:
@@ -294,6 +312,41 @@ class WorkflowExecutorTests(unittest.TestCase):
         checkpoint = executor._checkpoint(run["run_id"], WorkflowStep.NORMALIZE_AND_FETCH)
         self.assertEqual(checkpoint["corpus_version_ids"], ["cv-1"])
         self.assertEqual(checkpoint["corpus_snapshot_hash"], "a" * 64)
+
+    def test_enabled_initial_report_rag_freezes_context_after_deep_review(self) -> None:
+        run = self.create_run()
+        features = self.config.features.model_copy(
+            update={"patent_corpus": True, "initial_review_rag": True}
+        )
+        config = self.config.model_copy(update={"features": features})
+        corpus = FakeCorpusIngest()
+        rag = FakeReportRag(corpus)
+        executor = self.executor(
+            run, config=config, corpus_ingest=corpus, report_rag=rag
+        )
+
+        status = self.run_executor(executor, run["run_id"])
+
+        self.assertEqual(status, "COMPLETED")
+        self.assertEqual(len(rag.calls), 1)
+        self.assertEqual(rag.calls[0]["corpus_snapshot_hash"], "a" * 64)
+        checkpoint = executor._checkpoint(run["run_id"], WorkflowStep.ANALYZE_DOCUMENTS)
+        self.assertEqual(checkpoint["rag_context_ids"], ["CTX-fixture"])
+
+    def test_enabled_initial_report_rag_fails_closed_without_service(self) -> None:
+        run = self.create_run()
+        features = self.config.features.model_copy(
+            update={"patent_corpus": True, "initial_review_rag": True}
+        )
+        config = self.config.model_copy(update={"features": features})
+        executor = self.executor(
+            run, config=config, corpus_ingest=FakeCorpusIngest(), report_rag=None
+        )
+
+        status = self.run_executor(executor, run["run_id"])
+
+        self.assertEqual(status, "FAILED")
+        self.assertIn("initial report RAG service is required", self.db.get_run(run["run_id"])["error_message"])
 
     def test_enabled_corpus_fails_closed_without_ingest_service(self) -> None:
         run = self.create_run()

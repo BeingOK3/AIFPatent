@@ -24,6 +24,7 @@ from .graph import LangGraphWorkflow
 from .novelty import NoveltyService
 from .providers import FetchedDocument
 from .reporting import ReportService
+from .report_rag import InitialReportRagService
 from .retrieval import RetrievalResult, RetrievalService
 from .run_store import RunStore, RunStoreError
 from .runtime_debug import RunDebugLog
@@ -56,6 +57,7 @@ class WorkflowExecutor:
         *,
         debug_log: RunDebugLog | None = None,
         corpus_ingest: PatentCorpusIngestService | None = None,
+        report_rag: InitialReportRagService | None = None,
     ):
         self.config = config
         self.database = database
@@ -71,6 +73,7 @@ class WorkflowExecutor:
         self.reporting = reporting
         self.debug_log = debug_log
         self.corpus_ingest = corpus_ingest
+        self.report_rag = report_rag
         self.graph = LangGraphWorkflow(
             database=database,
             harness=harness,
@@ -223,9 +226,27 @@ class WorkflowExecutor:
                 fetch_checkpoint = self._checkpoint(run_id, WorkflowStep.NORMALIZE_AND_FETCH)
                 document_ids = tuple((fetch_checkpoint or {}).get("document_ids", {}).values())
                 await self.corpus_ingest.mark_deep_reviewed(run_id, document_ids)
-            return self._save_checkpoint(
-                run_id, step, {"deep_reviewed_count": reviewed, "pending_count": pending}
-            )
+            rag_context_ids: list[str] | None = None
+            rag_query_count: int | None = None
+            if self.config.features.initial_review_rag:
+                if self.report_rag is None:
+                    raise ExecutionGateError("initial report RAG service is required")
+                fetch_checkpoint = self._checkpoint(run_id, WorkflowStep.NORMALIZE_AND_FETCH) or {}
+                snapshot_hash = str(fetch_checkpoint.get("corpus_snapshot_hash") or "")
+                if not snapshot_hash:
+                    raise ExecutionGateError("Corpus snapshot hash is required for initial report RAG")
+                prepared = await self.report_rag.prepare(
+                    run_id=run_id,
+                    idea=idea,
+                    corpus_snapshot_hash=snapshot_hash,
+                )
+                rag_context_ids = list(prepared.context_ids)
+                rag_query_count = prepared.retrieval_query_count
+            value = {"deep_reviewed_count": reviewed, "pending_count": pending}
+            if rag_context_ids is not None:
+                value["rag_context_ids"] = rag_context_ids
+                value["rag_retrieval_query_count"] = rag_query_count
+            return self._save_checkpoint(run_id, step, value)
         if step == WorkflowStep.DETERMINE_NOVELTY:
             checkpoint = self._checkpoint(run_id, step)
             if checkpoint:

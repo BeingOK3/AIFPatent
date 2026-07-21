@@ -50,6 +50,7 @@ from .report_retrieval import (
     ReportRetrievalResult,
     ReportRetrievalSelection,
 )
+from .report_rag import InitialReportRagService, PreparedInitialReportRag
 from .s3_object_store import S3ObjectStore
 from .postgres_corpus import (
     PostgreSQLCorpusError,
@@ -107,6 +108,8 @@ __all__ = [
     "ReportRetrievalQuery",
     "ReportRetrievalResult",
     "ReportRetrievalSelection",
+    "InitialReportRagService",
+    "PreparedInitialReportRag",
     "lexical_query_terms",
     "lexical_search_terms",
     "normalize_lexical_text",

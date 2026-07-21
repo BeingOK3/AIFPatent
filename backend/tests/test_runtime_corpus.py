@@ -7,7 +7,8 @@ from unittest.mock import patch
 from idea.config import load_config
 from idea.corpus import PatentCorpusIngestService
 from idea.chunks import PatentChunkPersistenceService
-from idea.runtime import RuntimeConfigurationError, _build_corpus_ingest
+from idea.runtime import RuntimeConfigurationError, _build_corpus_ingest, build_initial_report_rag
+from idea.report_rag import InitialReportRagService
 from idea.postgres_corpus import (
     PostgreSQLCorpusPrerequisiteRepository,
     PostgreSQLPatentChunkRepository,
@@ -48,6 +49,19 @@ class RuntimeCorpusTests(unittest.TestCase):
             service.chunk_persistence.repository,
             PostgreSQLPatentChunkRepository,
         )
+
+    def test_initial_report_rag_builds_only_with_explicit_feature(self) -> None:
+        features = self.enabled.features.model_copy(update={"initial_review_rag": True})
+        config = self.enabled.model_copy(update={"features": features})
+        with patch.dict(
+            os.environ, {"AIFPATENT_POSTGRES_DSN": "postgresql://test"}, clear=True
+        ):
+            service = build_initial_report_rag(config)
+        self.assertIsInstance(service, InitialReportRagService)
+        self.assertIsInstance(
+            service.retriever.chunk_repository, PostgreSQLPatentChunkRepository
+        )
+        self.assertIsNone(build_initial_report_rag(load_config()))
 
 
 if __name__ == "__main__":

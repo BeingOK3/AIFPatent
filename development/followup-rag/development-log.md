@@ -449,3 +449,12 @@
 - 凭证边界：Context API 不接收 Runtime API Key，写入测试确认 manifest/SQL 参数不包含 `api_key` 或秘密值。
 - 计划校正：既有 `010_core_schema.sql` 已包含完整 Manifest 表，因此不创建重复的 `040` Schema；后续只在运行时接入该 Repository。
 - 验证：Context、adapter 和 PostgreSQL Context 聚焦测试 6 项通过；完整离线套件 295 项通过、2 项按设计跳过。
+
+## 2026-07-22 — IDEA-REPORT-RAG-001
+
+- 类型：LEXICAL_RAG 首次报告工作流接入。
+- 状态顺序：保留 `deep_reviewed` 的真实含义；只有现有单文档分析全部成功后才同步 SQLite/PostgreSQL deep-review 状态，随后基于 Run 的冻结 READY Version 执行 `F_i × D_j` 检索并固化 Context，绝不预先伪造 deep-review 完成。
+- Context 构造：`InitialReportRagService` 按文档聚合 forced/lexical 命中，按摘要、权利要求、词法命中稳定排序并按 Chunk ID 去重；每个文档生成一个 `INITIAL_REVIEW` Context Manifest。
+- 工作流门禁：`initial_review_rag=true` 时缺少服务、Corpus snapshot hash、任一文档无可用证据或 Context 数量不完整均令 `ANALYZE_DOCUMENTS` fail closed；Checkpoint 只记录 Context ID 和 query 数，不存正文或凭证。
+- 运行时：开启特性时装配 PostgreSQL scope/chunk/context Repository 与 lexical retriever；关闭时完全不要求外部 RAG 依赖。
+- 验证：执行顺序、缺失服务、运行时装配、Context/检索聚焦测试 28 项通过；完整离线套件 298 项通过、2 项按设计跳过。

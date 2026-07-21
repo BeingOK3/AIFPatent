@@ -22,8 +22,13 @@ from .postgres_corpus import (
     PostgreSQLCorpusVersionRepository,
     PostgreSQLPatentChunkRepository,
 )
+from .postgres_context import PostgreSQLContextRepository
+from .postgres_lexical import PostgreSQLLexicalSearchRepository
+from .postgres_report import PostgreSQLReportScopeRepository
 from .providers import ExaMcpProvider, GooglePatentsProvider
 from .reporting import ReportService
+from .report_rag import InitialReportRagService
+from .report_retrieval import InitialReportRetriever
 from .retrieval import RetrievalService
 from .run_store import RunStore
 from .runtime_debug import RunDebugLog
@@ -90,6 +95,19 @@ def build_corpus_ingest(
 _build_corpus_ingest = build_corpus_ingest
 
 
+def build_initial_report_rag(config: AppConfig) -> InitialReportRagService | None:
+    if not config.features.initial_review_rag:
+        return None
+    dsn = _required_environment("AIFPATENT_POSTGRES_DSN")
+    chunks = PostgreSQLPatentChunkRepository(dsn)
+    retriever = InitialReportRetriever(
+        PostgreSQLReportScopeRepository(dsn),
+        PostgreSQLLexicalSearchRepository(dsn),
+        chunk_repository=chunks,
+    )
+    return InitialReportRagService(retriever, PostgreSQLContextRepository(dsn))
+
+
 def build_runtime(config: AppConfig) -> IdeaRuntime:
     database = Database(config.storage.database)
     database.initialize()
@@ -150,6 +168,7 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
     audit = AuditService(database, agents, minimum_deep_reviews=minimum)
     reporting = ReportService(database, run_store, agents)
     corpus_ingest = build_corpus_ingest(config, database=database)
+    report_rag = build_initial_report_rag(config)
     executor = WorkflowExecutor(
         config,
         database,
@@ -165,5 +184,6 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
         reporting,
         debug_log=debug_log,
         corpus_ingest=corpus_ingest,
+        report_rag=report_rag,
     )
     return IdeaRuntime(config, database, cache, run_store, harness, executor, debug_log)
