@@ -11,7 +11,13 @@ from .corpus import (
     PatentCorpusIngestService,
     PatentCorpusService,
 )
-from .chunks import PatentChunk, PatentChunker
+from .chunks import (
+    ChunkPersistenceError,
+    PatentChunk,
+    PatentChunker,
+    PatentChunkPersistenceService,
+    PatentChunkRepository,
+)
 from .context import AssembledModelContext, ContextAssembler, ContextAssemblyError
 from .context_adapter import LangChainAdapterUnavailable, to_langchain_messages, to_message_dicts
 from .s3_object_store import S3ObjectStore
@@ -21,6 +27,7 @@ from .postgres_corpus import (
     PostgreSQLCorpusRunLinkRepository,
     PostgreSQLCorpusVersionSourceRepository,
     PostgreSQLCorpusVersionRepository,
+    PostgreSQLPatentChunkRepository,
 )
 
 __all__ = [
@@ -38,9 +45,13 @@ __all__ = [
     "PostgreSQLCorpusRunLinkRepository",
     "PostgreSQLCorpusVersionRepository",
     "PostgreSQLCorpusVersionSourceRepository",
+    "PostgreSQLPatentChunkRepository",
     "S3ObjectStore",
     "PatentChunk",
     "PatentChunker",
+    "PatentChunkPersistenceService",
+    "PatentChunkRepository",
+    "ChunkPersistenceError",
     "AssembledModelContext",
     "ContextAssembler",
     "ContextAssemblyError",

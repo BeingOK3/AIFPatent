@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from datetime import datetime, timezone
 
-from idea.chunks import PatentChunker
+from idea.chunks import PatentChunkPersistenceService, PatentChunker
 from idea.corpus import CorpusVersion
 from idea.providers import FetchedDocument
 
@@ -31,7 +32,10 @@ class PatentChunkerTests(unittest.TestCase):
 
     def test_chunks_preserve_structure_and_parent_claim(self) -> None:
         chunks = PatentChunker().chunk(self.version, self.document)
-        self.assertEqual([chunk.section_type for chunk in chunks], ["abstract", "claims", "claims", "description", "description"])
+        self.assertEqual(
+            [chunk.section_type for chunk in chunks],
+            ["abstract", "claims", "claims", "description", "description"],
+        )
         self.assertEqual(chunks[1].claim_kind, "independent")
         self.assertEqual(chunks[2].parent_claim_numbers, (1,))
         self.assertEqual(chunks[3].section_label, "paragraph-1")
@@ -49,6 +53,23 @@ class PatentChunkerTests(unittest.TestCase):
         wrong = self.document.model_copy(update={"publication_number": "CN999"})
         with self.assertRaises(ValueError):
             PatentChunker().chunk(self.version, wrong)
+
+    def test_persistence_service_writes_complete_deterministic_chunk_set(self) -> None:
+        class MemoryChunks:
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def put_many_if_absent(self, chunks):
+                self.calls.append(chunks)
+                return chunks
+
+        repository = MemoryChunks()
+        service = PatentChunkPersistenceService(repository=repository)
+
+        persisted = asyncio.run(service.persist(self.version, self.document))
+
+        self.assertEqual(persisted, PatentChunker().chunk(self.version, self.document))
+        self.assertEqual(repository.calls, [persisted])
 
 
 if __name__ == "__main__":

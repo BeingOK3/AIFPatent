@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 
+from idea.chunks import PatentChunk
 from idea.corpus import CorpusRunLink, CorpusVersion
 from idea.postgres_corpus import (
     PostgreSQLCorpusError,
     PostgreSQLCorpusRunLinkRepository,
     PostgreSQLCorpusVersionRepository,
+    PostgreSQLPatentChunkRepository,
 )
 
 
@@ -119,6 +122,79 @@ class PostgreSQLCorpusContractTests(unittest.TestCase):
         self.assertEqual(len(connection.cursor_instance.executions), 2)
         self.assertIn("UPDATE run_document_versions", connection.cursor_instance.executions[0][0])
         self.assertIn("UPDATE run_documents", connection.cursor_instance.executions[1][0])
+
+    def test_chunk_conversion_preserves_structure_and_offsets(self) -> None:
+        row = {
+            "chunk_id": "chunk-1",
+            "version_id": "cv-1",
+            "publication_number": "CN123",
+            "section_type": "claims",
+            "section_label": "claim-2",
+            "claim_number": 2,
+            "claim_kind": "dependent",
+            "parent_claims_json": [1],
+            "start_offset": 20,
+            "end_offset": 60,
+            "text": "2. The system of claim 1.",
+            "text_hash": "b" * 64,
+            "token_count": 6,
+            "chunker_version": "claims-paragraphs-v1",
+        }
+
+        chunk = PostgreSQLPatentChunkRepository._row_to_chunk(row)
+
+        self.assertEqual(
+            chunk,
+            PatentChunk(
+                chunk_id="chunk-1",
+                version_id="cv-1",
+                publication_number="CN123",
+                section_type="claims",
+                section_label="claim-2",
+                claim_number=2,
+                claim_kind="dependent",
+                parent_claim_numbers=(1,),
+                start_offset=20,
+                end_offset=60,
+                text="2. The system of claim 1.",
+                text_hash="b" * 64,
+                token_count=6,
+                chunker_version="claims-paragraphs-v1",
+            ),
+        )
+
+    def test_chunk_write_rejects_mixed_chunker_versions_before_connecting(self) -> None:
+        chunk = PostgreSQLPatentChunkRepository._row_to_chunk(
+            {
+                "chunk_id": "chunk-1",
+                "version_id": "cv-1",
+                "publication_number": "CN123",
+                "section_type": "abstract",
+                "section_label": "abstract",
+                "claim_number": None,
+                "claim_kind": None,
+                "parent_claims_json": [],
+                "start_offset": 0,
+                "end_offset": 4,
+                "text": "text",
+                "text_hash": "b" * 64,
+                "token_count": 1,
+                "chunker_version": "v1",
+            }
+        )
+
+        async def unexpected_connect(_dsn: str):
+            raise AssertionError("invalid input must fail before connecting")
+
+        repository = PostgreSQLPatentChunkRepository(
+            "postgresql://test", connect=unexpected_connect
+        )
+        with self.assertRaisesRegex(PostgreSQLCorpusError, "single Chunker version"):
+            asyncio.run(
+                repository.put_many_if_absent(
+                    (chunk, replace(chunk, chunk_id="chunk-2", chunker_version="v2"))
+                )
+            )
 
 
 if __name__ == "__main__":

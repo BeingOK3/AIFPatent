@@ -80,6 +80,12 @@ class CorpusPrerequisiteRepository(Protocol):
     ) -> None: ...
 
 
+class CorpusChunkPersistence(Protocol):
+    async def persist(
+        self, version: CorpusVersion, document: FetchedDocument
+    ) -> tuple[Any, ...]: ...
+
+
 def _canonical_document(document: FetchedDocument) -> bytes:
     """Serialize stable patent content, excluding retrieval/source metadata."""
     payload = document.model_dump(
@@ -245,10 +251,12 @@ class PatentCorpusIngestService:
         corpus: PatentCorpusService,
         run_links: CorpusRunLinkRepository,
         prerequisites: CorpusPrerequisiteRepository | None = None,
+        chunk_persistence: CorpusChunkPersistence | None = None,
     ) -> None:
         self.corpus = corpus
         self.run_links = run_links
         self.prerequisites = prerequisites
+        self.chunk_persistence = chunk_persistence
 
     async def ingest_many(
         self,
@@ -278,6 +286,8 @@ class PatentCorpusIngestService:
             document_id = document_ids[document.publication_number]
             version = await self.corpus.ingest(document, document_id=document_id)
             await self.corpus.get_ready(version.version_id)
+            if self.chunk_persistence is not None:
+                await self.chunk_persistence.persist(version, document)
             link = CorpusRunLink(
                 run_id=run_id,
                 document_id=document_id,
@@ -312,6 +322,7 @@ class PatentCorpusIngestService:
 __all__ = [
     "CorpusError",
     "CorpusIngestResult",
+    "CorpusChunkPersistence",
     "CorpusRunLink",
     "CorpusRunLinkRepository",
     "CorpusPrerequisiteRepository",

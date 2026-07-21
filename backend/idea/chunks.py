@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from typing import Protocol
 
 from .corpus import CorpusVersion
 from .providers import FetchedDocument
@@ -27,6 +28,16 @@ class PatentChunk:
     text_hash: str
     token_count: int
     chunker_version: str
+
+
+class PatentChunkRepository(Protocol):
+    async def put_many_if_absent(
+        self, chunks: tuple[PatentChunk, ...]
+    ) -> tuple[PatentChunk, ...]: ...
+
+
+class ChunkPersistenceError(RuntimeError):
+    """Raised when a complete deterministic Chunk set cannot be persisted."""
 
 
 class PatentChunker:
@@ -137,4 +148,34 @@ class PatentChunker:
         )
 
 
-__all__ = ["PatentChunk", "PatentChunker"]
+class PatentChunkPersistenceService:
+    """Generate and durably verify all Chunks for one immutable Version."""
+
+    def __init__(
+        self,
+        *,
+        repository: PatentChunkRepository,
+        chunker: PatentChunker | None = None,
+    ) -> None:
+        self.repository = repository
+        self.chunker = chunker or PatentChunker()
+
+    async def persist(
+        self, version: CorpusVersion, document: FetchedDocument
+    ) -> tuple[PatentChunk, ...]:
+        expected = self.chunker.chunk(version, document)
+        if not expected:
+            raise ChunkPersistenceError("corpus version produced no durable chunks")
+        persisted = await self.repository.put_many_if_absent(expected)
+        if persisted != expected:
+            raise ChunkPersistenceError("persisted Chunk set does not match deterministic output")
+        return persisted
+
+
+__all__ = [
+    "ChunkPersistenceError",
+    "PatentChunk",
+    "PatentChunker",
+    "PatentChunkPersistenceService",
+    "PatentChunkRepository",
+]

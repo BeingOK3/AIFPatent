@@ -9,12 +9,15 @@ import uuid
 from pathlib import Path
 
 from idea.corpus import PatentCorpusIngestService, PatentCorpusService
+from idea.chunks import PatentChunkPersistenceService
 from idea.database import Database
 from idea.postgres_corpus import (
+    PostgreSQLCorpusError,
     PostgreSQLCorpusPrerequisiteRepository,
     PostgreSQLCorpusRunLinkRepository,
     PostgreSQLCorpusVersionRepository,
     PostgreSQLCorpusVersionSourceRepository,
+    PostgreSQLPatentChunkRepository,
 )
 from idea.providers import FetchedDocument
 from idea.s3_object_store import S3ObjectStore
@@ -99,6 +102,9 @@ class CorpusIntegrationTests(unittest.TestCase):
                 corpus=corpus,
                 run_links=PostgreSQLCorpusRunLinkRepository(dsn),
                 prerequisites=PostgreSQLCorpusPrerequisiteRepository(database, dsn),
+                chunk_persistence=PatentChunkPersistenceService(
+                    repository=PostgreSQLPatentChunkRepository(dsn)
+                ),
             )
             document = FetchedDocument(
                 provider="integration-fixture",
@@ -124,6 +130,24 @@ class CorpusIntegrationTests(unittest.TestCase):
                 version_id = first.version_ids[0]
                 version = await corpus.get_ready(version_id)
                 self.assertTrue(await objects.get(version.object_key))
+
+                stale_chunk_id = f"integration-stale-{suffix}"
+                await self._insert_stale_chunk(
+                    dsn,
+                    stale_chunk_id,
+                    version_id,
+                    publication_number,
+                )
+                with self.assertRaisesRegex(
+                    PostgreSQLCorpusError,
+                    "conflict with deterministic output",
+                ):
+                    await ingest.ingest_many(
+                        run_id=run["run_id"],
+                        documents=(document,),
+                        document_ids={publication_number: document_id},
+                    )
+                await self._delete_chunk(dsn, stale_chunk_id)
 
                 await ingest.mark_deep_reviewed(run["run_id"], (document_id,))
                 await self._assert_postgres_state(dsn, run["run_id"], document_id, version_id)
@@ -156,17 +180,62 @@ class CorpusIntegrationTests(unittest.TestCase):
                            pd.abstract_text IS NULL
                                AND pd.claims_text IS NULL
                                AND pd.description_text IS NULL,
-                           (SELECT COUNT(*) FROM patent_version_sources WHERE version_id = %s)
+                           (SELECT COUNT(*) FROM patent_version_sources WHERE version_id = %s),
+                           (SELECT COUNT(*) FROM patent_chunks WHERE version_id = %s)
                     FROM run_document_versions AS rdv
                     JOIN run_documents AS rd USING (run_id, document_id)
                     JOIN patent_documents AS pd USING (document_id)
                     WHERE rdv.run_id = %s AND rdv.document_id = %s
                           AND rdv.version_id = %s
                     """,
-                    (version_id, run_id, document_id, version_id),
+                    (version_id, version_id, run_id, document_id, version_id),
                 )
                 row = await cursor.fetchone()
-            self.assertEqual(row, (True, True, True, 1))
+            self.assertEqual(row, (True, True, True, 1, 1))
+        finally:
+            await connection.close()
+
+    async def _insert_stale_chunk(
+        self,
+        dsn: str,
+        chunk_id: str,
+        version_id: str,
+        publication_number: str,
+    ) -> None:
+        import psycopg
+
+        connection = await psycopg.AsyncConnection.connect(dsn)
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    INSERT INTO patent_chunks(
+                        chunk_id, version_id, publication_number, section_type,
+                        section_label, parent_claims_json, start_offset, end_offset,
+                        text, text_hash, token_count, chunker_version,
+                        metadata_json, created_at
+                    ) VALUES (
+                        %s, %s, %s, 'abstract', 'stale', '[]'::jsonb, 0, 5,
+                        'stale', %s, 1, 'claims-paragraphs-v1', '{}'::jsonb, 1
+                    )
+                    """,
+                    (chunk_id, version_id, publication_number, "c" * 64),
+                )
+            await connection.commit()
+        finally:
+            await connection.close()
+
+    async def _delete_chunk(self, dsn: str, chunk_id: str) -> None:
+        import psycopg
+
+        connection = await psycopg.AsyncConnection.connect(dsn)
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    "DELETE FROM patent_chunks WHERE chunk_id = %s",
+                    (chunk_id,),
+                )
+            await connection.commit()
         finally:
             await connection.close()
 
@@ -211,6 +280,15 @@ class CorpusIntegrationTests(unittest.TestCase):
                     )
                     await cursor.execute(
                         "DELETE FROM run_document_versions WHERE document_id = %s",
+                        (document_id,),
+                    )
+                    await cursor.execute(
+                        """
+                        DELETE FROM patent_chunks WHERE version_id IN (
+                            SELECT version_id FROM patent_document_versions
+                            WHERE document_id = %s
+                        )
+                        """,
                         (document_id,),
                     )
                     await cursor.execute(

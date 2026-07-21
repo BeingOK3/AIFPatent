@@ -66,6 +66,15 @@ class MemorySources:
         return True
 
 
+class MemoryChunkPersistence:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def persist(self, version, fetched_document):
+        self.calls.append((version.version_id, fetched_document.publication_number))
+        return ()
+
+
 def document(*, title: str = "A patent") -> FetchedDocument:
     return FetchedDocument(
         provider="fixture",
@@ -161,7 +170,12 @@ class PatentCorpusServiceTests(unittest.TestCase):
 
     def test_ingest_for_run_freezes_ready_version_idempotently(self) -> None:
         links = MemoryRunLinks()
-        ingest = PatentCorpusIngestService(corpus=self.service, run_links=links)
+        chunks = MemoryChunkPersistence()
+        ingest = PatentCorpusIngestService(
+            corpus=self.service,
+            run_links=links,
+            chunk_persistence=chunks,
+        )
 
         first = asyncio.run(
             ingest.ingest_many(
@@ -180,6 +194,13 @@ class PatentCorpusServiceTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(len(links.items), 1)
+        self.assertEqual(
+            chunks.calls,
+            [
+                (first.version_ids[0], "CN 123/456"),
+                (first.version_ids[0], "CN 123/456"),
+            ],
+        )
         link = links.items[("run-1", "doc-1")]
         self.assertEqual(link.version_id, first.version_ids[0])
         self.assertEqual(link.corpus_availability, "READY")

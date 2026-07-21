@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from .agents import IdeaAgentService
 from .audit import AuditService
 from .cache import CacheStore
+from .chunks import PatentChunkPersistenceService
 from .config import AppConfig
 from .corpus import PatentCorpusIngestService, PatentCorpusService
 from .database import Database
@@ -19,6 +20,7 @@ from .postgres_corpus import (
     PostgreSQLCorpusRunLinkRepository,
     PostgreSQLCorpusVersionSourceRepository,
     PostgreSQLCorpusVersionRepository,
+    PostgreSQLPatentChunkRepository,
 )
 from .providers import ExaMcpProvider, GooglePatentsProvider
 from .reporting import ReportService
@@ -78,6 +80,9 @@ def _build_corpus_ingest(
         corpus=corpus,
         run_links=PostgreSQLCorpusRunLinkRepository(dsn),
         prerequisites=PostgreSQLCorpusPrerequisiteRepository(database, dsn),
+        chunk_persistence=PatentChunkPersistenceService(
+            repository=PostgreSQLPatentChunkRepository(dsn)
+        ),
     )
 
 

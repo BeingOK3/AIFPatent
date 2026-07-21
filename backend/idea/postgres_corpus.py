@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
+from .chunks import PatentChunk
 from .corpus import CorpusRunLink, CorpusVersion, CorpusVersionSource
 from .ports import Repository
 
@@ -598,10 +599,159 @@ class PostgreSQLCorpusVersionSourceRepository:
             await connection.close()
 
 
+class PostgreSQLPatentChunkRepository:
+    """Idempotent PostgreSQL persistence for deterministic patent Chunks."""
+
+    _FIELDS = (
+        "chunk_id",
+        "version_id",
+        "publication_number",
+        "section_type",
+        "section_label",
+        "claim_number",
+        "claim_kind",
+        "parent_claims_json",
+        "start_offset",
+        "end_offset",
+        "text",
+        "text_hash",
+        "token_count",
+        "chunker_version",
+    )
+
+    def __init__(self, dsn: str | None = None, *, connect: Connect | None = None) -> None:
+        self.dsn = (dsn or os.environ.get("AIFPATENT_POSTGRES_DSN") or "").strip()
+        if not self.dsn:
+            raise ValueError("PostgreSQL patent Chunk repository requires a DSN")
+        self._connect = connect
+
+    async def _connection(self) -> Any:
+        if self._connect is not None:
+            return await self._connect(self.dsn)
+        try:
+            import psycopg
+        except ImportError as exc:  # pragma: no cover - deployment dependency
+            raise PostgreSQLCorpusError("psycopg is required for PostgreSQL corpus storage") from exc
+        return await psycopg.AsyncConnection.connect(self.dsn)
+
+    @classmethod
+    def _row_to_chunk(cls, row: Any) -> PatentChunk:
+        values = row if isinstance(row, dict) else dict(zip(cls._FIELDS, row, strict=True))
+        parents = values["parent_claims_json"] or []
+        if isinstance(parents, str):
+            parents = json.loads(parents)
+        return PatentChunk(
+            chunk_id=str(values["chunk_id"]),
+            version_id=str(values["version_id"]),
+            publication_number=str(values["publication_number"]),
+            section_type=str(values["section_type"]),
+            section_label=str(values["section_label"]),
+            claim_number=(
+                None if values["claim_number"] is None else int(values["claim_number"])
+            ),
+            claim_kind=(None if values["claim_kind"] is None else str(values["claim_kind"])),
+            parent_claim_numbers=tuple(int(value) for value in parents),
+            start_offset=int(values["start_offset"]),
+            end_offset=int(values["end_offset"]),
+            text=str(values["text"]),
+            text_hash=str(values["text_hash"]),
+            token_count=int(values["token_count"]),
+            chunker_version=str(values["chunker_version"]),
+        )
+
+    async def put_many_if_absent(
+        self, chunks: tuple[PatentChunk, ...]
+    ) -> tuple[PatentChunk, ...]:
+        if not chunks:
+            raise PostgreSQLCorpusError("cannot persist an empty Chunk set")
+        if len({chunk.chunk_id for chunk in chunks}) != len(chunks):
+            raise PostgreSQLCorpusError("Chunk IDs must be unique")
+        if len({chunk.version_id for chunk in chunks}) != 1:
+            raise PostgreSQLCorpusError("one write must contain a single Version")
+        if len({chunk.chunker_version for chunk in chunks}) != 1:
+            raise PostgreSQLCorpusError("one write must contain a single Chunker version")
+        if len({chunk.publication_number for chunk in chunks}) != 1:
+            raise PostgreSQLCorpusError("one write must contain a single publication")
+
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                created_at = PostgreSQLCorpusVersionRepository._millis(datetime.now(timezone.utc))
+                for chunk in chunks:
+                    await cursor.execute(
+                        """
+                        INSERT INTO patent_chunks(
+                            chunk_id, version_id, publication_number, section_type,
+                            section_label, claim_number, claim_kind, parent_claims_json,
+                            start_offset, end_offset, text, text_hash, token_count,
+                            chunker_version, metadata_json, created_at
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
+                            %s, %s, %s, %s, %s, %s, '{}'::jsonb, %s
+                        ) ON CONFLICT (chunk_id) DO NOTHING
+                        """,
+                        (
+                            chunk.chunk_id,
+                            chunk.version_id,
+                            chunk.publication_number,
+                            chunk.section_type,
+                            chunk.section_label,
+                            chunk.claim_number,
+                            chunk.claim_kind,
+                            json.dumps(chunk.parent_claim_numbers),
+                            chunk.start_offset,
+                            chunk.end_offset,
+                            chunk.text,
+                            chunk.text_hash,
+                            chunk.token_count,
+                            chunk.chunker_version,
+                            created_at,
+                        ),
+                    )
+                await cursor.execute(
+                    """
+                    SELECT chunk_id, version_id, publication_number, section_type,
+                           section_label, claim_number, claim_kind, parent_claims_json,
+                           start_offset, end_offset, text, text_hash, token_count,
+                           chunker_version
+                    FROM patent_chunks
+                    WHERE version_id = %s AND chunker_version = %s
+                    """,
+                    (chunks[0].version_id, chunks[0].chunker_version),
+                )
+                persisted = {
+                    item.chunk_id: item
+                    for item in (self._row_to_chunk(row) for row in await cursor.fetchall())
+                }
+                expected = {chunk.chunk_id: chunk for chunk in chunks}
+                if persisted != expected:
+                    raise PostgreSQLCorpusError(
+                        "persisted Chunk rows conflict with deterministic output"
+                    )
+                await connection.commit()
+                return tuple(persisted[chunk.chunk_id] for chunk in chunks)
+        except Exception:
+            await connection.rollback()
+            raise
+        finally:
+            await connection.close()
+
+    async def healthcheck(self) -> dict[str, Any]:
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute("SELECT 1")
+                row = await cursor.fetchone()
+            return {"ok": row is not None}
+        finally:
+            await connection.close()
+
+
 __all__ = [
     "PostgreSQLCorpusError",
     "PostgreSQLCorpusPrerequisiteRepository",
     "PostgreSQLCorpusRunLinkRepository",
     "PostgreSQLCorpusVersionSourceRepository",
     "PostgreSQLCorpusVersionRepository",
+    "PostgreSQLPatentChunkRepository",
 ]

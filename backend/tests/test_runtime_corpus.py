@@ -6,8 +6,12 @@ from unittest.mock import patch
 
 from idea.config import load_config
 from idea.corpus import PatentCorpusIngestService
+from idea.chunks import PatentChunkPersistenceService
 from idea.runtime import RuntimeConfigurationError, _build_corpus_ingest
-from idea.postgres_corpus import PostgreSQLCorpusPrerequisiteRepository
+from idea.postgres_corpus import (
+    PostgreSQLCorpusPrerequisiteRepository,
+    PostgreSQLPatentChunkRepository,
+)
 
 
 class RuntimeCorpusTests(unittest.TestCase):
@@ -39,6 +43,11 @@ class RuntimeCorpusTests(unittest.TestCase):
         self.assertIsInstance(service, PatentCorpusIngestService)
         self.assertEqual(service.corpus.objects.bucket, "aifpatent-corpus")
         self.assertIsInstance(service.prerequisites, PostgreSQLCorpusPrerequisiteRepository)
+        self.assertIsInstance(service.chunk_persistence, PatentChunkPersistenceService)
+        self.assertIsInstance(
+            service.chunk_persistence.repository,
+            PostgreSQLPatentChunkRepository,
+        )
 
 
 if __name__ == "__main__":

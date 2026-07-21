@@ -375,3 +375,13 @@
 - 真实验收：Compose 应用、PostgreSQL、Redis、MinIO 四服务均为 `healthy`；随机隔离文档完成 SQLite 身份桥接、MinIO Blob 写入、PostgreSQL Version/Source/Run-Link 写入、幂等重试、Blob 读回和深审双表同步，随后按随机 Document/Publication 精确清理 PostgreSQL 与 S3 数据。
 - 自动化验证：Corpus 聚焦测试 29 项通过（真实集成测试默认跳过）；完整离线套件 259 项通过、1 项按设计跳过；显式启用的真实 PostgreSQL/MinIO 集成测试 1 项通过；`git diff --check` 通过；最终代码复审结论为 READY。
 - 环境与空间：云盘分区和 ext4 根文件系统已在线扩展到 40G，验收后可用 18G；本地 Docker 应用端口在 Git 忽略的 `rag.env` 中临时设为 `18001`，避免干扰既有 `127.0.0.1:8001` 开发进程。Docker 代理、端口和凭证设置均不进入 Git。
+
+## 2026-07-21 — IDEA-CORPUS-CHUNK-001-POSTGRES-VERIFY
+
+- 类型：结构化 Chunk 的 PostgreSQL 持久化与 Fetch 运行时接入。
+- 执行顺序：Corpus Version 和 Blob 校验为 READY 后生成完整结构化 Chunk 集，Chunk 持久化成功后才建立 Run→Version 冻结绑定；Chunk 失败不会产生可供后续分析误用的新 Run Link，重试复用既有 Version/Blob。
+- Repository：新增 `PostgreSQLPatentChunkRepository`，在单一事务内执行幂等插入，并按 `version_id + chunker_version` 回读完整集合；输入必须属于同一 Version、Chunker 版本和公开号，额外、缺失或内容冲突均 fail closed 并回滚。
+- 运行时：`features.patent_corpus=true` 时同时装配 `PatentChunkPersistenceService` 和 PostgreSQL Chunk Repository；功能关闭时仍不要求外部基础设施。本切片不引入 FTS、embedding 或检索排序。
+- 真实验收：随机隔离文档完成 Version、Source、Chunk 和 Run Link 写入及幂等重试；预置同一 Version/Chunker 的额外 stale Chunk 后，整批写入按预期拒绝，删除测试冲突行后流程恢复；测试结束精确清理 PostgreSQL 与 MinIO，退出钩子关闭全部 Compose 容器。
+- 自动化验证：Chunk/Corpus/PostgreSQL/Runtime 聚焦测试 22 项通过；完整离线套件 262 项通过、1 项按设计跳过；显式真实 PostgreSQL/MinIO 集成测试 1 项通过；`compileall`、Compose `config --quiet`、`git diff --check` 和秘密扫描通过；最终代码复审结论为 READY。
+- 空间边界：验收后根文件系统可用 18G，超过至少保留 5G 的门槛；保留可复用镜像和数据卷，未删除项目、数据库卷或 VS Code 数据。
