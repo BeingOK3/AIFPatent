@@ -130,3 +130,18 @@
 - 类型：Phase 1 PostgreSQL Schema 验证补记。
 - 结果：Schema、SQLite export 和 ObjectStore 目标测试共 12 项通过；完整离线套件 212 项通过；compileall 和 `git diff --check` 通过。
 - 环境限制：主机没有 `psql`/Docker，因此 SQL 仅完成静态契约检查，未声称已经通过 PostgreSQL 运行态迁移。
+
+## 2026-07-21 — IDEA-PROVIDER-LIMITER-001
+
+- 类型：Phase 1 Redis 分布式 Provider 限流基线。
+- 实现：新增 `RedisDistributedLimiter`，用注入式 `redis.asyncio` 客户端和 Lua 脚本实现 Lease acquire/release、跨 Worker cooldown 和延迟时间；Redis Key 分离为 lease/cooldown，释放必须匹配 lease token，延迟不会缩短已有冷却。
+- 连接边界：不创建全局客户端；生产通过 `from_url` 显式注入 redis-py asyncio 客户端，应用生命周期负责连接池关闭；当前模块导入不要求 Redis 已安装，离线测试可使用 fake/Mock。
+- 依赖：`redis[hiredis]>=6.2,<7`，适配 Python 3.10+ 与目标 Redis 8 开发栈；凭证只来自部署 Secret/URL，不写入配置 JSON。
+- 涉及文件：`backend/idea/redis_limiter.py`、`backend/tests/test_redis_limiter.py`、`backend/requirements.txt`、本日志。
+- 验证：待运行 Redis limiter 目标测试、完整离线套件、编译和格式检查；当前主机无 Redis/Docker，未执行运行态租约竞争测试。
+
+## 2026-07-21 — IDEA-PROVIDER-LIMITER-001-VERIFY
+
+- 类型：Phase 1 Redis 限流验证补记。
+- 结果：Redis limiter 与端口目标测试共 7 项通过；完整离线套件 216 项通过；compileall 和 `git diff --check` 通过。
+- 环境限制：未安装 Redis/Docker，未声称通过真实多 Worker 租约竞争；Lua 脚本参数、key 隔离、lease token 和 cooldown 延迟逻辑已由 Mock 契约覆盖。
