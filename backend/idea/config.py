@@ -27,11 +27,18 @@ class FeatureSettings(StrictModel):
     pct: bool
     value: bool
     cfp: bool
+    patent_corpus: bool
+    initial_review_rag: bool
+    followup_rag: bool
 
     @model_validator(mode="after")
     def only_idea_is_available(self) -> "FeatureSettings":
         if not self.idea or self.deepdive or self.pct or self.value or self.cfp:
             raise ValueError("only the IDEA feature may be enabled during the rebuild")
+        if self.initial_review_rag and not self.patent_corpus:
+            raise ValueError("initial review RAG requires the patent corpus")
+        if self.followup_rag and not self.initial_review_rag:
+            raise ValueError("follow-up RAG requires initial review RAG")
         return self
 
 

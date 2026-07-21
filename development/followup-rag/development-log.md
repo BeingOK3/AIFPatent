@@ -51,3 +51,19 @@
 - 类型：文档验证补记。
 - 结果：配置 JSON 示例可解析；架构文档 Markdown fence 成对；三份开发文档无行尾空白；上下文逻辑表、Phase 3/4 Work Unit、固定架构决策和推荐开发切片相互对应；前置架构文档存在。
 - Git：`git diff --check` 通过；本次仅修改 `development/followup-rag/` 下三份计划文档，未修改运行时代码。
+
+## 2026-07-21 — IDEA-BOUNDARIES-001
+
+- 类型：Phase 0 功能门禁与基础设施端口契约。
+- 功能门禁：新增 `patent_corpus`、`initial_review_rag`、`followup_rag`，默认全部关闭；首次评审 RAG 必须依赖 Corpus，追问 RAG 必须依赖首次评审 RAG，非法组合在配置加载时 fail closed。
+- 端口契约：新增泛型不可变记录 `Repository`、内容寻址 `ObjectStore`、带租约 `JobQueue`、跨进程冷却 `DistributedLimiter` 和强制 Version Scope 的 `VectorIndex` Protocol，以及对应不可变 DTO。
+- 安全边界：对象哈希只接受规范化 SHA-256；向量和分数拒绝 NaN/Infinity；向量查询必须携带非空允许 Version 集合，禁止无范围全库搜索。
+- 涉及文件：`backend/idea/config.py`、`backend/idea/ports.py`、`backend/tests/test_config.py`、`backend/tests/test_ports.py`、`config/ai4patent.json`、`config/ai4patent.schema.json`、本日志。
+- 验证：待运行配置、端口、完整离线测试、编译和 diff 格式检查。
+
+## 2026-07-21 — IDEA-BOUNDARIES-001-VERIFY
+
+- 类型：Phase 0 功能门禁与端口契约验证补记。
+- 结果：配置与端口目标测试 11 项通过；完整离线套件 195 项通过；Python compileall、两份配置 JSON 语法和 `git diff --check` 通过。
+- 环境说明：默认沙箱禁止 TestClient/临时 HTTP fixture 所需的本机通信并造成假性等待；在受控测试权限下 API 12 项、Execution 10 项和 CLI 6 项均通过，确认不是代码回归。
+- 安全检查：默认配置中的三个新功能继续关闭；配置快照、测试输出和 Git diff 不包含模型 API Key。

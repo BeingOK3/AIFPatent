@@ -10,6 +10,7 @@ from idea.config import ConfigError, PROJECT_ROOT, load_config
 
 
 CONFIG_PATH = PROJECT_ROOT / "config" / "ai4patent.json"
+SCHEMA_PATH = PROJECT_ROOT / "config" / "ai4patent.schema.json"
 
 
 class ConfigTests(unittest.TestCase):
@@ -32,6 +33,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.model.default, "deepseek-v4-flash")
         self.assertEqual(config.search.providers.exa_mcp.fetch_tool, "web_fetch_exa")
         self.assertEqual(config.search.providers.exa_mcp.fetch_max_characters, 300_000)
+        self.assertFalse(config.features.patent_corpus)
+        self.assertFalse(config.features.initial_review_rag)
+        self.assertFalse(config.features.followup_rag)
         snapshot = config.snapshot()
         self.assertNotIn("api_key", snapshot["model"])
         self.assertNotIn("apiKey", snapshot["model"])
@@ -65,6 +69,39 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ConfigError):
                 load_config(self.write_config(self.raw, directory))
+
+    def test_rag_feature_gates_follow_dependency_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            initial_without_corpus = json.loads(json.dumps(self.raw))
+            initial_without_corpus["features"]["initial_review_rag"] = True
+            with self.assertRaises(ConfigError):
+                load_config(self.write_config(initial_without_corpus, directory))
+
+            followup_without_initial = json.loads(json.dumps(self.raw))
+            followup_without_initial["features"]["patent_corpus"] = True
+            followup_without_initial["features"]["followup_rag"] = True
+            with self.assertRaises(ConfigError):
+                load_config(self.write_config(followup_without_initial, directory))
+
+            enabled = json.loads(json.dumps(self.raw))
+            enabled["features"]["patent_corpus"] = True
+            enabled["features"]["initial_review_rag"] = True
+            enabled["features"]["followup_rag"] = True
+            config = load_config(self.write_config(enabled, directory))
+            self.assertTrue(config.features.followup_rag)
+
+    def test_json_schema_declares_rag_feature_gates(self) -> None:
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        features = schema["properties"]["features"]
+        self.assertTrue(
+            {"patent_corpus", "initial_review_rag", "followup_rag"}.issubset(
+                features["required"]
+            )
+        )
+        encoded_conditions = json.dumps(features["allOf"], sort_keys=True)
+        self.assertIn("patent_corpus", encoded_conditions)
+        self.assertIn("initial_review_rag", encoded_conditions)
+        self.assertIn("followup_rag", encoded_conditions)
 
     def test_unknown_settings_fail_closed(self) -> None:
         self.raw["surprise"] = True

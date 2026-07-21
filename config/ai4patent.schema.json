@@ -19,14 +19,27 @@
     "features": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idea", "deepdive", "pct", "value", "cfp"],
+      "required": ["idea", "deepdive", "pct", "value", "cfp", "patent_corpus", "initial_review_rag", "followup_rag"],
       "properties": {
         "idea": {"const": true},
         "deepdive": {"const": false},
         "pct": {"const": false},
         "value": {"const": false},
-        "cfp": {"const": false}
-      }
+        "cfp": {"const": false},
+        "patent_corpus": {"type": "boolean"},
+        "initial_review_rag": {"type": "boolean"},
+        "followup_rag": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"initial_review_rag": {"const": true}}, "required": ["initial_review_rag"]},
+          "then": {"properties": {"patent_corpus": {"const": true}}}
+        },
+        {
+          "if": {"properties": {"followup_rag": {"const": true}}, "required": ["followup_rag"]},
+          "then": {"properties": {"initial_review_rag": {"const": true}}}
+        }
+      ]
     },
     "model": {
       "type": "object",

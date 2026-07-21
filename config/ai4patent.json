@@ -9,7 +9,10 @@
     "deepdive": false,
     "pct": false,
     "value": false,
-    "cfp": false
+    "cfp": false,
+    "patent_corpus": false,
+    "initial_review_rag": false,
+    "followup_rag": false
   },
   "model": {
     "provider": "deepseek",
