@@ -27,6 +27,7 @@ class ModelMessage:
 
 @dataclass(frozen=True)
 class AssembledModelContext:
+    context_id: str
     context_version: str
     purpose: Purpose
     prompt_version: str
@@ -106,8 +107,13 @@ class ContextAssembler:
                     "chunk_id": chunk.chunk_id,
                     "version_id": chunk.version_id,
                     "publication_number": chunk.publication_number,
+                    "section_type": chunk.section_type,
                     "section_label": chunk.section_label,
+                    "claim_number": chunk.claim_number,
+                    "start_offset": chunk.start_offset,
+                    "end_offset": chunk.end_offset,
                     "text_hash": chunk.text_hash,
+                    "excerpt": chunk.text,
                     "rank": rank,
                 }
             )
@@ -140,6 +146,7 @@ class ContextAssembler:
         encoded = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         context_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         return AssembledModelContext(
+            context_id=f"CTX-{context_hash[:24]}",
             context_version=self.context_version,
             purpose=purpose,
             prompt_version=prompt_version,

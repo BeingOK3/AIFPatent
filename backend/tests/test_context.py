@@ -47,7 +47,15 @@ class ContextAssemblerTests(unittest.TestCase):
         first = ContextAssembler().assemble(**kwargs)
         second = ContextAssembler().assemble(**kwargs)
         self.assertEqual(first.context_hash, second.context_hash)
+        self.assertEqual(first.context_id, second.context_id)
+        self.assertTrue(first.context_id.startswith("CTX-"))
         self.assertEqual([item["alias"] for item in first.selected_chunks], ["C1", "C2", "C3"])
+        first_binding = first.selected_chunks[0]
+        self.assertEqual(first_binding["section_type"], "abstract")
+        self.assertEqual(first_binding["start_offset"], 0)
+        self.assertEqual(first_binding["end_offset"], len("A short abstract."))
+        self.assertEqual(first_binding["excerpt"], "A short abstract.")
+        self.assertEqual(first_binding["text_hash"], self.chunks[0].text_hash)
         self.assertNotIn("api_key", first.messages[1].content.lower())
 
     def test_budget_exclusions_are_explicit(self) -> None:

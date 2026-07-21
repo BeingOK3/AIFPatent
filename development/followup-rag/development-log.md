@@ -439,3 +439,13 @@
 - 降级语义：来源本身缺少摘要或可识别独立权利要求时，输出稳定 `MISSING_ABSTRACT`/`MISSING_INDEPENDENT_CLAIM` limitation，不伪造内容。
 - Repository：`PostgreSQLPatentChunkRepository.list_for_versions` 只接受非空唯一 Version 范围，确定性排序回读完整 Chunk，并拒绝部分缺失范围。
 - 验证：新增强制摘要、多个独立权利要求、递归父链和缺失父链测试；聚焦测试 15 项通过；完整离线套件 294 项通过、2 项按设计跳过。
+
+## 2026-07-22 — IDEA-CONTEXT-CONTRACT-001
+
+- 类型：首次报告确定性 Context Manifest 与 Citation binding。
+- Context 身份：`ContextAssembler` 从完整 canonical manifest 计算 SHA-256，并生成稳定 `CTX-<hash-prefix>`；hash 覆盖消息、Prompt/Retriever 版本、Corpus snapshot、预算、选中/排除 Chunk 和 limitations。
+- Citation binding：每个模型可见 `C#` 现在绑定 `chunk_id`、`version_id`、公开号、section type/label、claim number、start/end offset、text hash 和不可改写 excerpt。
+- PostgreSQL：新增 `PostgreSQLContextRepository`，复用既有 `model_context_manifests` 表以 JSONB 持久化 Version allowlist、选中 Chunk、citation bindings、预算、omissions、完整 manifest 和 hash；相同 Context ID 的 hash 冲突 fail closed。
+- 凭证边界：Context API 不接收 Runtime API Key，写入测试确认 manifest/SQL 参数不包含 `api_key` 或秘密值。
+- 计划校正：既有 `010_core_schema.sql` 已包含完整 Manifest 表，因此不创建重复的 `040` Schema；后续只在运行时接入该 Repository。
+- 验证：Context、adapter 和 PostgreSQL Context 聚焦测试 6 项通过；完整离线套件 295 项通过、2 项按设计跳过。

@@ -40,6 +40,7 @@ from .lexical import (
     normalize_lexical_text,
 )
 from .postgres_lexical import PostgreSQLLexicalSearchRepository
+from .postgres_context import PostgreSQLContextRepository
 from .postgres_report import PostgreSQLReportScopeRepository
 from .report_retrieval import (
     InitialReportRetriever,
@@ -98,6 +99,7 @@ __all__ = [
     "LexicalSearchRequest",
     "LexicalTerms",
     "PostgreSQLLexicalSearchRepository",
+    "PostgreSQLContextRepository",
     "PostgreSQLReportScopeRepository",
     "InitialReportRetriever",
     "ReportDocumentScope",
