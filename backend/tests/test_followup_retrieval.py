@@ -37,6 +37,27 @@ class Hybrid:
         )
 
 
+class EmptyPrimaryHybrid(Hybrid):
+    async def search(self, request):
+        self.requests.append(request)
+        if request.text != "CN123A":
+            return HybridSearchResult(
+                query_id=request.query_id,
+                mode=RetrievalMode.LEXICAL_ONLY,
+                retriever_version="hybrid-rrf-v1",
+                hits=(),
+                limitations=("LEXICAL_ONLY",),
+            )
+        value = chunk(text="按公开号补齐的独立权利要求证据")
+        return HybridSearchResult(
+            query_id=request.query_id,
+            mode=RetrievalMode.LEXICAL_ONLY,
+            retriever_version="hybrid-rrf-v1",
+            hits=(HybridHit(value, 1, None, 1 / 61, 1.3, 1.3 / 61, ("lexical",)),),
+            limitations=("LEXICAL_ONLY",),
+        )
+
+
 def plan(**updates):
     value = {
         "mode": "EVIDENCE_QA",
@@ -81,6 +102,23 @@ class FollowupRetrievalTests(unittest.TestCase):
                     plan=plan(selected_publication_numbers=["US999B2"]),
                 )
             )
+
+    def test_zero_hit_long_queries_fall_back_to_scoped_document_evidence(self) -> None:
+        hybrid = EmptyPrimaryHybrid()
+        result = asyncio.run(
+            MultiQueryFollowupRetriever(hybrid).retrieve(
+                turn=turn("current", status=TurnStatus.RUNNING, created_at=100),
+                plan=plan(),
+            )
+        )
+
+        self.assertEqual(len(hybrid.requests), 3)
+        seed = hybrid.requests[-1]
+        self.assertEqual(seed.text, "CN123A")
+        self.assertEqual(seed.allowed_version_ids, ("cv-1",))
+        self.assertEqual(seed.section_types, ("claims",))
+        self.assertEqual(len(result.hits), 1)
+        self.assertIn("MANDATORY_VERSION_EVIDENCE_FALLBACK", result.limitations)
 
 
 if __name__ == "__main__":

@@ -620,3 +620,12 @@
 - 默认门禁：`features.followup_rag` 已切换为 true，`./start.sh` 的启动提示同步为“首次报告与证据追问 RAG”；完整 UI/后端仍依赖已有 PostgreSQL Corpus 与首次报告完成门。
 - 验证：工作区 Node.js `--check` 通过；前端 DOM/API/BYOK/Citation 契约、配置和容器聚焦 23 项通过；完整离线套件 398 项通过、4 项按设计跳过，`compileall`、`git diff --check` 通过，根文件系统仍有 18G 可用。
 - 待验收：尚需重建运行镜像，并以真实已有报告 + DeepSeek 瞬时 BYOK 完成一次 Thread→Turn→Hybrid/词法降级→Context→Answer→Citation→SSE 全链路验收；完成前不把本条当作运行态 E2E 结论。
+
+## 2026-07-22 — IDEA-FOLLOWUP-E2E-FIX-001
+
+- 类型：首次真实 DeepSeek 追问验收发现的零召回修正。
+- 失败留痕：真实 Thread `FT-02a364c2cdcd4237983f23e92975303d` 的首个 Turn 成功完成计划模型调用，但 5 条包含公开号、独立权利要求和多个技术词的长查询在 `claims` 范围内均零命中，Turn 按设计进入 FAILED，未生成回答或 Citation；凭证未出现在日志或持久记录。
+- 根因：PostgreSQL 词法路径使用受控 `plainto_tsquery`，长 query 的 token 组合过严；追问编排虽然防止越界，却没有在“计划 query 全部零命中”时执行按文献的强制最低证据补齐。
+- 修正：完成所有模型 query 后，逐个检查计划中的冻结 Version；没有任何命中的 Version 使用“该 Version 自身公开号”作为参数化 seed query，先在计划章节（无章节时默认 claims）取最多 2 个 Chunk，仍无结果才放宽章节但不放宽 Version。命中标记 `MANDATORY_VERSION_EVIDENCE_FALLBACK`，章节放宽另记 `SECTION_FILTER_FALLBACK`，不能伪装为语义相关命中。
+- 安全：seed query 只来自已验证公开号，每次只允许单个冻结 Version；返回后继续执行 Version scope、正文哈希去重、全局多样性和 Context/Citation 门禁。它只保证比较型问题至少读到每篇指定文献的耐久证据，不把未命中推断为重合。
+- 验证：零命中长查询→单 Version claims seed→可审计证据的聚焦测试新增并通过；追问 Handler/Hybrid 聚焦 12 项通过；完整离线套件 399 项通过、4 项按设计跳过，`compileall` 与 `git diff --check` 通过。待重建镜像后以同一 Thread 新 Turn 复验。

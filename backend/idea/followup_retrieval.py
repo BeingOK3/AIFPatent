@@ -58,28 +58,15 @@ class MultiQueryFollowupRetriever:
         merged: dict[str, _Merged] = {}
         limitations: list[str] = []
         modes: list[RetrievalMode] = []
-        for index, text in enumerate(plan.query_rewrites, start=1):
-            vector = profile = None
-            if self.embedding is not None:
-                vector, profile = await self.embedding.embed_query(text)
-            result = await self.hybrid.search(HybridSearchRequest(
-                query_id=f"{aggregate_id}:Q{index}",
-                text=text,
-                allowed_version_ids=allowed_versions,
-                semantic_embedding=vector,
-                embedding_profile_id=profile,
-                section_types=(tuple(plan.preferred_sections) or None),
-                question_type=plan.question_type.as_retrieval_type(),
-                ensure_version_diversity=len(allowed_versions) > 1,
-                limit=self.hybrid.settings.final_limit,
-            ))
+
+        def merge_result(result: HybridSearchResult, source_tag: str) -> None:
             modes.append(result.mode)
             limitations.extend(result.limitations)
             for hit in result.hits:
                 if hit.chunk.version_id not in allowed_versions:
                     raise FollowupError("Hybrid result escaped follow-up Version scope")
                 current = merged.get(hit.chunk.chunk_id)
-                tagged_sources = {f"Q{index}:{source}" for source in hit.sources}
+                tagged_sources = {f"{source_tag}:{source}" for source in hit.sources}
                 if current is None:
                     merged[hit.chunk.chunk_id] = _Merged(
                         hit=hit,
@@ -99,6 +86,50 @@ class MultiQueryFollowupRetriever:
                         current.vector_rank, hit.vector_rank
                     )
                     current.sources.update(tagged_sources)
+
+        for index, text in enumerate(plan.query_rewrites, start=1):
+            vector = profile = None
+            if self.embedding is not None:
+                vector, profile = await self.embedding.embed_query(text)
+            result = await self.hybrid.search(HybridSearchRequest(
+                query_id=f"{aggregate_id}:Q{index}",
+                text=text,
+                allowed_version_ids=allowed_versions,
+                semantic_embedding=vector,
+                embedding_profile_id=profile,
+                section_types=(tuple(plan.preferred_sections) or None),
+                question_type=plan.question_type.as_retrieval_type(),
+                ensure_version_diversity=len(allowed_versions) > 1,
+                limit=self.hybrid.settings.final_limit,
+            ))
+            merge_result(result, f"Q{index}")
+
+        covered_versions = {value.hit.chunk.version_id for value in merged.values()}
+        for index, document in enumerate(documents, start=1):
+            if document.version_id in covered_versions:
+                continue
+            sections = tuple(plan.preferred_sections) or ("claims",)
+            seed = await self.hybrid.search(HybridSearchRequest(
+                query_id=f"{aggregate_id}:D{index}",
+                text=document.publication_number,
+                allowed_version_ids=(document.version_id,),
+                section_types=sections,
+                question_type=plan.question_type.as_retrieval_type(),
+                limit=min(2, self.hybrid.settings.final_limit),
+            ))
+            if not seed.hits and sections:
+                seed = await self.hybrid.search(HybridSearchRequest(
+                    query_id=f"{aggregate_id}:D{index}:ALL",
+                    text=document.publication_number,
+                    allowed_version_ids=(document.version_id,),
+                    section_types=None,
+                    question_type=plan.question_type.as_retrieval_type(),
+                    limit=min(2, self.hybrid.settings.final_limit),
+                ))
+                limitations.append("SECTION_FILTER_FALLBACK")
+            if seed.hits:
+                merge_result(seed, f"D{index}:mandatory")
+                limitations.append("MANDATORY_VERSION_EVIDENCE_FALLBACK")
 
         ranked = [
             HybridHit(
