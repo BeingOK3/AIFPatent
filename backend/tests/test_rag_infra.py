@@ -56,6 +56,14 @@ class RagInfrastructureTests(unittest.TestCase):
         self.assertNotIn("$POSTGRES_PASSWORD", command[-1])
         self.assertNotIn("--volumes", command)
 
+    def test_bucket_command_is_idempotent_and_uses_container_environment(self) -> None:
+        command = rag_infra._docker_command("ensure-bucket")
+        self.assertEqual(command[-4:-1], ["app", "python", "-c"])
+        self.assertIn("head_bucket", command[-1])
+        self.assertIn("create_bucket", command[-1])
+        self.assertIn("AIFPATENT_S3_BUCKET", command[-1])
+        self.assertNotIn("AIFPATENT_S3_SECRET_KEY=", " ".join(command))
+
     def test_missing_docker_fails_before_environment_creation(self) -> None:
         with patch("tools.rag_infra.shutil.which", return_value=None), patch(
             "tools.rag_infra.ensure_environment"
@@ -88,8 +96,12 @@ class RagInfrastructureTests(unittest.TestCase):
             self.assertEqual(values["AIFPATENT_GOPROXY"], "https://proxy.golang.org,direct")
 
     def test_up_builds_only_publicly_configured_images_before_no_build_compose_start(self) -> None:
-        app = rag_infra._build_command("app")
-        minio = rag_infra._build_command("object-store")
+        with tempfile.TemporaryDirectory() as directory:
+            environment = Path(directory) / "rag.env"
+            environment.write_text(rag_infra._new_environment(), encoding="utf-8")
+            with patch.object(rag_infra, "ENV_PATH", environment):
+                app = rag_infra._build_command("app")
+                minio = rag_infra._build_command("object-store")
         self.assertIn("--allow", app)
         self.assertIn("network.host", app)
         self.assertIn("deploy/app/Dockerfile", " ".join(app))

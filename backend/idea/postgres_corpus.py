@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from .corpus import CorpusVersion
+from .corpus import CorpusRunLink, CorpusVersion, CorpusVersionSource
 from .ports import Repository
 
 
@@ -198,4 +198,410 @@ class PostgreSQLCorpusVersionRepository(Repository[str, CorpusVersion]):
             await connection.close()
 
 
-__all__ = ["PostgreSQLCorpusError", "PostgreSQLCorpusVersionRepository"]
+class PostgreSQLCorpusPrerequisiteRepository:
+    """Bridge current SQLite run/document identities into PostgreSQL before Corpus writes."""
+
+    def __init__(
+        self,
+        database: Any,
+        dsn: str | None = None,
+        *,
+        connect: Connect | None = None,
+    ) -> None:
+        self.database = database
+        self.dsn = (dsn or os.environ.get("AIFPATENT_POSTGRES_DSN") or "").strip()
+        if not self.dsn:
+            raise ValueError("PostgreSQL corpus prerequisite repository requires a DSN")
+        self._connect = connect
+
+    async def _connection(self) -> Any:
+        if self._connect is not None:
+            return await self._connect(self.dsn)
+        try:
+            import psycopg
+        except ImportError as exc:  # pragma: no cover - deployment dependency
+            raise PostgreSQLCorpusError("psycopg is required for PostgreSQL corpus storage") from exc
+        return await psycopg.AsyncConnection.connect(self.dsn)
+
+    def _source_rows(
+        self, run_id: str, document_ids: tuple[str, ...]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        run_chain: list[dict[str, Any]] = []
+        current = self.database.get_run(run_id)
+        while True:
+            run_chain.append(current)
+            parent_run_id = current.get("parent_run_id")
+            if not parent_run_id:
+                break
+            current = self.database.get_run(str(parent_run_id))
+        run_chain.reverse()
+
+        placeholders = ",".join("?" for _ in document_ids)
+        with self.database.connect() as connection:
+            case_ids = tuple(dict.fromkeys(str(run["case_id"]) for run in run_chain))
+            case_placeholders = ",".join("?" for _ in case_ids)
+            cases = [
+                dict(row)
+                for row in connection.execute(
+                    f"SELECT * FROM idea_cases WHERE case_id IN ({case_placeholders})",
+                    case_ids,
+                ).fetchall()
+            ]
+            documents = [
+                dict(row)
+                for row in connection.execute(
+                    f"SELECT * FROM patent_documents WHERE document_id IN ({placeholders})",
+                    document_ids,
+                ).fetchall()
+            ]
+            run_documents = [
+                dict(row)
+                for row in connection.execute(
+                    f"""
+                    SELECT * FROM run_documents
+                    WHERE run_id = ? AND document_id IN ({placeholders})
+                    """,
+                    (run_id, *document_ids),
+                ).fetchall()
+            ]
+        if len(documents) != len(document_ids) or len(run_documents) != len(document_ids):
+            raise PostgreSQLCorpusError(
+                "SQLite run/document prerequisites are incomplete for Corpus persistence"
+            )
+        return cases, run_chain, documents, run_documents
+
+    async def prepare(self, run_id: str, document_ids: tuple[str, ...]) -> None:
+        if not document_ids or len(set(document_ids)) != len(document_ids):
+            raise PostgreSQLCorpusError("Corpus prerequisites require unique document IDs")
+        cases, runs, documents, run_documents = self._source_rows(run_id, document_ids)
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                for case in cases:
+                    await cursor.execute(
+                        """
+                        INSERT INTO idea_cases(case_id, title, created_at, updated_at, archived_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (case_id) DO NOTHING
+                        """,
+                        (
+                            case["case_id"],
+                            case["title"],
+                            case["created_at"],
+                            case["updated_at"],
+                            case["archived_at"],
+                        ),
+                    )
+                for run in runs:
+                    await cursor.execute(
+                        """
+                        INSERT INTO idea_runs(
+                            run_id, case_id, parent_run_id, status, evaluation_date,
+                            date_basis, analysis_scope, model, skill_version,
+                            workflow_version, config_snapshot, limitation_json,
+                            created_at, started_at, completed_at, error_code, error_message
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s
+                        )
+                        ON CONFLICT (run_id) DO UPDATE SET
+                            status = EXCLUDED.status,
+                            limitation_json = EXCLUDED.limitation_json,
+                            started_at = EXCLUDED.started_at,
+                            completed_at = EXCLUDED.completed_at,
+                            error_code = EXCLUDED.error_code,
+                            error_message = EXCLUDED.error_message
+                        """,
+                        (
+                            run["run_id"], run["case_id"], run["parent_run_id"], run["status"],
+                            run["evaluation_date"], run["date_basis"], run["analysis_scope"],
+                            run["model"], run["skill_version"], run["workflow_version"],
+                            json.dumps(run["config_snapshot"], ensure_ascii=False),
+                            json.dumps(run["limitation_json"], ensure_ascii=False),
+                            run["created_at"], run["started_at"], run["completed_at"],
+                            run["error_code"], run["error_message"],
+                        ),
+                    )
+                    await cursor.execute(
+                        """
+                        INSERT INTO run_inputs(
+                            run_id, input_text, input_hash, attachments_json, settings_json
+                        ) VALUES (%s, %s, %s, %s::jsonb, %s::jsonb)
+                        ON CONFLICT (run_id) DO NOTHING
+                        """,
+                        (
+                            run["run_id"], run["input_text"], run["input_hash"],
+                            json.dumps(run["attachments_json"], ensure_ascii=False),
+                            json.dumps(run["settings_json"], ensure_ascii=False),
+                        ),
+                    )
+                for document in documents:
+                    if document["family_id"]:
+                        await cursor.execute(
+                            """
+                            INSERT INTO patent_families(family_id, source)
+                            VALUES (%s, %s) ON CONFLICT (family_id) DO NOTHING
+                            """,
+                            (document["family_id"], "sqlite-corpus-bridge"),
+                        )
+                    await cursor.execute(
+                        """
+                        INSERT INTO patent_documents(
+                            document_id, publication_number, application_number, family_id,
+                            title, assignee, inventors_json, priority_date, filing_date,
+                            publication_date, grant_date, language, url, abstract_text,
+                            claims_text, description_text, content_hash, metadata_json,
+                            created_at, updated_at
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s
+                        ) ON CONFLICT (document_id) DO NOTHING
+                        """,
+                        (
+                            document["document_id"], document["publication_number"],
+                            document["application_number"], document["family_id"],
+                            document["title"], document["assignee"], document["inventors_json"],
+                            document["priority_date"], document["filing_date"],
+                            document["publication_date"], document["grant_date"],
+                            document["language"], document["url"], None, None, None,
+                            document["content_hash"], document["metadata_json"],
+                            document["created_at"], document["updated_at"],
+                        ),
+                    )
+                for item in run_documents:
+                    await cursor.execute(
+                        """
+                        INSERT INTO run_documents(
+                            run_id, document_id, relevance, relevance_score,
+                            screening_status, deep_reviewed, found_by_json, query_ids_json
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                        ON CONFLICT (run_id, document_id) DO NOTHING
+                        """,
+                        (
+                            item["run_id"], item["document_id"], item["relevance"],
+                            item["relevance_score"], item["screening_status"],
+                            bool(item["deep_reviewed"]), item["found_by_json"],
+                            item["query_ids_json"],
+                        ),
+                    )
+                await connection.commit()
+        except Exception:
+            await connection.rollback()
+            raise
+        finally:
+            await connection.close()
+
+
+class PostgreSQLCorpusRunLinkRepository:
+    """Write-once PostgreSQL binding from an IDEA run document to a Version."""
+
+    def __init__(self, dsn: str | None = None, *, connect: Connect | None = None) -> None:
+        self.dsn = (dsn or os.environ.get("AIFPATENT_POSTGRES_DSN") or "").strip()
+        if not self.dsn:
+            raise ValueError("PostgreSQL corpus run-link repository requires a DSN")
+        self._connect = connect
+
+    async def _connection(self) -> Any:
+        if self._connect is not None:
+            return await self._connect(self.dsn)
+        try:
+            import psycopg
+        except ImportError as exc:  # pragma: no cover - deployment dependency
+            raise PostgreSQLCorpusError("psycopg is required for PostgreSQL corpus storage") from exc
+        return await psycopg.AsyncConnection.connect(self.dsn)
+
+    @staticmethod
+    def _row_to_link(row: Any) -> CorpusRunLink:
+        if not isinstance(row, dict):
+            row = dict(
+                zip(
+                    (
+                        "run_id",
+                        "document_id",
+                        "version_id",
+                        "corpus_availability",
+                        "deep_reviewed",
+                        "linked_at",
+                    ),
+                    row,
+                    strict=True,
+                )
+            )
+        return CorpusRunLink(
+            run_id=str(row["run_id"]),
+            document_id=str(row["document_id"]),
+            version_id=str(row["version_id"]),
+            corpus_availability=str(row["corpus_availability"]),
+            deep_reviewed=bool(row["deep_reviewed"]),
+            linked_at=PostgreSQLCorpusVersionRepository._datetime(row["linked_at"]),
+        )
+
+    async def get(self, run_id: str, document_id: str) -> CorpusRunLink | None:
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT run_id, document_id, version_id, corpus_availability,
+                           deep_reviewed, linked_at
+                    FROM run_document_versions
+                    WHERE run_id = %s AND document_id = %s
+                    """,
+                    (run_id, document_id),
+                )
+                row = await cursor.fetchone()
+            return None if row is None else self._row_to_link(row)
+        finally:
+            await connection.close()
+
+    async def put_if_absent(self, link: CorpusRunLink) -> bool:
+        if link.corpus_availability != "READY":
+            raise PostgreSQLCorpusError("new run corpus links must reference a READY Version")
+        linked_at = link.linked_at or datetime.now(timezone.utc)
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    INSERT INTO run_document_versions(
+                        run_id, document_id, version_id, corpus_availability,
+                        deep_reviewed, linked_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (run_id, document_id) DO NOTHING
+                    RETURNING run_id
+                    """,
+                    (
+                        link.run_id,
+                        link.document_id,
+                        link.version_id,
+                        link.corpus_availability,
+                        link.deep_reviewed,
+                        PostgreSQLCorpusVersionRepository._millis(linked_at),
+                    ),
+                )
+                inserted = await cursor.fetchone()
+                await connection.commit()
+                return inserted is not None
+        except Exception:
+            await connection.rollback()
+            raise
+        finally:
+            await connection.close()
+
+    async def mark_deep_reviewed(
+        self, run_id: str, document_ids: tuple[str, ...]
+    ) -> None:
+        if not document_ids or len(set(document_ids)) != len(document_ids):
+            raise PostgreSQLCorpusError("deep-review update requires unique document IDs")
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    UPDATE run_document_versions
+                    SET deep_reviewed = TRUE
+                    WHERE run_id = %s AND document_id = ANY(%s)
+                          AND corpus_availability = 'READY'
+                    RETURNING document_id
+                    """,
+                    (run_id, list(document_ids)),
+                )
+                updated = {str(row[0]) for row in await cursor.fetchall()}
+                if updated != set(document_ids):
+                    raise PostgreSQLCorpusError(
+                        "cannot mark missing or unavailable run corpus links as deep reviewed"
+                    )
+                await cursor.execute(
+                    """
+                    UPDATE run_documents
+                    SET deep_reviewed = TRUE
+                    WHERE run_id = %s AND document_id = ANY(%s)
+                    """,
+                    (run_id, list(document_ids)),
+                )
+                if cursor.rowcount != len(document_ids):
+                    raise PostgreSQLCorpusError(
+                        "cannot synchronize deep-review state to run documents"
+                    )
+                await connection.commit()
+        except Exception:
+            await connection.rollback()
+            raise
+        finally:
+            await connection.close()
+
+
+class PostgreSQLCorpusVersionSourceRepository:
+    """Append-only provenance records kept outside stable content identity."""
+
+    def __init__(self, dsn: str | None = None, *, connect: Connect | None = None) -> None:
+        self.dsn = (dsn or os.environ.get("AIFPATENT_POSTGRES_DSN") or "").strip()
+        if not self.dsn:
+            raise ValueError("PostgreSQL corpus source repository requires a DSN")
+        self._connect = connect
+
+    async def _connection(self) -> Any:
+        if self._connect is not None:
+            return await self._connect(self.dsn)
+        try:
+            import psycopg
+        except ImportError as exc:  # pragma: no cover - deployment dependency
+            raise PostgreSQLCorpusError("psycopg is required for PostgreSQL corpus storage") from exc
+        return await psycopg.AsyncConnection.connect(self.dsn)
+
+    async def put_if_absent(self, source: CorpusVersionSource) -> bool:
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    INSERT INTO patent_version_sources(
+                        source_id, version_id, provider, source_url, retrieved_at,
+                        raw_response_hash, parser_version, metadata_json
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    ON CONFLICT (source_id) DO NOTHING
+                    RETURNING source_id
+                    """,
+                    (
+                        source.source_id,
+                        source.version_id,
+                        source.provider,
+                        source.source_url,
+                        PostgreSQLCorpusVersionRepository._millis(source.retrieved_at),
+                        source.raw_response_hash,
+                        source.parser_version,
+                        json.dumps(
+                            source.metadata,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                    ),
+                )
+                inserted = await cursor.fetchone()
+                await connection.commit()
+                return inserted is not None
+        except Exception:
+            await connection.rollback()
+            raise
+        finally:
+            await connection.close()
+
+    async def healthcheck(self) -> dict[str, Any]:
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute("SELECT 1")
+                row = await cursor.fetchone()
+            return {"ok": row is not None}
+        finally:
+            await connection.close()
+
+
+__all__ = [
+    "PostgreSQLCorpusError",
+    "PostgreSQLCorpusPrerequisiteRepository",
+    "PostgreSQLCorpusRunLinkRepository",
+    "PostgreSQLCorpusVersionSourceRepository",
+    "PostgreSQLCorpusVersionRepository",
+]

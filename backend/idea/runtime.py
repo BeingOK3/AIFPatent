@@ -1,22 +1,31 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from .agents import IdeaAgentService
 from .audit import AuditService
 from .cache import CacheStore
 from .config import AppConfig
+from .corpus import PatentCorpusIngestService, PatentCorpusService
 from .database import Database
 from .document_analysis import DocumentAnalysisService
 from .execution import WorkflowExecutor
 from .inventiveness import InventivenessService
 from .model_client import StructuredModelClient
 from .novelty import NoveltyService
+from .postgres_corpus import (
+    PostgreSQLCorpusPrerequisiteRepository,
+    PostgreSQLCorpusRunLinkRepository,
+    PostgreSQLCorpusVersionSourceRepository,
+    PostgreSQLCorpusVersionRepository,
+)
 from .providers import ExaMcpProvider, GooglePatentsProvider
 from .reporting import ReportService
 from .retrieval import RetrievalService
 from .run_store import RunStore
 from .runtime_debug import RunDebugLog
+from .s3_object_store import S3ObjectStore
 from .value_analysis import ValueAnalysisService
 from .workflow import WorkflowHarness
 
@@ -30,6 +39,46 @@ class IdeaRuntime:
     harness: WorkflowHarness
     executor: WorkflowExecutor
     debug_log: RunDebugLog
+
+
+class RuntimeConfigurationError(RuntimeError):
+    """Raised when an enabled runtime feature lacks required infrastructure."""
+
+
+def _required_environment(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RuntimeConfigurationError(f"{name} is required when patent_corpus is enabled")
+    return value
+
+
+def _build_corpus_ingest(
+    config: AppConfig, *, database: Database | object | None = None
+) -> PatentCorpusIngestService | None:
+    if not config.features.patent_corpus:
+        return None
+    dsn = _required_environment("AIFPATENT_POSTGRES_DSN")
+    if database is None:
+        raise RuntimeConfigurationError(
+            "SQLite source database is required for the PostgreSQL Corpus transition"
+        )
+    objects = S3ObjectStore(
+        endpoint_url=_required_environment("AIFPATENT_S3_ENDPOINT_URL"),
+        bucket=_required_environment("AIFPATENT_S3_BUCKET"),
+        access_key=_required_environment("AIFPATENT_S3_ACCESS_KEY"),
+        secret_key=_required_environment("AIFPATENT_S3_SECRET_KEY"),
+        region_name=os.environ.get("AIFPATENT_S3_REGION", "us-east-1"),
+    )
+    corpus = PatentCorpusService(
+        versions=PostgreSQLCorpusVersionRepository(dsn),
+        objects=objects,
+        sources=PostgreSQLCorpusVersionSourceRepository(dsn),
+    )
+    return PatentCorpusIngestService(
+        corpus=corpus,
+        run_links=PostgreSQLCorpusRunLinkRepository(dsn),
+        prerequisites=PostgreSQLCorpusPrerequisiteRepository(database, dsn),
+    )
 
 
 def build_runtime(config: AppConfig) -> IdeaRuntime:
@@ -91,6 +140,7 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
     value = ValueAnalysisService(database, agents)
     audit = AuditService(database, agents, minimum_deep_reviews=minimum)
     reporting = ReportService(database, run_store, agents)
+    corpus_ingest = _build_corpus_ingest(config, database=database)
     executor = WorkflowExecutor(
         config,
         database,
@@ -105,5 +155,6 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
         audit,
         reporting,
         debug_log=debug_log,
+        corpus_ingest=corpus_ingest,
     )
     return IdeaRuntime(config, database, cache, run_store, harness, executor, debug_log)

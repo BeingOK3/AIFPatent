@@ -46,6 +46,8 @@ def _new_environment() -> str:
         "AIFPATENT_MINIO_ROOT_PASSWORD": _random_secret(),
         "AIFPATENT_MINIO_API_PORT": "9000",
         "AIFPATENT_MINIO_CONSOLE_PORT": "9001",
+        "AIFPATENT_S3_BUCKET": "aifpatent-corpus",
+        "AIFPATENT_S3_REGION": "us-east-1",
         "AIFPATENT_MINIO_VERSION": "RELEASE.2025-10-15T17-29-55Z",
         "AIFPATENT_APP_PORT": "8001",
         "AIFPATENT_PIP_INDEX_URL": "https://pypi.org/simple",
@@ -125,6 +127,33 @@ def _docker_command(action: str) -> list[str]:
             'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
             "-f /docker-entrypoint-initdb.d/020_corpus_schema.sql",
         ],
+        "ensure-bucket": [
+            "exec",
+            "--no-TTY",
+            "app",
+            "python",
+            "-c",
+            """import os
+import boto3
+from botocore.exceptions import ClientError
+
+bucket = os.environ["AIFPATENT_S3_BUCKET"]
+client = boto3.client(
+    "s3",
+    endpoint_url=os.environ["AIFPATENT_S3_ENDPOINT_URL"],
+    aws_access_key_id=os.environ["AIFPATENT_S3_ACCESS_KEY"],
+    aws_secret_access_key=os.environ["AIFPATENT_S3_SECRET_KEY"],
+    region_name=os.environ.get("AIFPATENT_S3_REGION", "us-east-1"),
+)
+try:
+    client.head_bucket(Bucket=bucket)
+except ClientError as exc:
+    code = str(exc.response.get("Error", {}).get("Code", ""))
+    if code not in {"404", "NoSuchBucket", "NotFound"}:
+        raise
+    client.create_bucket(Bucket=bucket)
+""",
+        ],
     }
     return prefix + commands[action]
 
@@ -188,7 +217,10 @@ def run(action: str) -> int:
             if built.returncode != 0:
                 return built.returncode
     completed = subprocess.run(_docker_command(action), cwd=PROJECT_ROOT, check=False)
-    return completed.returncode
+    if completed.returncode != 0 or action != "up":
+        return completed.returncode
+    bucket = subprocess.run(_docker_command("ensure-bucket"), cwd=PROJECT_ROOT, check=False)
+    return bucket.returncode
 
 
 def build_parser() -> argparse.ArgumentParser:

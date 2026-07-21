@@ -16,6 +16,7 @@ from .agent_schemas import (
 from .agents import IdeaAgentService
 from .audit import AuditService
 from .config import AppConfig
+from .corpus import PatentCorpusIngestService
 from .database import Database
 from .document_analysis import DocumentAnalysisService
 from .inventiveness import InventivenessService
@@ -54,6 +55,7 @@ class WorkflowExecutor:
         reporting: ReportService,
         *,
         debug_log: RunDebugLog | None = None,
+        corpus_ingest: PatentCorpusIngestService | None = None,
     ):
         self.config = config
         self.database = database
@@ -68,6 +70,7 @@ class WorkflowExecutor:
         self.audit = audit
         self.reporting = reporting
         self.debug_log = debug_log
+        self.corpus_ingest = corpus_ingest
         self.graph = LangGraphWorkflow(
             database=database,
             harness=harness,
@@ -167,11 +170,28 @@ class WorkflowExecutor:
                 raise ExecutionGateError(
                     "no patent full text is available for evidence-based analysis"
                 )
+            corpus_version_ids: list[str] | None = None
+            corpus_snapshot_hash: str | None = None
+            if self.config.features.patent_corpus:
+                if self.corpus_ingest is None:
+                    raise ExecutionGateError(
+                        "corpus ingest service is required when patent_corpus is enabled"
+                    )
+                corpus = await self.corpus_ingest.ingest_many(
+                    run_id=run_id,
+                    documents=tuple(output.documents),
+                    document_ids=output.document_ids,
+                )
+                corpus_version_ids = list(corpus.version_ids)
+                corpus_snapshot_hash = corpus.snapshot_hash
             value = {
                 "publication_numbers": [item.publication_number for item in output.documents],
                 "document_ids": output.document_ids,
                 "limitations": output.limitations,
             }
+            if corpus_version_ids is not None:
+                value["corpus_version_ids"] = corpus_version_ids
+                value["corpus_snapshot_hash"] = corpus_snapshot_hash
             return self._save_checkpoint(run_id, step, value)
         if step == WorkflowStep.ANALYZE_DOCUMENTS:
             checkpoint = self._checkpoint(run_id, step)
@@ -197,6 +217,12 @@ class WorkflowExecutor:
                 ).fetchone()[0]
             if pending:
                 raise ExecutionGateError(f"{pending} fetched documents remain unanalyzed")
+            if self.config.features.patent_corpus:
+                if self.corpus_ingest is None:
+                    raise ExecutionGateError("corpus ingest service is required")
+                fetch_checkpoint = self._checkpoint(run_id, WorkflowStep.NORMALIZE_AND_FETCH)
+                document_ids = tuple((fetch_checkpoint or {}).get("document_ids", {}).values())
+                await self.corpus_ingest.mark_deep_reviewed(run_id, document_ids)
             return self._save_checkpoint(
                 run_id, step, {"deep_reviewed_count": reviewed, "pending_count": pending}
             )

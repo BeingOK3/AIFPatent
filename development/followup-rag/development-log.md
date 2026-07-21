@@ -347,3 +347,31 @@
 - 类型：新增 Corpus Store 运行时依赖后的应用镜像验收。
 - 结果：应用镜像重新安装 `psycopg[binary]`/`boto3` 后构建成功；统一 `tools/rag_infra.py up` 完成 app 与 MinIO 构建并启动，四个 Compose 服务均为 `healthy`。
 - 安全边界：构建只使用 PyPI/Go module 镜像参数，不注入模型 API Key；PostgreSQL/MinIO 凭证仍只来自本地 `rag.env`，未写入镜像或 Git。
+
+## 2026-07-21 — IDEA-CORPUS-INGEST-001
+
+- 类型：Phase 2 Fetch 后耐久 Corpus 入库与 Run→Version 冻结绑定。
+- 执行顺序：`NORMALIZE_AND_FETCH` 在保存成功检查点、进入文档分析和释放可重建全文之前，先把每篇 `FetchedDocument` 规范化写入 ObjectStore，再持久化不可变 Version 并建立 `(run_id, document_id)` write-once 绑定；Checkpoint 只记录 Version ID 列表和 `corpus_snapshot_hash`，不保存全文。
+- 幂等与冲突：相同正文重试复用内容寻址对象和 Version；同一 Run/Document 已冻结到不同 Version 时 fail closed；缺少持久 Document ID、非 READY Version、对象缺失或哈希不一致时拒绝继续。
+- PostgreSQL：新增 `PostgreSQLCorpusRunLinkRepository`，对 `run_document_versions` 执行 `ON CONFLICT DO NOTHING` 的冻结写入，并读取既有绑定进行确定性冲突核验。
+- 运行时：仅当 `features.patent_corpus=true` 时装配 PostgreSQL Version/Run-Link Repository 和 S3ObjectStore；缺少 DSN、Endpoint、Bucket 或凭证时启动 fail closed，功能关闭时不要求外部存储。Compose 只从本地 `rag.env` 注入目标连接参数，不包含固定凭证。
+- 运维：`tools/rag_infra.py up` 在服务健康后幂等确保 Corpus Bucket 存在；Bucket 名称和 Region 是非秘密环境配置，凭证仍由 Git 忽略且权限为 `0600` 的本地文件提供。
+- 当前边界：功能开关继续默认关闭；现有 SQLite 运行时不会静默回退或双写一套新的 SQLite Corpus Schema，生产启用仍服从 PostgreSQL 业务数据迁移与核验边界。
+- 涉及文件：`backend/idea/corpus.py`、`backend/idea/execution.py`、`backend/idea/postgres_corpus.py`、`backend/idea/runtime.py`、`deploy/rag/compose.yml`、`deploy/rag/rag.env.example`、`tools/rag_infra.py` 及对应测试。
+
+## 2026-07-21 — IDEA-CORPUS-INGEST-001-VERIFY
+
+- 类型：Corpus Ingest、Run-Version Freeze 和运行时门禁验证补记。
+- 结果：Corpus/Execution/PostgreSQL/Runtime/RAG Infra 聚焦测试 34 项通过；完整离线套件 255 项通过；Python `compileall`、Compose `config --quiet`、Compose YAML 解析和 `git diff --check` 通过。
+- Docker 环境：服务器安装 Docker Engine 29.6.2、Compose 5.3.1，并通过 SSH 反向代理真实拉取/运行 `hello-world`；Docker 系统代理与用户组配置位于服务器 `/etc`，不属于仓库，也不会进入 GitHub。
+- 安全检查：新建 `deploy/rag/rag.env` 权限为 `0600` 且被 Git 忽略；测试、Compose 渲染和 Git diff 未包含模型 API Key、PostgreSQL/MinIO 密码或本地 Docker 代理地址。
+
+## 2026-07-21 — IDEA-CORPUS-INGEST-001-RUNTIME-VERIFY
+
+- 类型：Corpus Ingest 审查修正与真实 PostgreSQL/MinIO 运行态验收。
+- 数据边界：新增 SQLite→PostgreSQL 前置身份桥接，先持久化 Case、Run、Input、Document 和 Run-Document 外键行，再写入 Corpus Version；桥接只复制专利元数据，`abstract_text`、`claims_text`、`description_text` 保持为空，耐久全文只进入内容寻址 Corpus Blob。
+- 稳定身份：规范化正文排除 provider、URL 和 raw metadata，但保留确定性的 `section_spans`；来源和检索 metadata 进入独立的 `patent_version_sources`，没有真实原始响应时 `raw_response_hash` 保持为空。
+- 深审状态：文档分析成功后，在同一 PostgreSQL 事务中同步更新 `run_document_versions` 和 `run_documents` 的 `deep_reviewed`；缺少 READY 绑定或同步数量不一致时 fail closed。
+- 真实验收：Compose 应用、PostgreSQL、Redis、MinIO 四服务均为 `healthy`；随机隔离文档完成 SQLite 身份桥接、MinIO Blob 写入、PostgreSQL Version/Source/Run-Link 写入、幂等重试、Blob 读回和深审双表同步，随后按随机 Document/Publication 精确清理 PostgreSQL 与 S3 数据。
+- 自动化验证：Corpus 聚焦测试 29 项通过（真实集成测试默认跳过）；完整离线套件 259 项通过、1 项按设计跳过；显式启用的真实 PostgreSQL/MinIO 集成测试 1 项通过；`git diff --check` 通过；最终代码复审结论为 READY。
+- 环境与空间：云盘分区和 ext4 根文件系统已在线扩展到 40G，验收后可用 18G；本地 Docker 应用端口在 Git 忽略的 `rag.env` 中临时设为 `18001`，避免干扰既有 `127.0.0.1:8001` 开发进程。Docker 代理、端口和凭证设置均不进入 Git。

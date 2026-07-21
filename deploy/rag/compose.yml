@@ -9,6 +9,12 @@ services:
         PIP_INDEX_URL: ${AIFPATENT_PIP_INDEX_URL:-https://pypi.org/simple}
     environment:
       AI4PATENT_CONFIG: /app/config/ai4patent.json
+      AIFPATENT_POSTGRES_DSN: postgresql://${AIFPATENT_POSTGRES_USER}:${AIFPATENT_POSTGRES_PASSWORD}@postgres:5432/${AIFPATENT_POSTGRES_DB}
+      AIFPATENT_S3_ENDPOINT_URL: http://object-store:9000
+      AIFPATENT_S3_BUCKET: ${AIFPATENT_S3_BUCKET:-aifpatent-corpus}
+      AIFPATENT_S3_ACCESS_KEY: ${AIFPATENT_MINIO_ROOT_USER}
+      AIFPATENT_S3_SECRET_KEY: ${AIFPATENT_MINIO_ROOT_PASSWORD}
+      AIFPATENT_S3_REGION: ${AIFPATENT_S3_REGION:-us-east-1}
     ports:
       - "127.0.0.1:${AIFPATENT_APP_PORT:-8001}:8001"
     volumes:

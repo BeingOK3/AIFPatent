@@ -15,7 +15,7 @@ from idea.providers import FetchedDocument
 from idea.retrieval import FetchResult, RetrievalResult
 from idea.run_store import RunStore
 from idea.search_strategy import StopReason
-from idea.workflow import WORKFLOW_STEPS, WorkflowHarness
+from idea.workflow import WORKFLOW_STEPS, WorkflowHarness, WorkflowStep
 
 
 def parsed_idea():
@@ -130,6 +130,23 @@ class FakeDocuments:
         return {}
 
 
+class FakeCorpusIngest:
+    def __init__(self):
+        self.calls = []
+        self.reviewed = []
+
+    async def ingest_many(self, **kwargs):
+        self.calls.append(kwargs)
+        return type(
+            "CorpusIngestResult",
+            (),
+            {"version_ids": ("cv-1",), "snapshot_hash": "a" * 64},
+        )()
+
+    async def mark_deep_reviewed(self, run_id, document_ids):
+        self.reviewed.append((run_id, document_ids))
+
+
 class FakeNovelty:
     def determine(self, run_id, **kwargs):
         return novelty_result()
@@ -239,13 +256,57 @@ class WorkflowExecutorTests(unittest.TestCase):
             workflow_version="1", config_snapshot={}, settings={"search_mode": "quick"},
         )
 
-    def executor(self, run, *, retrieval=None, audit=None, agents=None, reporting=None):
+    def executor(
+        self,
+        run,
+        *,
+        retrieval=None,
+        audit=None,
+        agents=None,
+        reporting=None,
+        corpus_ingest=None,
+        config=None,
+    ):
         harness = WorkflowHarness(self.db, self.store, max_step_attempts=2)
         return WorkflowExecutor(
-            self.config, self.db, self.store, harness, agents or FakeAgents(),
+            config or self.config, self.db, self.store, harness, agents or FakeAgents(),
             retrieval or FakeRetrieval(), FakeDocuments(), FakeNovelty(),
             FakeInventiveness(), FakeValue(), audit or FakeAudit(),
             reporting or FakeReporting(self.db, self.store),
+            corpus_ingest=corpus_ingest,
+        )
+
+    def test_enabled_corpus_is_ingested_before_document_analysis(self) -> None:
+        run = self.create_run()
+        features = self.config.features.model_copy(update={"patent_corpus": True})
+        config = self.config.model_copy(update={"features": features})
+        corpus = FakeCorpusIngest()
+        executor = self.executor(run, config=config, corpus_ingest=corpus)
+
+        status = self.run_executor(executor, run["run_id"])
+
+        self.assertEqual(status, "COMPLETED")
+        self.assertEqual(len(corpus.calls), 1)
+        self.assertEqual(corpus.reviewed[0][0], run["run_id"])
+        self.assertEqual(
+            set(corpus.reviewed[0][1]), set(corpus.calls[0]["document_ids"].values())
+        )
+        checkpoint = executor._checkpoint(run["run_id"], WorkflowStep.NORMALIZE_AND_FETCH)
+        self.assertEqual(checkpoint["corpus_version_ids"], ["cv-1"])
+        self.assertEqual(checkpoint["corpus_snapshot_hash"], "a" * 64)
+
+    def test_enabled_corpus_fails_closed_without_ingest_service(self) -> None:
+        run = self.create_run()
+        features = self.config.features.model_copy(update={"patent_corpus": True})
+        config = self.config.model_copy(update={"features": features})
+        executor = self.executor(run, config=config)
+
+        status = self.run_executor(executor, run["run_id"])
+
+        self.assertEqual(status, "FAILED")
+        self.assertIn(
+            "corpus ingest service is required",
+            self.db.get_run(run["run_id"])["error_message"],
         )
 
     @staticmethod
