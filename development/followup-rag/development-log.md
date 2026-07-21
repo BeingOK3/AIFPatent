@@ -557,3 +557,13 @@
 - 远程数据修复：维护工具从应用 SQLite 卷读取 6 个终态 Run，其中 5 个存在 PostgreSQL 桥接并成功同步；修复后 PostgreSQL 为 3 个 `COMPLETED_WITH_LIMITATIONS`、2 个 `FAILED`，未桥接的 1 个 Run 保持只在源库，不伪造记录。
 - 真实验收：使用随机 Case/Run/Thread 在真实数据库复用一个 READY Corpus Version，完成 Thread、限定单文献 Turn、计划、Hybrid retrieval、原文 Citation、`COMPLETED_WITH_LIMITATIONS`、终态篡改拒绝、子 Turn 失败与 Thread 归档；随后精确删除随机 Case 及级联测试记录。聚焦 28 项与真实集成 1 项通过。
 - 未完成：尚未实现固定追问 Workflow、回答 schema/引用完成门、API/SSE 和 UI；`followup_rag` 继续默认关闭。
+
+## 2026-07-22 — IDEA-FOLLOWUP-WF-001
+
+- 类型：Phase 4 独立固定追问 LangGraph Workflow 骨架。
+- 固定图：严格按 `PREPARE_FOLLOWUP_SCOPE → CLASSIFY_AND_PLAN → RETRIEVE_FOLLOWUP_EVIDENCE → ASSEMBLE_FOLLOWUP_CONTEXT → GENERATE_FOLLOWUP_ANSWER → VERIFY_FOLLOWUP_ANSWER → PERSIST_FOLLOWUP_RESPONSE` 七节点执行，模型或 Handler 不能选择、跳过或新增控制流节点。
+- Checkpoint：`FollowupGraphState` 仅允许 `turn_id/thread_id/run_id/last_completed_step/completed_steps`；问题、历史对话、专利正文、Context、向量、模型输出和 API Key 不进入 LangGraph SQLite Checkpoint。
+- 生命周期：QUEUED Turn 执行前原子切到 RUNNING；已终态 Turn 幂等返回且不重跑 Handler；任一节点异常只令当前 Turn FAILED，任务取消令当前 RUNNING Turn CANCELLED，不修改原 Run、报告或其他 Turn。
+- 完成门：最后节点必须通过仓储持久化 `COMPLETED` 或 `COMPLETED_WITH_LIMITATIONS`；图正常结束但 Turn 仍为 RUNNING 时强制失败为 `PERSIST_FOLLOWUP_RESPONSE_INCOMPLETE`，禁止伪成功。
+- 资源：节点有独立超时与 LangGraph RetryPolicy，进程内 attempt 计数在 Turn 终态清理；持久 Checkpoint 保留最小进度，服务重启后的临时 BYOK 丢失语义将在 API/Job Work Unit 接入。
+- 验证：固定顺序、最小 State 契约、单节点失败隔离、终态幂等、缺失 Turn、最终持久化门禁和 asyncio 取消聚焦测试通过；此保存点仍使用抽象 Step Handler，尚未接入模型回答。
