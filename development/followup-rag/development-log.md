@@ -567,3 +567,12 @@
 - 完成门：最后节点必须通过仓储持久化 `COMPLETED` 或 `COMPLETED_WITH_LIMITATIONS`；图正常结束但 Turn 仍为 RUNNING 时强制失败为 `PERSIST_FOLLOWUP_RESPONSE_INCOMPLETE`，禁止伪成功。
 - 资源：节点有独立超时与 LangGraph RetryPolicy，进程内 attempt 计数在 Turn 终态清理；持久 Checkpoint 保留最小进度，服务重启后的临时 BYOK 丢失语义将在 API/Job Work Unit 接入。
 - 验证：固定顺序、最小 State 契约、单节点失败隔离、终态幂等、缺失 Turn、最终持久化门禁和 asyncio 取消聚焦测试通过；此保存点仍使用抽象 Step Handler，尚未接入模型回答。
+
+## 2026-07-22 — IDEA-FOLLOWUP-ANSWER-001
+
+- 类型：Phase 4 追问结构化回答契约与 Citation 完成门。
+- 回答契约：新增严格 Pydantic schema，区分直接回答、技术重合分析、规避设计、证据不足和需要新检索；重合项、差异、工程取舍、剩余风险与法律边界均为独立字段，未知字段 fail closed。
+- 引用门禁：模型只能引用当前 FOLLOWUP Context 暴露的 `C1..Cn`；后端把别名绑定为真实 Chunk 原文、精确 offset 与回答 JSON path，未知别名、重复别名、高重合无 Citation、只以背景技术支持高重合均拒绝。
+- 范围门禁：回答中的 IDEA Feature 必须属于当前 Run 的允许集合，公开号必须属于冻结 Thread scope；模型不能凭空引入未检索专利。`INSUFFICIENT_EVIDENCE` 不允许同时断言重合或提供规避方案，`NEW_RESEARCH_REQUIRED` 强制设置新检索标志。
+- 法律边界：技术分析不能输出“构成侵权”“保证不侵权”等确定性法律结论；Citation 证明的是来源与技术披露，不替代权利要求解释、有效性判断或专业法律意见。
+- 验证：有效高重合回答、精确原文绑定、未知 Alias/Feature/Publication、无引用高重合、伪证据不足、确定性侵权结论和新检索标志等 6 项聚焦测试通过；完整离线套件 377 项通过、4 项按设计跳过，`compileall` 与 `git diff --check` 通过，根文件系统仍有 18G 可用。回归同时修正 Embedding Profile 激活锁语句未显式传递空参数的问题，并以测试锁定统一参数化调用约定。此保存点尚未把回答器接入七节点业务 Handler 或公开 API。

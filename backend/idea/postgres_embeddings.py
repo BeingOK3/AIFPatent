@@ -236,7 +236,8 @@ class PostgreSQLEmbeddingCache:
         try:
             async with connection.cursor() as cursor:
                 await cursor.execute(
-                    "LOCK TABLE embedding_profiles IN SHARE ROW EXCLUSIVE MODE"
+                    "LOCK TABLE embedding_profiles IN SHARE ROW EXCLUSIVE MODE",
+                    (),
                 )
                 await cursor.execute(
                     """

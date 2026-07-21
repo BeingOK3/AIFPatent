@@ -168,6 +168,7 @@ class PostgreSQLEmbeddingCacheTests(unittest.TestCase):
         asyncio.run(cache.activate_profile("ep-test", ("chunk-1",)))
 
         self.assertIn("LOCK TABLE embedding_profiles", connection.cursor_instance.executions[0][0])
+        self.assertEqual(connection.cursor_instance.executions[0][1], ())
         update = connection.cursor_instance.executions[2]
         self.assertIn("THEN 'ACTIVE' ELSE 'RETIRED'", update[0])
         self.assertEqual(update[1][0], "ep-test")
