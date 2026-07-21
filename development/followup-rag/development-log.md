@@ -207,3 +207,17 @@
 - 类型：上下文装配验证补记。
 - 结果：Context 目标测试 3 项通过；相同输入哈希稳定、Citation alias 有范围绑定、预算排除可审计、无可用证据时 fail closed；compileall 和 `git diff --check` 通过。
 - 环境限制：本切片只实现领域 Contract，尚未接入 PostgreSQL Manifest Repository 或 LangChain 运行时适配器。
+
+## 2026-07-21 — IDEA-LANGCHAIN-ADAPTER-001
+
+- 类型：Phase 3 LangChain 消息适配边界。
+- 实现：新增可选依赖的 `to_langchain_messages`；仅将 `AssembledModelContext.messages` 映射为 `SystemMessage`/`HumanMessage`，并提供无依赖的字典表示用于测试与其他客户端。
+- 边界：`langchain-core` 采用延迟导入；未安装时抛出明确的 `LangChainAdapterUnavailable`。适配器不执行检索、Memory、自动裁剪、摘要或哈希重算。
+- 涉及文件：`backend/idea/context_adapter.py`、`backend/tests/test_context_adapter.py`、`backend/idea/__init__.py`、本日志。
+- 验证：待运行适配器与 Context 目标测试、完整离线套件、编译和 diff 格式检查。
+
+## 2026-07-21 — IDEA-LANGCHAIN-ADAPTER-001-VERIFY
+
+- 类型：LangChain 适配边界验证补记。
+- 结果：适配器与 Context 目标测试 5 项通过；无 LangChain 安装时保持延迟、明确失败；若依赖存在则消息角色与内容逐条保持一致；compileall 和 `git diff --check` 通过。
+- 安全检查：适配器只传递已装配消息，不读取配置密钥，不生成或修改上下文 Manifest。
