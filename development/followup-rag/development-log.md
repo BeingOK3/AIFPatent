@@ -535,3 +535,13 @@
 - 配置：新增严格 `rag.hybrid` 配置，版本化保存 RRF k、两路候选上限、最终上限和多样性配额；默认参数为 60/40/40/12/4/2。
 - 验证：RRF 双路增益、章节权重、跨 Version 配额、正文哈希去重、section/version 上限、词法降级、冲突与范围越界门禁及配置边界聚焦测试通过。完整回归在本 Work Unit 提交前执行。
 - 后续：当前为共享排序内核；首次报告切换与追问 Workflow 仍需分别接入同一 `HybridRetriever`，并在真实跨语言 embedding 评测通过后才能默认开启。
+
+## 2026-07-22 — IDEA-FOLLOWUP-DB-001-SCHEMA
+
+- 类型：Phase 4 追问 PostgreSQL Schema 与状态机保存点。
+- 数据表：新增 `followup_threads`、`followup_turns`、`followup_retrieval_hits` 和 `followup_citations`；Thread 绑定源 Run 与冻结 Corpus snapshot，Turn 保存问题哈希、模式、范围、计划/回答、模型和检索版本，命中绑定真实 Chunk，Citation 必须引用本 Turn 已检索的 Chunk。
+- 范围/不可变性：Thread 的源 Run、scope 和 snapshot 创建后不可修改；Turn 的 parent、问题、mode、scope、模型/Prompt/Retriever 和 snapshot 从入队起冻结；终态 Turn 任意更新均拒绝。数据库 trigger 只允许 `QUEUED→RUNNING/FAILED/CANCELLED` 与 `RUNNING→终态`。
+- 完成门：COMPLETED 状态必须同时具有 answer 与完成时间，FAILED 必须具有 error code 与完成时间；retrieval hit 至少有 lexical/vector rank 之一，同一 Turn final rank 唯一；Citation 以 `(turn_id, chunk_id)` 外键保证不能引用未检索证据。
+- Context 关联：现有 `model_context_manifests.turn_id` 增加到追问 Turn 的外键，首次报告 Context 的 NULL turn 不受影响；删除源 Run 时按既有运维语义级联 Thread/Turn，但专利 Chunk 继续 RESTRICT 保护耐久证据。
+- 迁移：新增幂等 `050_followup_schema.sql` 并加入 `tools/rag_infra.py migrate`；现有 PostgreSQL 数据卷已成功执行，旧表/报告未修改，第二次执行将继续由 IF NOT EXISTS/迁移记录保护。
+- 验证：Schema 与基础设施 19 项聚焦测试通过，真实 PostgreSQL 迁移完整提交；此保存点只建立数据契约，尚未开放追问 API 或启用 `followup_rag`。

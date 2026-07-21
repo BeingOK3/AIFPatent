@@ -9,6 +9,7 @@ CORPUS_SCHEMA_PATH = Path("deploy/rag/postgres-init/020_corpus_schema.sql")
 LEXICAL_SCHEMA_PATH = Path("deploy/rag/postgres-init/030_lexical_schema.sql")
 REPORT_RETRIEVAL_SCHEMA_PATH = Path("deploy/rag/postgres-init/035_report_retrieval_schema.sql")
 REPORT_CITATION_SCHEMA_PATH = Path("deploy/rag/postgres-init/040_report_citation_schema.sql")
+FOLLOWUP_SCHEMA_PATH = Path("deploy/rag/postgres-init/050_followup_schema.sql")
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -18,6 +19,7 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.lexical_sql = LEXICAL_SCHEMA_PATH.read_text(encoding="utf-8")
         self.report_retrieval_sql = REPORT_RETRIEVAL_SCHEMA_PATH.read_text(encoding="utf-8")
         self.report_citation_sql = REPORT_CITATION_SCHEMA_PATH.read_text(encoding="utf-8")
+        self.followup_sql = FOLLOWUP_SCHEMA_PATH.read_text(encoding="utf-8")
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
         self.assertIn("BEGIN;", self.sql)
@@ -108,6 +110,26 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("chunk_id TEXT NOT NULL REFERENCES patent_chunks", sql)
         self.assertIn("ADD COLUMN IF NOT EXISTS lexical_score", sql)
         self.assertIn("'040_report_citation_schema'", sql)
+        self.assertNotIn("DELETE FROM", sql.upper())
+
+    def test_followup_schema_is_scoped_append_only_and_versioned(self) -> None:
+        sql = self.followup_sql
+        for table in (
+            "followup_threads",
+            "followup_turns",
+            "followup_retrieval_hits",
+            "followup_citations",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("REFERENCES idea_runs(run_id) ON DELETE CASCADE", sql)
+        self.assertIn("REFERENCES patent_chunks(chunk_id) ON DELETE RESTRICT", sql)
+        self.assertIn("REFERENCES followup_retrieval_hits", sql)
+        self.assertIn("prevent_followup_thread_scope_update", sql)
+        self.assertIn("enforce_followup_turn_transition", sql)
+        self.assertIn("terminal follow-up turn is immutable", sql)
+        self.assertIn("fk_model_context_followup_turn", sql)
+        self.assertIn("'050_followup_schema'", sql)
+        self.assertNotIn("TRUNCATE", sql.upper())
         self.assertNotIn("DELETE FROM", sql.upper())
 
 
