@@ -202,6 +202,12 @@ class FollowupIntegrationTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(len(citations), 1)
+            self.assertEqual(
+                (await repository.get_citation(citations[0].citation_id)), citations[0]
+            )
+            self.assertEqual(
+                await repository.list_citations(turn.turn_id), citations
+            )
             with self.assertRaisesRegex(FollowupError, "does not match"):
                 await repository.record_citations(
                     turn.turn_id,
@@ -222,6 +228,12 @@ class FollowupIntegrationTests(unittest.TestCase):
                 limitations=("LEXICAL_ONLY",),
             )
             self.assertEqual(completed.status, TurnStatus.COMPLETED_WITH_LIMITATIONS)
+            self.assertEqual(
+                [item.turn_id for item in await repository.list_turns(thread_id)],
+                [turn.turn_id],
+            )
+            eligible = await repository.eligible_documents(run_id)
+            self.assertEqual(eligible[0].version_id, version_id)
             with self.assertRaisesRegex(FollowupError, "invalid or already terminal"):
                 await repository.cancel_turn(turn.turn_id)
 

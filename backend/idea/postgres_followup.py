@@ -248,6 +248,97 @@ class PostgreSQLFollowupRepository:
         finally:
             await connection.close()
 
+    async def list_turns(self, thread_id: str) -> tuple[FollowupTurn, ...]:
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT * FROM followup_turns
+                    WHERE thread_id = %s
+                    ORDER BY created_at, turn_id
+                    """,
+                    (thread_id,),
+                )
+                rows = await cursor.fetchall()
+            return tuple(self._turn(row) for row in rows)
+        finally:
+            await connection.close()
+
+    async def list_citations(self, turn_id: str) -> tuple[FollowupCitation, ...]:
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT citation_id, turn_id, chunk_id, publication_number,
+                           section_type, section_label, quote_text, quote_hash,
+                           start_offset, end_offset, answer_path
+                    FROM followup_citations
+                    WHERE turn_id = %s
+                    ORDER BY answer_path, citation_id
+                    """,
+                    (turn_id,),
+                )
+                rows = await cursor.fetchall()
+            return tuple(self._citation(row) for row in rows)
+        finally:
+            await connection.close()
+
+    async def get_citation(self, citation_id: str) -> FollowupCitation | None:
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT citation_id, turn_id, chunk_id, publication_number,
+                           section_type, section_label, quote_text, quote_hash,
+                           start_offset, end_offset, answer_path
+                    FROM followup_citations WHERE citation_id = %s
+                    """,
+                    (citation_id,),
+                )
+                row = await cursor.fetchone()
+            return None if row is None else self._citation(row)
+        finally:
+            await connection.close()
+
+    async def eligible_documents(self, run_id: str) -> tuple[FollowupScopeDocument, ...]:
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                scope = await self._load_source_scope(cursor, run_id)
+            return scope.documents
+        finally:
+            await connection.close()
+
+    async def fail_incomplete_after_restart(self) -> tuple[str, ...]:
+        connection = await self._connection()
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT turn_id FROM followup_turns
+                    WHERE status IN ('QUEUED', 'RUNNING')
+                    ORDER BY created_at, turn_id
+                    """,
+                    (),
+                )
+                turn_ids = tuple(str(row["turn_id"]) for row in await cursor.fetchall())
+            await connection.commit()
+        finally:
+            await connection.close()
+        for turn_id in turn_ids:
+            await self.fail_turn(
+                turn_id,
+                error_code="RUNTIME_API_KEY_REQUIRED_AFTER_RESTART",
+                error_message=(
+                    "服务已重启，当前追问的临时 API Token 未被保存；"
+                    "请重新提交一个追问 Turn。"
+                ),
+            )
+        return turn_ids
+
     async def record_retrieval(
         self,
         turn_id: str,
@@ -692,6 +783,32 @@ class PostgreSQLFollowupRepository:
             completed_at=(
                 int(row["completed_at"]) if row.get("completed_at") is not None else None
             ),
+        )
+
+    @staticmethod
+    def _citation(row: Any) -> FollowupCitation:
+        fields = (
+            "citation_id", "turn_id", "chunk_id", "publication_number",
+            "section_type", "section_label", "quote_text", "quote_hash",
+            "start_offset", "end_offset", "answer_path",
+        )
+        value = row if isinstance(row, dict) else dict(zip(fields, row, strict=True))
+        return FollowupCitation(
+            citation_id=str(value["citation_id"]),
+            turn_id=str(value["turn_id"]),
+            chunk_id=str(value["chunk_id"]),
+            publication_number=str(value["publication_number"]),
+            section_type=str(value["section_type"]),
+            section_label=str(value["section_label"]),
+            quote_text=str(value["quote_text"]),
+            quote_hash=str(value["quote_hash"]),
+            start_offset=(
+                int(value["start_offset"]) if value.get("start_offset") is not None else None
+            ),
+            end_offset=(
+                int(value["end_offset"]) if value.get("end_offset") is not None else None
+            ),
+            answer_path=str(value["answer_path"]),
         )
 
 

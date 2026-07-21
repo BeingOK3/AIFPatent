@@ -598,3 +598,14 @@
 - 原子完成顺序：先记录仅实际进入 Context 的 Retrieval selection 与 Context Manifest，再调用模型；回答通过 Alias/Feature/Publication/法律边界校验后，先写永久 Citation，最后才把 Turn 置为成功终态。任一中间失败不生成伪成功回答。
 - 验证：计划、Retriever、模型适配器、Handler、固定 Workflow 聚焦测试通过；真实 PostgreSQL 隔离验收覆盖 Feature、源 Run 摘要、父 Turn 历史、Retrieval/Citation/终态与精确清理；完整离线套件 393 项通过、4 项按设计跳过，`compileall`、`git diff --check` 通过，根文件系统仍有 18G 可用。
 - 未完成：Web API、后台任务/BYOK 生命周期、SSE 事件与前端 Thread UI 尚未开放；因此本保存点不宣称用户已能从网页发起追问。
+
+## 2026-07-22 — IDEA-FOLLOWUP-API-001
+
+- 类型：Phase 4 追问 HTTP API、SSE、取消、Citation 回读与瞬时 BYOK 生命周期。
+- API：新增可追问文献列表、创建/列出/读取/归档 Thread、创建/读取/取消 Turn、Turn SSE 事件及永久 Citation 详情接口；所有输出包含冻结 scope、计划、状态、限制、结构化回答和可展开原文定位，但不返回凭证或向量。
+- 作业生命周期：`FollowupTaskManager` 每个 Turn 只在进程内保存 `RuntimeModelConfig`，通过既有 ContextVar 把网页提供的 Base URL/Model/API Key 绑定到当前异步任务；终态、异常、取消和 shutdown 均清除任务与凭证。服务重启后 QUEUED/RUNNING Turn 统一进入 `RUNTIME_API_KEY_REQUIRED_AFTER_RESTART`，不会无凭证续跑。
+- SSE/取消：事件流只在 Turn 视图变化时推送 progress，终态再发送 terminal 并结束；取消正在执行的任务会触发 Workflow 的 Turn 隔离取消语义，不修改首次报告或其他 Turn。
+- Runtime 门禁：`build_runtime` 仅在 `features.followup_rag=true` 时装配 PostgreSQL Repository/DataSource、共享 HybridRetriever、结构化模型、业务 Handler、独立 Checkpoint 和 API Manager；默认配置仍为 false，因此当前保存点不改变既有首次报告部署行为。
+- 数据回读：Repository 新增按 Thread 排序的 Turn、按 Turn 的 Citation、单 Citation 和源 Run 可追问文献查询；真实 PostgreSQL 隔离验收验证回读身份与精确清理。
+- 验证：API/BYOK/SSE/取消聚焦测试及既有 API 回归通过；真实 PostgreSQL 集成通过；完整离线套件 397 项通过、4 项按设计跳过，`compileall` 与 `git diff --check` 通过。
+- 未完成：前端 Thread/Turn/Citation 交互尚未实现，功能门尚未默认打开；启用前还需完成 UI 与一次真实 DeepSeek 端到端追问验收。

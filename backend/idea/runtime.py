@@ -12,6 +12,14 @@ from .corpus import PatentCorpusIngestService, PatentCorpusService
 from .database import Database
 from .document_analysis import DocumentAnalysisService
 from .execution import WorkflowExecutor
+from .followup_api import FollowupTaskManager
+from .followup_context import FollowupContextBuilder
+from .followup_handler import FollowupBusinessHandler
+from .followup_model import StructuredFollowupModel
+from .followup_retrieval import MultiQueryFollowupRetriever
+from .followup_workflow import FollowupWorkflow
+from .context import ContextAssembler
+from .hybrid import HybridRetriever
 from .inventiveness import InventivenessService
 from .model_client import StructuredModelClient
 from .novelty import NoveltyService
@@ -25,6 +33,8 @@ from .postgres_corpus import (
 from .postgres_context import PostgreSQLContextRepository
 from .postgres_citations import PostgreSQLCitationRepository
 from .postgres_lexical import PostgreSQLLexicalSearchRepository
+from .postgres_followup import PostgreSQLFollowupRepository
+from .postgres_followup_data import PostgreSQLFollowupDataSource
 from .postgres_report import PostgreSQLReportScopeRepository
 from .providers import ExaMcpProvider, GooglePatentsProvider
 from .reporting import ReportService
@@ -47,6 +57,7 @@ class IdeaRuntime:
     harness: WorkflowHarness
     executor: WorkflowExecutor
     debug_log: RunDebugLog
+    followup_manager: FollowupTaskManager | None = None
 
 
 class RuntimeConfigurationError(RuntimeError):
@@ -107,6 +118,44 @@ def build_initial_report_rag(config: AppConfig) -> InitialReportRagService | Non
         chunk_repository=chunks,
     )
     return InitialReportRagService(retriever, PostgreSQLContextRepository(dsn))
+
+
+def build_followup_manager(
+    config: AppConfig, model: StructuredModelClient
+) -> FollowupTaskManager | None:
+    if not config.features.followup_rag:
+        return None
+    dsn = _required_environment("AIFPATENT_POSTGRES_DSN")
+    repository = PostgreSQLFollowupRepository(dsn)
+    hybrid = HybridRetriever(
+        PostgreSQLLexicalSearchRepository(dsn),
+        config.rag.hybrid,
+    )
+    handler = FollowupBusinessHandler(
+        repository=repository,
+        data_source=PostgreSQLFollowupDataSource(dsn),
+        model=StructuredFollowupModel(model),
+        retriever=MultiQueryFollowupRetriever(hybrid),
+        context_builder=FollowupContextBuilder(ContextAssembler()),
+        context_repository=PostgreSQLContextRepository(dsn),
+        system_prompt=(
+            "使用简体中文回答。只把本轮 C1..Cn 专利原文作为专利事实证据；"
+            "历史对话和首次报告仅用于理解问题，不能替代本轮 Citation。"
+        ),
+        input_budget=48_000,
+        reserved_output_tokens=config.model.max_output_tokens,
+    )
+    checkpoint = config.storage.langgraph_database.with_name(
+        "followup-checkpoints.db"
+    )
+    workflow = FollowupWorkflow(
+        repository=repository,
+        handler=handler,
+        checkpoint_path=checkpoint,
+        step_timeout_seconds=config.workflow.step_timeout_seconds,
+        max_step_attempts=config.workflow.max_step_attempts,
+    )
+    return FollowupTaskManager(repository, workflow)
 
 
 def build_runtime(config: AppConfig) -> IdeaRuntime:
@@ -195,4 +244,8 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
         corpus_ingest=corpus_ingest,
         report_rag=report_rag,
     )
-    return IdeaRuntime(config, database, cache, run_store, harness, executor, debug_log)
+    followup_manager = build_followup_manager(config, model)
+    return IdeaRuntime(
+        config, database, cache, run_store, harness, executor, debug_log,
+        followup_manager,
+    )

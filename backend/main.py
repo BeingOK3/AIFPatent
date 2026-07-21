@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from idea.api import RunTaskManager, create_idea_router
+from idea.followup_api import create_followup_router
 from idea.config import load_config
 from idea.health import HealthService
 from idea.runtime import build_runtime
@@ -60,6 +61,13 @@ app.include_router(
         debug_log=IDEA_RUNTIME.debug_log,
     )
 )
+if IDEA_RUNTIME.followup_manager is not None:
+    app.include_router(
+        create_followup_router(
+            IDEA_RUNTIME.followup_manager.repository,
+            IDEA_RUNTIME.followup_manager,
+        )
+    )
 
 
 @app.on_event("startup")
@@ -68,10 +76,19 @@ async def resume_idea_runs():
         interrupted = IDEA_TASKS.resume_incomplete()
         if interrupted:
             logger.info("标记需要重新输入临时 API Token 的 IDEA Runs: %s", interrupted)
+    if IDEA_RUNTIME.followup_manager is not None:
+        interrupted_turns = await IDEA_RUNTIME.followup_manager.resume_incomplete()
+        if interrupted_turns:
+            logger.info(
+                "标记需要重新输入临时 API Token 的追问 Turns: %s",
+                interrupted_turns,
+            )
 
 
 @app.on_event("shutdown")
 async def close_idea_runtime():
+    if IDEA_RUNTIME.followup_manager is not None:
+        await IDEA_RUNTIME.followup_manager.aclose()
     await IDEA_RUNTIME.executor.aclose()
 
 
