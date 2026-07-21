@@ -31,6 +31,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.search.mode().deep_review_min, 10)
         self.assertTrue(config.storage.database.is_absolute())
         self.assertEqual(config.model.default, "deepseek-v4-flash")
+        self.assertFalse(config.embedding.enabled)
+        self.assertEqual(config.embedding.model, "BAAI/bge-m3")
+        self.assertEqual(config.embedding.dimensions, 1024)
         self.assertEqual(config.search.providers.exa_mcp.fetch_tool, "web_fetch_exa")
         self.assertEqual(config.search.providers.exa_mcp.fetch_max_characters, 300_000)
         self.assertTrue(config.features.patent_corpus)
@@ -39,6 +42,8 @@ class ConfigTests(unittest.TestCase):
         snapshot = config.snapshot()
         self.assertNotIn("api_key", snapshot["model"])
         self.assertNotIn("apiKey", snapshot["model"])
+        self.assertNotIn("api_key", snapshot["embedding"])
+        self.assertEqual(snapshot["embedding"]["api_key_env"], "EMBEDDING_API_KEY")
 
     def test_environment_can_select_config_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -110,6 +115,18 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ConfigError):
                 load_config(self.write_config(self.raw, directory))
+
+    def test_embedding_profile_is_deployment_scoped_and_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            invalid = json.loads(json.dumps(self.raw))
+            invalid["embedding"]["normalization"] = "none"
+            with self.assertRaises(ConfigError):
+                load_config(self.write_config(invalid, directory))
+
+            invalid = json.loads(json.dumps(self.raw))
+            invalid["embedding"]["dimensions"] = 0
+            with self.assertRaises(ConfigError):
+                load_config(self.write_config(invalid, directory))
 
 
 if __name__ == "__main__":

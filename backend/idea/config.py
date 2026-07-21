@@ -53,6 +53,18 @@ class ModelSettings(StrictModel):
     temperature: float = Field(ge=0, le=2)
 
 
+class EmbeddingSettings(StrictModel):
+    enabled: bool
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    base_url: HttpUrl
+    api_key_env: str = Field(min_length=1)
+    dimensions: int = Field(ge=1, le=65_535)
+    normalization: Literal["l2"]
+    batch_size: int = Field(ge=1, le=256)
+    timeout_seconds: int = Field(ge=1)
+
+
 class CacheSettings(StrictModel):
     max_bytes: int = Field(gt=0)
     low_watermark_bytes: int = Field(ge=0)
@@ -192,6 +204,7 @@ class AppConfig(StrictModel):
     app: AppSettings
     features: FeatureSettings
     model: ModelSettings
+    embedding: EmbeddingSettings
     storage: StorageSettings
     workflow: WorkflowSettings
     search: SearchSettings

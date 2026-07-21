@@ -504,3 +504,13 @@
 - 最终验证：完整离线套件 329 项通过、2 项按设计跳过；真实 PostgreSQL/MinIO 集成测试 2 项通过；`compileall`、`git diff --check` 通过。最终 Run 留存 40 个 Feature×Version query、140 个 retrieval hit（`query_id/lexical_score/match_kind` 缺失数为 0）、10 个 READY deep-reviewed Version、10 个 Context 和 20 个模型 Citation。三轮针对性代码复审最终均为 READY。
 - 空间与生命周期：验收时根文件系统 40G 中可用 18G，高于至少保留 5G 的门槛；测试结束使用 `./stop.sh` 停止容器并保留 named volumes。
 - 未完成范围不变：评审后追问聊天、Embedding/pgvector、RRF、reranker、Citation 前端精细展开、Variant/法律状态增强与多租户认证继续作为后续阶段，不伪装为本次完成项。
+
+## 2026-07-22 — IDEA-EMBED-001
+
+- 类型：Phase 4 部署级 Embedding Provider 与跨 Run 持久缓存基线。
+- Provider：新增 `EmbeddingProvider` 协议与 OpenAI-compatible `/embeddings` 适配器；Provider、Model、维度和 L2 规范化共同生成稳定 `profile_id`，模型或维度变化会创建不同 Profile，不能覆盖旧向量。
+- 缓存：按 Chunk 原文的 SHA-256 与 Profile 去重，批量请求仅发送缺失文本，结果校验数量、索引、维度、有限值和正范数后 L2 规范化；PostgreSQL 通过参数化 `vector` 写入和 `(text_hash, profile_id)` 唯一约束幂等复用。
+- 凭证边界：Embedding 使用独立的部署环境变量 `EMBEDDING_API_KEY`；不读取网页 Run 的 Chat BYOK，不写配置、数据库、日志或响应。默认 `embedding.enabled=false`，未配置远程服务时现有 `LEXICAL_RAG` 行为不变。
+- 配置：新增严格的部署级 `embedding` 配置段，默认预留本地 OpenAI-compatible BGE-M3 服务坐标，但不自动下载模型、不启动额外常驻服务，也不把专利正文发送到外部服务。
+- 验证：配置、Provider、缓存、维度/非有限值/非规范化缓存门禁、凭证隔离和 PostgreSQL 参数化写入聚焦测试通过；完整离线套件 340 项通过、2 项按设计跳过，compileall 与 `git diff --check` 通过。真实 PostgreSQL Cache/关联验收将在 `IDEA-VECTOR-001` 与向量检索一起执行。
+- 后续：`IDEA-VECTOR-001` 将补充 Chunk→Embedding 关联、严格 Version allowlist 的 pgvector 精确检索和真实数据库基准；此条不宣称混合 RAG 已启用。

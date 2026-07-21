@@ -4,7 +4,7 @@
   "title": "AIFPatent system configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["app", "features", "model", "storage", "workflow", "search", "outputs", "logging"],
+  "required": ["app", "features", "model", "embedding", "storage", "workflow", "search", "outputs", "logging"],
   "properties": {
     "$schema": {"type": "string"},
     "app": {
@@ -54,6 +54,22 @@
         "max_output_tokens": {"type": "integer", "minimum": 256},
         "structured_output_retries": {"type": "integer", "minimum": 0, "maximum": 10},
         "temperature": {"type": "number", "minimum": 0, "maximum": 2}
+      }
+    },
+    "embedding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "provider", "model", "base_url", "api_key_env", "dimensions", "normalization", "batch_size", "timeout_seconds"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "provider": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "base_url": {"type": "string", "format": "uri"},
+        "api_key_env": {"type": "string", "minLength": 1},
+        "dimensions": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "normalization": {"const": "l2"},
+        "batch_size": {"type": "integer", "minimum": 1, "maximum": 256},
+        "timeout_seconds": {"type": "integer", "minimum": 1}
       }
     },
     "storage": {

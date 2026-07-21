@@ -24,6 +24,17 @@
     "structured_output_retries": 2,
     "temperature": 0.1
   },
+  "embedding": {
+    "enabled": false,
+    "provider": "openai-compatible",
+    "model": "BAAI/bge-m3",
+    "base_url": "http://127.0.0.1:8002/v1",
+    "api_key_env": "EMBEDDING_API_KEY",
+    "dimensions": 1024,
+    "normalization": "l2",
+    "batch_size": 32,
+    "timeout_seconds": 120
+  },
   "storage": {
     "database": "data/aifpatent/aifpatent.db",
     "langgraph_database": "data/langgraph/checkpoints.db",
