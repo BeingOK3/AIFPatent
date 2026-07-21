@@ -15,7 +15,9 @@ AIFPatent 当前 `develop` 版本提供可直接运行的首次报告 `LEXICAL_R
 - 报告 schema 2.0 Citation 只包含模型对 `DISCLOSED/PARTIAL` 实际输出的 `C#`，并在输出前回查当前 Run 的 READY Version 与真实 Chunk；
 - `./start.sh` 和 `./stop.sh` 管理完整 Docker 栈，停止不删除数据卷。
 
-开发中：部署级 Embedding Provider、PostgreSQL 缓存、严格 Version 范围的 pgvector 精确召回、RRF/章节权重/多样性内核，以及追问数据层、固定 Workflow、证据优先 Context、严格计划/回答/Citation、后台任务、瞬时 BYOK、HTTP API、SSE 和取消已具备。追问功能仍默认关闭，因为前端 Thread/Turn/Citation 交互和真实 DeepSeek 端到端验收尚未完成。其他未完成项包括首次报告默认 Hybrid 切换、reranker、专利族变体与法律状态增强、多租户/认证；详细边界记录在 `development/followup-rag/development-log.md`。
+当前 `develop` 已默认启用报告内证据追问 MVP：可从完成的首次报告选择深读文献建立 Thread，每轮重新检索冻结 Corpus，运行独立七节点 Workflow，输出结构化回答并展开可回查的 Citation 原文；页面提供 SSE 状态与取消，模型 Base URL/Model/API Key 仍为刷新即丢失的瞬时 BYOK。首次报告默认仍使用已验收的 `LEXICAL_RAG`；追问在未配置部署级 Embedding 时明确降级为 `LEXICAL_ONLY`，不会伪装成向量混合召回。
+
+尚未完成：真实 DeepSeek 追问运行态验收、首次报告默认 Hybrid 切换、reranker、专利族变体与法律状态增强、多租户/认证。详细边界记录在 `development/followup-rag/development-log.md`。
 
 ## 新机器直接运行
 
@@ -53,6 +55,8 @@ LocalForward 8001 127.0.0.1:8001
 ## 模型 BYOK
 
 Base URL、Model 和 API Key 必须在网页“模型 API（本页临时使用）”中按 Run 输入。它们不会写入 `rag.env`。API Key 只进入该 Run 的进程内存，刷新、关闭页面、新建工作区或服务重启后消失；未完成 Run 在服务重启后会明确失败，要求重新输入凭证并重跑。
+
+首次报告完成后，结果区会出现“基于本报告继续追问”。选择允许检索的深读文献并创建会话后，每次发送问题仍使用页面顶部三项模型配置；服务重启时未完成 Turn 会失败并要求重新提交，不会保存或恢复 API Key。
 
 模型 ID 按供应商规则区分大小写。DeepSeek 当前接口返回的是 `deepseek-v4-flash`/`deepseek-v4-pro` 这类规范小写 ID；页面应填写接口实际返回的 ID，而不是展示标题。
 

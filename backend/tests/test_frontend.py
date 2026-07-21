@@ -81,6 +81,22 @@ class FrontendContractTests(unittest.TestCase):
         self.assertNotIn("sessionStorage", self.javascript)
         self.assertNotIn("/api/config", self.javascript)
 
+    def test_followup_ui_reuses_page_byok_and_expands_verified_citations(self) -> None:
+        for control in (
+            "followupPanel", "followupDocuments", "followupExistingThread",
+            "followupTurns", "followupQuestion", "submitFollowup", "cancelFollowup",
+        ):
+            self.assertIn(f'id="{control}"', self.html)
+        for fragment in (
+            "/followups/documents", "/followups/threads", "/followups/turns/",
+            "/events", "/cancel",
+        ):
+            self.assertIn(fragment, self.javascript)
+        self.assertIn("runtimeModelPayload()", self.javascript)
+        self.assertIn("citation.quote_text", self.javascript)
+        self.assertIn('el("details", "followup-citation")', self.javascript)
+        self.assertIn("历史回答不作为专利证据", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

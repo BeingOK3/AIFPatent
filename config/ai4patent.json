@@ -12,7 +12,7 @@
     "cfp": false,
     "patent_corpus": true,
     "initial_review_rag": true,
-    "followup_rag": false
+    "followup_rag": true
   },
   "model": {
     "provider": "deepseek",

@@ -172,6 +172,61 @@
         <nav id="resultTabs" class="tabs" aria-label="结果章节"></nav>
         <div id="tabContent" class="tab-content"></div>
       </div>
+
+      <section id="followupPanel" class="followup-panel hidden" aria-labelledby="followupTitle">
+        <div class="followup-heading">
+          <div>
+            <p class="section-kicker">EVIDENCE FOLLOW-UP</p>
+            <h3 id="followupTitle">基于本报告继续追问</h3>
+          </div>
+          <span id="followupStatus" class="status-pill neutral">未建立会话</span>
+        </div>
+        <p id="followupNotice" class="followup-notice">每一轮都会在本报告的冻结全文范围内重新检索；历史回答不作为专利证据。</p>
+
+        <div id="followupSetup">
+          <label>本会话允许检索的深读文献</label>
+          <div id="followupDocuments" class="followup-documents"></div>
+          <div class="form-grid two">
+            <div>
+              <label for="followupThreadTitle">会话名称</label>
+              <input id="followupThreadTitle" maxlength="200" placeholder="例如：缓存淘汰重合分析">
+            </div>
+            <div>
+              <label for="followupExistingThread">已有会话</label>
+              <select id="followupExistingThread"><option value="">新建会话</option></select>
+            </div>
+          </div>
+          <button id="createFollowupThread" class="button ghost" type="button">创建追问会话</button>
+        </div>
+
+        <div id="followupConversation" class="hidden">
+          <div id="followupTurns" class="followup-turns" aria-live="polite"></div>
+          <form id="followupForm" class="followup-form">
+            <div class="form-grid two">
+              <div>
+                <label for="followupMode">追问模式</label>
+                <select id="followupMode">
+                  <option value="EVIDENCE_QA">证据问答</option>
+                  <option value="DESIGN_AROUND">规避设计候选</option>
+                  <option value="NEW_RESEARCH">需要新检索</option>
+                </select>
+              </div>
+              <div class="followup-scope-summary">
+                <label>冻结范围</label>
+                <span id="followupScopeSummary" class="small">—</span>
+              </div>
+            </div>
+            <label for="followupQuestion">问题</label>
+            <textarea id="followupQuestion" rows="4" minlength="2" maxlength="20000"
+              placeholder="例如：F1 与 CN… 的独立权利要求具体重合在哪里？有哪些可工程化的差异？"></textarea>
+            <div class="action-row">
+              <button id="submitFollowup" class="button primary" type="submit">发送并重新检索证据</button>
+              <button id="cancelFollowup" class="button danger hidden" type="button">取消本轮</button>
+            </div>
+            <p id="followupMessage" class="message" role="status"></p>
+          </form>
+        </div>
+      </section>
     </section>
   </main>
 

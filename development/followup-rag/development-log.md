@@ -609,3 +609,14 @@
 - 数据回读：Repository 新增按 Thread 排序的 Turn、按 Turn 的 Citation、单 Citation 和源 Run 可追问文献查询；真实 PostgreSQL 隔离验收验证回读身份与精确清理。
 - 验证：API/BYOK/SSE/取消聚焦测试及既有 API 回归通过；真实 PostgreSQL 集成通过；完整离线套件 397 项通过、4 项按设计跳过，`compileall` 与 `git diff --check` 通过。
 - 未完成：前端 Thread/Turn/Citation 交互尚未实现，功能门尚未默认打开；启用前还需完成 UI 与一次真实 DeepSeek 端到端追问验收。
+
+## 2026-07-22 — IDEA-FOLLOWUP-UI-001
+
+- 类型：Phase 4 报告内追问工作台、SSE 状态与 Citation 原文展开。
+- 页面流程：成功首次报告下方显示可追问深读文献；用户选择冻结范围并创建 Thread，可切换已有 Thread，以证据问答、规避设计或新检索模式连续创建 Turn。父 Turn 自动绑定最近成功回答，失败 Turn 不污染后续历史。
+- BYOK：追问复用页面顶部 Base URL、Model 和 API Key 三项输入，通过 `runtimeModelPayload()` 只随创建 Turn 的 POST 发送；刷新/关闭/新建工作区仍清空，不使用 localStorage/sessionStorage，也不把密钥渲染回页面。
+- 实时状态：每轮通过独立 SSE 显示 QUEUED/RUNNING/终态并支持取消；重新选择历史 Thread 可从 PostgreSQL 恢复问题、计划、结构化回答、限制和 Citation，无需依赖浏览器内存。
+- 回答展示：直接回答、逐 Feature 重合、差异、规避候选和法律边界分层显示；永久 Citation 以 `<details>` 展开公开号、章节、回答路径和精确 Chunk 原文，所有外部数据使用 `textContent` 构造，避免 HTML 注入。
+- 默认门禁：`features.followup_rag` 已切换为 true，`./start.sh` 的启动提示同步为“首次报告与证据追问 RAG”；完整 UI/后端仍依赖已有 PostgreSQL Corpus 与首次报告完成门。
+- 验证：工作区 Node.js `--check` 通过；前端 DOM/API/BYOK/Citation 契约、配置和容器聚焦 23 项通过；完整离线套件 398 项通过、4 项按设计跳过，`compileall`、`git diff --check` 通过，根文件系统仍有 18G 可用。
+- 待验收：尚需重建运行镜像，并以真实已有报告 + DeepSeek 瞬时 BYOK 完成一次 Thread→Turn→Hybrid/词法降级→Context→Answer→Citation→SSE 全链路验收；完成前不把本条当作运行态 E2E 结论。

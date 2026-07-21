@@ -80,6 +80,6 @@ done
 curl --noproxy "*" --fail --silent --max-time 3 "$ready_url" >/dev/null
 trap - ERR
 
-echo "AIFPatent LEXICAL_RAG 已启动：http://localhost:$port"
+echo "AIFPatent 首次报告与证据追问 RAG 已启动：http://localhost:$port"
 echo "模型 Base URL、Model 和 API Key 请在网页中按 Run 输入；刷新后不会保留。"
 echo "停止服务并保留数据：./stop.sh"

@@ -40,7 +40,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.search.providers.exa_mcp.fetch_max_characters, 300_000)
         self.assertTrue(config.features.patent_corpus)
         self.assertTrue(config.features.initial_review_rag)
-        self.assertFalse(config.features.followup_rag)
+        self.assertTrue(config.features.followup_rag)
         snapshot = config.snapshot()
         self.assertNotIn("api_key", snapshot["model"])
         self.assertNotIn("apiKey", snapshot["model"])

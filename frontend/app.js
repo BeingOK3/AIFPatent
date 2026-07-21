@@ -67,8 +67,13 @@ const state = {
   selectedRun: null,
   report: null,
   eventSource: null,
+  followupEventSource: null,
   debugTimer: null,
   activeTab: "overview",
+  followupDocuments: [],
+  followupThreads: [],
+  followupThread: null,
+  followupTurn: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -95,6 +100,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("cancelRun").addEventListener("click", cancelSelectedRun);
   $("rerunBtn").addEventListener("click", rerunSelected);
   $("deleteRunBtn").addEventListener("click", deleteSelectedRun);
+  $("createFollowupThread").addEventListener("click", createOrSelectFollowupThread);
+  $("followupExistingThread").addEventListener("change", selectExistingFollowupThread);
+  $("followupForm").addEventListener("submit", submitFollowupTurn);
+  $("cancelFollowup").addEventListener("click", cancelFollowupTurn);
   await Promise.all([loadHealth(), loadCases()]);
   renderEmptyProgress();
   renderEmptyDebug();
@@ -199,6 +208,7 @@ async function selectCase(caseId, render = true, activateLatest = false) {
 
 function resetWorkspace() {
   closeEvents();
+  resetFollowupWorkspace();
   stopDebugPolling();
   state.selectedCase = null;
   state.selectedRun = null;
@@ -290,6 +300,7 @@ async function createRun(event) {
 
 async function selectRun(runId, refreshCase = true) {
   closeEvents();
+  resetFollowupWorkspace();
   stopDebugPolling();
   const run = await api(`/api/idea/runs/${runId}`);
   state.report = null;
@@ -544,12 +555,14 @@ async function loadReport(runId) {
     state.activeTab = "overview";
     renderReport();
     renderRunActions(state.selectedRun);
+    await loadFollowupWorkspace(runId);
   } catch (error) {
     state.report = null;
     $("reportView").classList.add("hidden");
     $("emptyResult").classList.remove("hidden");
     $("emptyResult").querySelector("h3").textContent = state.selectedRun?.status === "FAILED" ? "Run 未生成最终报告" : "报告暂不可用";
     $("emptyResult").querySelector("p").textContent = state.selectedRun?.error_message || error.message;
+    resetFollowupWorkspace();
   }
 }
 
@@ -733,6 +746,282 @@ function renderAudit(root, report) {
   const block = el("div", "section-block");
   block.append(el("h3", "", "检索与分析局限"), limitations);
   root.append(block);
+}
+
+async function loadFollowupWorkspace(runId) {
+  closeFollowupEvents();
+  state.followupThread = null;
+  state.followupTurn = null;
+  try {
+    const [documentData, threadData] = await Promise.all([
+      api(`/api/idea/runs/${runId}/followups/documents`),
+      api(`/api/idea/runs/${runId}/followups/threads`),
+    ]);
+    if (state.selectedRun?.run_id !== runId) return;
+    state.followupDocuments = documentData.documents || [];
+    state.followupThreads = threadData.threads || [];
+    $("followupPanel").classList.remove("hidden");
+    renderFollowupDocuments();
+    renderFollowupThreadOptions();
+    if (state.followupThreads.length) {
+      await activateFollowupThread(state.followupThreads[0].thread_id);
+    } else {
+      $("followupSetup").classList.remove("hidden");
+      $("followupConversation").classList.add("hidden");
+      setFollowupStatus("未建立会话", "neutral");
+    }
+  } catch (_) {
+    resetFollowupWorkspace();
+  }
+}
+
+function renderFollowupDocuments() {
+  const root = $("followupDocuments");
+  root.replaceChildren();
+  for (const item of state.followupDocuments) {
+    const label = el("label", "followup-document");
+    const input = window.document.createElement("input");
+    input.type = "checkbox";
+    input.value = item.publication_number;
+    input.checked = true;
+    input.dataset.followupDocument = "true";
+    label.append(
+      input,
+      el("span", "", `${item.publication_number} · Version ${item.version_id.slice(0, 12)}`),
+    );
+    root.append(label);
+  }
+  if (!state.followupDocuments.length) {
+    root.append(el("p", "small", "这个 Run 没有可追问的 READY 深读全文。"));
+  }
+}
+
+function renderFollowupThreadOptions() {
+  const select = $("followupExistingThread");
+  select.replaceChildren(new Option("新建会话", ""));
+  for (const thread of state.followupThreads) {
+    select.append(new Option(`${thread.title} · ${thread.status}`, thread.thread_id));
+  }
+  select.value = state.followupThread?.thread_id || "";
+}
+
+async function selectExistingFollowupThread() {
+  const threadId = $("followupExistingThread").value;
+  if (threadId) await activateFollowupThread(threadId);
+  else {
+    state.followupThread = null;
+    $("followupConversation").classList.add("hidden");
+    $("followupSetup").classList.remove("hidden");
+    setFollowupStatus("未建立会话", "neutral");
+  }
+}
+
+async function createOrSelectFollowupThread() {
+  const existing = $("followupExistingThread").value;
+  if (existing) {
+    await activateFollowupThread(existing);
+    return;
+  }
+  const title = $("followupThreadTitle").value.trim();
+  const publications = [...document.querySelectorAll('[data-followup-document="true"]:checked')]
+    .map((item) => item.value);
+  if (!title) return setFollowupMessage("请填写会话名称");
+  if (!publications.length) return setFollowupMessage("请至少选择一篇深读文献");
+  try {
+    const thread = await api(
+      `/api/idea/runs/${state.selectedRun.run_id}/followups/threads`,
+      {
+        method: "POST",
+        body: JSON.stringify({ title, publication_numbers: publications }),
+      },
+    );
+    state.followupThreads.unshift(thread);
+    renderFollowupThreadOptions();
+    await activateFollowupThread(thread.thread_id);
+  } catch (error) {
+    setFollowupMessage(error.message);
+  }
+}
+
+async function activateFollowupThread(threadId) {
+  closeFollowupEvents();
+  try {
+    state.followupThread = await api(`/api/idea/followups/threads/${threadId}`);
+    state.followupTurn = [...(state.followupThread.turns || [])].reverse()
+      .find((item) => !isTerminal(item.status)) || null;
+    $("followupExistingThread").value = threadId;
+    $("followupSetup").classList.add("hidden");
+    $("followupConversation").classList.remove("hidden");
+    $("followupScopeSummary").textContent =
+      state.followupThread.scope.publication_numbers.join("、");
+    renderFollowupTurns();
+    if (state.followupTurn) subscribeToFollowupTurn(state.followupTurn.turn_id);
+    else setFollowupStatus("会话就绪", "completed");
+  } catch (error) {
+    setFollowupMessage(error.message);
+  }
+}
+
+async function submitFollowupTurn(event) {
+  event.preventDefault();
+  if (!state.followupThread) return setFollowupMessage("请先创建或选择追问会话");
+  const question = $("followupQuestion").value.trim();
+  if (question.length < 2) return setFollowupMessage("请输入至少 2 个字符的问题");
+  const button = $("submitFollowup");
+  button.disabled = true;
+  setFollowupMessage("");
+  try {
+    const successful = [...(state.followupThread.turns || [])].reverse()
+      .find((item) => ["COMPLETED", "COMPLETED_WITH_LIMITATIONS"].includes(item.status));
+    const created = await api(
+      `/api/idea/followups/threads/${state.followupThread.thread_id}/turns`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...runtimeModelPayload(),
+          question,
+          mode: $("followupMode").value,
+          parent_turn_id: successful?.turn_id || null,
+        }),
+      },
+    );
+    state.followupThread.turns = [...(state.followupThread.turns || []), created];
+    state.followupTurn = created;
+    $("followupQuestion").value = "";
+    renderFollowupTurns();
+    subscribeToFollowupTurn(created.turn_id);
+  } catch (error) {
+    setFollowupMessage(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function subscribeToFollowupTurn(turnId) {
+  closeFollowupEvents();
+  const source = new EventSource(`/api/idea/followups/turns/${turnId}/events`);
+  state.followupEventSource = source;
+  setFollowupStatus("正在检索与验证", "running");
+  $("cancelFollowup").classList.remove("hidden");
+  source.onmessage = async (event) => {
+    const message = JSON.parse(event.data);
+    if (!message.data) return;
+    updateFollowupTurn(message.data);
+    if (message.type === "terminal") {
+      closeFollowupEvents();
+      await activateFollowupThread(state.followupThread.thread_id);
+    }
+  };
+  source.onerror = () => {
+    closeFollowupEvents();
+    setFollowupMessage("追问进度连接中断；重新选择该会话可恢复查看。 ");
+  };
+}
+
+function updateFollowupTurn(value) {
+  const turns = state.followupThread.turns || [];
+  const index = turns.findIndex((item) => item.turn_id === value.turn_id);
+  if (index >= 0) turns[index] = value;
+  else turns.push(value);
+  state.followupTurn = isTerminal(value.status) ? null : value;
+  renderFollowupTurns();
+}
+
+function renderFollowupTurns() {
+  const root = $("followupTurns");
+  root.replaceChildren();
+  const turns = state.followupThread?.turns || [];
+  for (const item of turns) {
+    const card = el("article", `followup-turn ${statusClass(item.status)}`);
+    const header = el("header");
+    header.append(
+      el("p", "followup-question", item.question),
+      el("span", `status-pill ${statusClass(item.status)}`, statusLabel(item.status)),
+    );
+    card.append(header);
+    if (item.answer) renderFollowupAnswer(card, item.answer);
+    if (item.error_message) card.append(el("p", "message", `${item.error_code || "ERROR"}：${item.error_message}`));
+    if (item.limitations?.length) {
+      const list = el("ul", "followup-list");
+      item.limitations.forEach((value) => list.append(el("li", "", value)));
+      card.append(list);
+    }
+    if (item.citations?.length) {
+      const citations = el("div", "followup-citations");
+      for (const citation of item.citations) {
+        const detail = el("details", "followup-citation");
+        detail.append(
+          el("summary", "", `${citation.publication_number} · ${citation.section_label} · ${citation.answer_path}`),
+          el("blockquote", "", citation.quote_text),
+        );
+        citations.append(detail);
+      }
+      card.append(citations);
+    }
+    root.append(card);
+  }
+  if (!turns.length) root.append(el("p", "small", "还没有追问。每一轮都会重新检索冻结文献并生成可展开 Citation。"));
+  const active = [...turns].reverse().find((item) => !isTerminal(item.status));
+  $("submitFollowup").disabled = Boolean(active);
+  $("cancelFollowup").classList.toggle("hidden", !active);
+  if (active) setFollowupStatus(statusLabel(active.status), statusClass(active.status));
+  else if (turns.length) setFollowupStatus(statusLabel(turns.at(-1).status), statusClass(turns.at(-1).status));
+}
+
+function renderFollowupAnswer(root, answer) {
+  root.append(el("p", "followup-answer", answer.direct_answer || "—"));
+  const details = [];
+  for (const item of answer.overlap_items || []) {
+    details.push(`${item.feature_id} · ${judgmentLabel(item.overlap_level)}：${item.analysis}`);
+  }
+  for (const difference of answer.differences || []) details.push(`差异：${difference}`);
+  for (const option of answer.design_around_options || []) {
+    details.push(`规避候选「${option.title}」：${option.change}；${option.expected_effect}`);
+  }
+  if (details.length) {
+    const list = el("ul", "followup-list");
+    details.forEach((value) => list.append(el("li", "", value)));
+    root.append(list);
+  }
+  if (answer.legal_boundary) root.append(el("p", "small", answer.legal_boundary));
+}
+
+async function cancelFollowupTurn() {
+  if (!state.followupTurn) return;
+  try {
+    await api(`/api/idea/followups/turns/${state.followupTurn.turn_id}/cancel`, {
+      method: "POST", body: "{}",
+    });
+  } catch (error) {
+    setFollowupMessage(error.message);
+  }
+}
+
+function closeFollowupEvents() {
+  state.followupEventSource?.close();
+  state.followupEventSource = null;
+}
+
+function resetFollowupWorkspace() {
+  closeFollowupEvents();
+  state.followupDocuments = [];
+  state.followupThreads = [];
+  state.followupThread = null;
+  state.followupTurn = null;
+  $("followupPanel")?.classList.add("hidden");
+  $("followupConversation")?.classList.add("hidden");
+  $("followupSetup")?.classList.remove("hidden");
+  $("followupTurns")?.replaceChildren();
+  setFollowupMessage("");
+}
+
+function setFollowupStatus(text, kind) {
+  $("followupStatus").textContent = text;
+  $("followupStatus").className = `status-pill ${kind}`;
+}
+
+function setFollowupMessage(message) {
+  $("followupMessage").textContent = message || "";
 }
 
 async function cancelSelectedRun() {
