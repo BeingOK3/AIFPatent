@@ -2,12 +2,12 @@
 
 本目录独立承载耐久专利全文语料、首次 IDEA 评审 RAG、评审后追问、Citation、Variant 和二次研究相关的设计与后续开发记录，不与项目既有 `docs/` 混合。
 
-当前 `develop` 已完成首次报告 `LEXICAL_RAG` MVP：共享专利 Version/Chunk、PostgreSQL 词法检索、分析前 Context Manifest 和模型实际选择的可验证 Citation 已进入默认运行路径。`tools/e2e_lexical_rag.py` 会独立回查 PostgreSQL Context、allowed Version、Chunk 与模型选择，而不是让报告自行证明正确。Phase 4 已具备部署级 Embedding Provider、PostgreSQL 缓存、受冻结 Version 范围约束的 pgvector 精确召回、RRF/章节权重/多样性排序内核，以及报告内追问的 Thread/Turn、七节点 Workflow、跨 Turn Context、结构化回答、公开 API、SSE、取消、瞬时 BYOK 和 Citation 展开。追问 MVP 已默认启用并通过真实 DeepSeek 端到端运行态验收；未配置部署级 Embedding 时明确记录 `LEXICAL_ONLY`，不冒充混合召回。
+当前 `develop` 已完成首次报告和报告内追问 RAG MVP：两条路径共用冻结专利 Version/Chunk、`HybridRetriever`、RRF、章节权重、多样性、Context Manifest 与可验证 Citation。首次报告继续强制覆盖摘要及全部独立权利要求；追问具备 Thread/Turn、七节点 Workflow、跨 Turn Context、结构化回答、公开 API、SSE、取消、瞬时 BYOK 和 Citation 展开，并已通过真实 DeepSeek 端到端验收。默认部署尚未配置 Embedding，两个入口都会明确记录 `LEXICAL_ONLY`，不冒充向量混合召回。
 
 仍未完成的后续范围：
 
-- 首次报告默认 HybridRetriever 切换和真实跨语言 Embedding 评测；
-- 真实人工标注的私有 RAG 评测集、首次报告默认 Hybrid 切换与可选语义 reranker；
+- 部署级跨语言 Embedding 的自动 Chunk 索引、Profile 激活与真实质量验收；
+- 真实人工标注的私有 RAG 评测集与可选语义 reranker；
 - Citation 更精细的页码、段落定位与原网页跳转；
 - 专利族 Variant、法律状态和二次研究增强；
 - 多用户、组织、权限与租户隔离。

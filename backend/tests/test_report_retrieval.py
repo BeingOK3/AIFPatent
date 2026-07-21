@@ -5,6 +5,7 @@ import unittest
 
 from idea.agent_schemas import IdeaFeature
 from idea.chunks import PatentChunk
+from idea.hybrid import HybridHit, HybridSearchResult, RetrievalMode
 from idea.lexical import LexicalHit
 from idea.report_retrieval import (
     InitialReportRetriever,
@@ -113,6 +114,22 @@ class FakeChunkRepository:
         return self.chunks
 
 
+class FakeHybridSearch:
+    def __init__(self, hits=()):
+        self.hits = tuple(hits)
+        self.requests = []
+
+    async def search(self, request):
+        self.requests.append(request)
+        return HybridSearchResult(
+            query_id=request.query_id,
+            mode=RetrievalMode.LEXICAL_ONLY,
+            retriever_version="hybrid-rrf-v1",
+            hits=self.hits,
+            limitations=("LEXICAL_ONLY",),
+        )
+
+
 class InitialReportRetrieverTests(unittest.TestCase):
     def setUp(self) -> None:
         self.features = (
@@ -148,6 +165,32 @@ class InitialReportRetrieverTests(unittest.TestCase):
         self.assertTrue(all(len(request.allowed_version_ids) == 1 for request in lexical.requests))
         self.assertEqual(result.corpus_version_ids, ("cv-1", "cv-2"))
         self.assertEqual(repository.persisted, [result])
+
+    def test_shared_hybrid_path_preserves_ranks_scores_and_explicit_fallback(self) -> None:
+        evidence = chunk("cv-1", "CN1A", "hybrid")
+        hybrid = FakeHybridSearch((HybridHit(
+            chunk=evidence,
+            lexical_rank=2,
+            vector_rank=None,
+            rrf_score=0.02,
+            section_weight=1.05,
+            final_score=0.021,
+            sources=("lexical",),
+        ),))
+        result = asyncio.run(InitialReportRetriever(
+            FakeScopeRepository(self.scopes[:1]),
+            FakeLexicalSearch(),
+            hybrid_search=hybrid,
+        ).retrieve(run_id="run-1", features=self.features[:1]))
+
+        self.assertEqual(result.retriever_version, "hybrid-rrf-v1")
+        self.assertEqual(result.limitations, ("LEXICAL_ONLY",))
+        self.assertEqual(len(hybrid.requests), 1)
+        self.assertEqual(hybrid.requests[0].allowed_version_ids, ("cv-1",))
+        self.assertEqual(result.selections[0].selection_reason, "hybrid")
+        self.assertEqual(result.selections[0].hit.lexical_rank, 2)
+        self.assertEqual(result.selections[0].hit.rrf_score, 0.02)
+        self.assertEqual(result.selections[0].hit.final_rank, 1)
 
     def test_scope_must_be_nonempty_and_identity_unique(self) -> None:
         with self.assertRaisesRegex(ReportRetrievalError, "READY deep-reviewed"):

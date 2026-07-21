@@ -7,6 +7,7 @@ from idea.chunks import PatentChunk
 from idea.lexical import LexicalHit
 from idea.postgres_report import PostgreSQLReportScopeRepository
 from idea.report_retrieval import (
+    ReportEvidenceHit,
     ReportRetrievalQuery,
     ReportRetrievalResult,
     ReportRetrievalSelection,
@@ -111,7 +112,8 @@ class PostgreSQLReportScopeRepositoryTests(unittest.TestCase):
                 "RQ-1", "F1", "claim", "doc-1", "cv-1", "CN1A", 1
             ),),
             selections=(ReportRetrievalSelection(
-                "F1", "doc-1", "cv-1", "CN1A", hit
+                "F1", "doc-1", "cv-1", "CN1A",
+                ReportEvidenceHit.from_lexical(hit),
             ),),
         )
 
@@ -122,7 +124,8 @@ class PostgreSQLReportScopeRepositoryTests(unittest.TestCase):
 
         hit_sql, hit_parameters = connection.cursor_instance.executions[1]
         self.assertIn("query_id, lexical_score, match_kind", hit_sql)
-        self.assertEqual(hit_parameters[-3:], ("RQ-1", 0.75, "fts"))
+        self.assertEqual(hit_parameters[9:12], ("RQ-1", 0.75, "fts"))
+        self.assertEqual(hit_parameters[12:15], (None, None, 2))
 
 
 if __name__ == "__main__":

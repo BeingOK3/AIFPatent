@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Awaitable, Callable
 from typing import Any, Sequence
@@ -172,8 +173,12 @@ class PostgreSQLReportScopeRepository:
                         INSERT INTO report_retrieval_hits(
                             run_id, version_id, feature_id, chunk_id, selection_reason,
                             lexical_rank, selected_for_context, retriever_version, created_at,
-                            query_id, lexical_score, match_kind
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            query_id, lexical_score, match_kind, vector_rank, rrf_score,
+                            final_rank, section_weight, final_score, query_sources_json
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s::jsonb
+                        )
                         ON CONFLICT (
                             run_id, version_id, feature_id, chunk_id, selection_reason
                         ) DO NOTHING
@@ -182,14 +187,14 @@ class PostgreSQLReportScopeRepository:
                             result.run_id, selection.version_id,
                             f"{result.run_id}:{selection.feature_id}",
                             selection.hit.chunk.chunk_id, selection.selection_reason,
-                            (
-                                selection.hit.rank
-                                if selection.selection_reason == "lexical"
-                                else None
-                            ),
+                            selection.hit.lexical_rank,
                             selection.selected_for_context,
                             result.retriever_version, timestamp, selection.hit.query_id,
                             selection.hit.lexical_score, selection.hit.match_kind,
+                            selection.hit.vector_rank, selection.hit.rrf_score,
+                            selection.hit.final_rank, selection.hit.section_weight,
+                            selection.hit.final_score,
+                            json.dumps(selection.hit.sources),
                         ),
                     )
                 await cursor.execute(

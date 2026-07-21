@@ -6,6 +6,12 @@ from typing import Protocol, Sequence
 
 from .agent_schemas import IdeaFeature
 from .chunks import PatentChunk
+from .hybrid import (
+    HYBRID_RETRIEVER_VERSION,
+    HybridRetriever,
+    HybridSearchRequest,
+    QuestionType,
+)
 from .lexical import LexicalHit, LexicalSearchRequest
 
 
@@ -36,12 +42,50 @@ class ReportRetrievalQuery:
 
 
 @dataclass(frozen=True)
+class ReportEvidenceHit:
+    query_id: str
+    final_rank: int
+    chunk: PatentChunk
+    lexical_rank: int | None = None
+    vector_rank: int | None = None
+    lexical_score: float | None = None
+    match_kind: str | None = None
+    rrf_score: float | None = None
+    section_weight: float | None = None
+    final_score: float | None = None
+    sources: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.query_id.strip() or self.final_rank < 1:
+            raise ValueError("report evidence query ID and final rank must be valid")
+        if self.lexical_rank is None and self.vector_rank is None and not self.sources:
+            if self.match_kind not in {"forced_abstract", "forced_claim"}:
+                raise ValueError("report evidence must have retrieval or forced provenance")
+
+    @property
+    def rank(self) -> int:
+        return self.final_rank
+
+    @classmethod
+    def from_lexical(cls, hit: LexicalHit) -> "ReportEvidenceHit":
+        return cls(
+            query_id=hit.query_id,
+            final_rank=hit.rank,
+            chunk=hit.chunk,
+            lexical_rank=hit.rank,
+            lexical_score=hit.lexical_score,
+            match_kind=hit.match_kind,
+            sources=("lexical",),
+        )
+
+
+@dataclass(frozen=True)
 class ReportRetrievalSelection:
     feature_id: str
     document_id: str
     version_id: str
     publication_number: str
-    hit: LexicalHit
+    hit: ReportEvidenceHit
     selection_reason: str = "lexical"
     selected_for_context: bool = True
 
@@ -76,6 +120,10 @@ class LexicalSearch(Protocol):
     async def search(self, request: LexicalSearchRequest) -> Sequence[LexicalHit]: ...
 
 
+class ReportQueryEmbedding(Protocol):
+    async def embed_query(self, text: str) -> tuple[tuple[float, ...], str]: ...
+
+
 class ReportChunkSource(Protocol):
     async def list_for_versions(
         self, version_ids: tuple[str, ...]
@@ -83,7 +131,7 @@ class ReportChunkSource(Protocol):
 
 
 class InitialReportRetriever:
-    """Runs an auditable lexical query for every required Feature × Version pair."""
+    """Runs an auditable shared retrieval query for every Feature × Version pair."""
 
     def __init__(
         self,
@@ -91,18 +139,26 @@ class InitialReportRetriever:
         lexical_search: LexicalSearch,
         *,
         chunk_repository: ReportChunkSource | None = None,
+        hybrid_search: HybridRetriever | None = None,
+        query_embedding: ReportQueryEmbedding | None = None,
         per_pair_limit: int = 8,
-        retriever_version: str = "initial-report-lexical-v1",
+        retriever_version: str | None = None,
     ) -> None:
         if not 1 <= per_pair_limit <= 50:
             raise ValueError("per-pair lexical limit must be between 1 and 50")
-        if not retriever_version.strip():
+        resolved_version = retriever_version or (
+            HYBRID_RETRIEVER_VERSION if hybrid_search is not None
+            else "initial-report-lexical-v1"
+        )
+        if not resolved_version.strip():
             raise ValueError("retriever version must not be empty")
         self.scope_repository = scope_repository
         self.lexical_search = lexical_search
         self.chunk_repository = chunk_repository
+        self.hybrid_search = hybrid_search
+        self.query_embedding = query_embedding
         self.per_pair_limit = per_pair_limit
-        self.retriever_version = retriever_version
+        self.retriever_version = resolved_version
 
     async def retrieve(
         self,
@@ -170,15 +226,57 @@ class InitialReportRetriever:
         for feature in required:
             for scope in scopes:
                 query_id = self._query_id(run_id, feature.feature_id, scope.version_id)
-                request = LexicalSearchRequest(
-                    query_id=query_id,
-                    text=feature.feature_text,
-                    allowed_version_ids=(scope.version_id,),
-                    limit=self.per_pair_limit,
-                )
-                hits = tuple(await self.lexical_search.search(request))
+                if self.hybrid_search is None:
+                    selection_reason = "lexical"
+                    request = LexicalSearchRequest(
+                        query_id=query_id,
+                        text=feature.feature_text,
+                        allowed_version_ids=(scope.version_id,),
+                        limit=self.per_pair_limit,
+                    )
+                    lexical_hits = tuple(await self.lexical_search.search(request))
+                    for hit in lexical_hits:
+                        self._validate_hit(hit, request, scope)
+                    hits = tuple(
+                        ReportEvidenceHit.from_lexical(hit) for hit in lexical_hits
+                    )
+                else:
+                    selection_reason = "hybrid"
+                    vector = profile = None
+                    if self.query_embedding is not None:
+                        vector, profile = await self.query_embedding.embed_query(
+                            feature.feature_text
+                        )
+                    hybrid_result = await self.hybrid_search.search(HybridSearchRequest(
+                        query_id=query_id,
+                        text=feature.feature_text,
+                        allowed_version_ids=(scope.version_id,),
+                        semantic_embedding=vector,
+                        embedding_profile_id=profile,
+                        question_type=QuestionType.CLAIM_OVERLAP,
+                        limit=self.per_pair_limit,
+                    ))
+                    if hybrid_result.query_id != query_id:
+                        raise ReportRetrievalError(
+                            "hybrid result query ID does not match its request"
+                        )
+                    limitations.extend(hybrid_result.limitations)
+                    hits = tuple(
+                        ReportEvidenceHit(
+                            query_id=query_id,
+                            final_rank=rank,
+                            chunk=hit.chunk,
+                            lexical_rank=hit.lexical_rank,
+                            vector_rank=hit.vector_rank,
+                            rrf_score=hit.rrf_score,
+                            section_weight=hit.section_weight,
+                            final_score=hit.final_score,
+                            sources=hit.sources,
+                        )
+                        for rank, hit in enumerate(hybrid_result.hits, start=1)
+                    )
                 for hit in hits:
-                    self._validate_hit(hit, request, scope)
+                    self._validate_evidence_hit(hit, scope)
                     selections.append(
                         ReportRetrievalSelection(
                             feature_id=feature.feature_id,
@@ -186,6 +284,7 @@ class InitialReportRetriever:
                             version_id=scope.version_id,
                             publication_number=scope.publication_number,
                             hit=hit,
+                            selection_reason=selection_reason,
                         )
                     )
                 if self.chunk_repository is not None:
@@ -194,7 +293,7 @@ class InitialReportRetriever:
                         scope=scope,
                         query_id=query_id,
                         chunks=chunks_by_version[scope.version_id],
-                        lexical_hits=hits,
+                        retrieval_hits=hits,
                         selections=selections,
                         limitations=limitations,
                     )
@@ -230,12 +329,24 @@ class InitialReportRetriever:
         await self.scope_repository.persist(result)
         return result
 
-    @staticmethod
-    def _query_id(run_id: str, feature_id: str, version_id: str) -> str:
+    def _query_id(self, run_id: str, feature_id: str, version_id: str) -> str:
         digest = hashlib.sha256(
-            f"{run_id}|{feature_id}|{version_id}|lexical".encode("utf-8")
+            f"{run_id}|{feature_id}|{version_id}|{self.retriever_version}".encode(
+                "utf-8"
+            )
         ).hexdigest()[:20]
         return f"RQ-{digest}"
+
+    @staticmethod
+    def _validate_evidence_hit(
+        hit: ReportEvidenceHit, scope: ReportDocumentScope
+    ) -> None:
+        if hit.chunk.version_id != scope.version_id:
+            raise ReportRetrievalError("retrieval hit escaped the frozen Version scope")
+        if hit.chunk.publication_number != scope.publication_number:
+            raise ReportRetrievalError(
+                "retrieval hit publication does not match its Version scope"
+            )
 
     @staticmethod
     def _validate_hit(
@@ -260,7 +371,7 @@ class InitialReportRetriever:
         scope: ReportDocumentScope,
         query_id: str,
         chunks: tuple[PatentChunk, ...],
-        lexical_hits: tuple[LexicalHit, ...],
+        retrieval_hits: tuple[ReportEvidenceHit, ...],
         selections: list[ReportRetrievalSelection],
         limitations: list[str],
     ) -> None:
@@ -295,10 +406,9 @@ class InitialReportRetriever:
                     document_id=scope.document_id,
                     version_id=scope.version_id,
                     publication_number=scope.publication_number,
-                    hit=LexicalHit(
+                    hit=ReportEvidenceHit(
                         query_id=query_id,
-                        rank=1,
-                        lexical_score=0.0,
+                        final_rank=1,
                         match_kind=reason,
                         chunk=chunk,
                     ),
@@ -330,7 +440,7 @@ class InitialReportRetriever:
                 append(parent, "forced_claim")
                 add_parents(parent, path + (parent_number,))
 
-        for hit in lexical_hits:
+        for hit in retrieval_hits:
             if (
                 hit.chunk.section_type == "claims"
                 and hit.chunk.claim_number != 1
@@ -342,6 +452,7 @@ class InitialReportRetriever:
 
 __all__ = [
     "InitialReportRetriever",
+    "ReportEvidenceHit",
     "ReportDocumentScope",
     "ReportRetrievalError",
     "ReportRetrievalQuery",
@@ -349,4 +460,5 @@ __all__ = [
     "ReportRetrievalSelection",
     "ReportScopeRepository",
     "ReportChunkSource",
+    "ReportQueryEmbedding",
 ]

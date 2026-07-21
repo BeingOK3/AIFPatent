@@ -1,8 +1,8 @@
-# AIFPatent 本地/单机 LEXICAL_RAG 栈
+# AIFPatent 本地/单机 RAG 栈
 
 标准入口是仓库根目录的 `./start.sh` 与 `./stop.sh`。栈包含应用、PostgreSQL 17 + pgvector 0.8.2、Redis 8.4.4 和固定版本 MinIO，全部只绑定 `127.0.0.1`。
 
-`start.sh` 会创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env`，生成本机随机基础设施凭证，启动服务、确保 Bucket 并执行 `020/030/035` 增量迁移。该文件不保存模型 Base URL、Model 或 API Key。
+`start.sh` 会创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env`，生成本机随机基础设施凭证，启动服务、确保 Bucket 并依次执行当前 `020`～`055` 幂等迁移。该文件不保存模型 Base URL、Model 或 API Key。
 
 ```bash
 ./start.sh

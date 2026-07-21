@@ -10,7 +10,7 @@ from idea.chunks import PatentChunk
 from idea.context import ContextAssembler, ContextAssemblyError
 from idea.lexical import LexicalHit
 from idea.report_rag import InitialReportRagService
-from idea.report_retrieval import ReportRetrievalSelection
+from idea.report_retrieval import ReportEvidenceHit, ReportRetrievalSelection
 
 
 def idea() -> IdeaParserOutput:
@@ -46,12 +46,16 @@ class InitialReportRagServiceTests(unittest.TestCase):
         selections = (
             ReportRetrievalSelection(
                 "F1", "doc-1", "cv-1", "US1A1",
-                LexicalHit("RQ-1", 1, 0.0, "forced_abstract", abstract),
+                ReportEvidenceHit.from_lexical(
+                    LexicalHit("RQ-1", 1, 0.0, "forced_abstract", abstract)
+                ),
                 "forced_abstract",
             ),
             ReportRetrievalSelection(
                 "F1", "doc-1", "cv-1", "US1A1",
-                LexicalHit("RQ-1", 1, 0.0, "forced_claim", claim),
+                ReportEvidenceHit.from_lexical(
+                    LexicalHit("RQ-1", 1, 0.0, "forced_claim", claim)
+                ),
                 "forced_claim",
             ),
         )

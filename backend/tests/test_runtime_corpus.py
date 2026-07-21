@@ -7,6 +7,7 @@ from unittest.mock import patch
 from idea.config import load_config
 from idea.corpus import PatentCorpusIngestService
 from idea.chunks import PatentChunkPersistenceService
+from idea.hybrid import HybridRetriever
 from idea.runtime import RuntimeConfigurationError, _build_corpus_ingest, build_initial_report_rag
 from idea.report_rag import InitialReportRagService
 from idea.postgres_corpus import (
@@ -69,6 +70,8 @@ class RuntimeCorpusTests(unittest.TestCase):
         self.assertIsInstance(
             service.retriever.chunk_repository, PostgreSQLPatentChunkRepository
         )
+        self.assertIsInstance(service.retriever.hybrid_search, HybridRetriever)
+        self.assertEqual(service.retriever.retriever_version, "hybrid-rrf-v1")
         self.assertIsNone(build_initial_report_rag(self.disabled))
 
 

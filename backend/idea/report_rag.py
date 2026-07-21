@@ -71,7 +71,12 @@ class InitialReportRagService:
             ]
             selections.sort(
                 key=lambda item: (
-                    {"forced_abstract": 0, "forced_claim": 1, "lexical": 2}.get(
+                    {
+                        "forced_abstract": 0,
+                        "forced_claim": 1,
+                        "hybrid": 2,
+                        "lexical": 2,
+                    }.get(
                         item.selection_reason, 9
                     ),
                     item.hit.rank,

@@ -656,3 +656,13 @@
 - 真实数据入口：`collect-postgres-lexical` 只从环境读取 DSN，对数据集中每个 Case 以参数化查询和原冻结 Version allowlist 采集 PostgreSQL 词法结果；collector 对任何 adapter 越界结果 fail closed。当前服务器已连接真实 Corpus 完成采集器冒烟，输出不含专利正文或连接信息。
 - 验证：指标精确值、双 Workflow 覆盖、数据契约、Case 覆盖、质量门、回归比较、越界/伪 Citation 和 collector fail-closed 共 8 项聚焦测试通过；合成 baseline→candidate 示例在 Recall@2 提升 `0.25`、nDCG@2 提升约 `0.1064` 且零新增违规时通过比较。
 - 边界：仓库中的 `example-*.json` 仅验证契约与工具，不是产品质量结论。首次报告切换 Hybrid 前仍需建立来自真实授权 Corpus、经人工复核且不泄露用户 IDEA/全文的私有评测集，并记录 lexical baseline 与 candidate 实测结果。
+
+## 2026-07-22 — IDEA-REPORT-HYBRID-001
+
+- 类型：Phase 4 首次报告默认接入与追问共用的 `HybridRetriever`。
+- 接线：`InitialReportRetriever` 保留既有严格 `Feature × Version` 矩阵、单 Version 查询范围、摘要/全部独立权利要求强制证据和父权利要求链；默认运行路径改为共享 RRF、问题类型章节权重、正文 hash 去重和多样性内核。旧词法 adapter 仍作为显式兼容注入路径用于历史测试，不再是生产 runtime 默认。
+- 统一命中契约：新增 `ReportEvidenceHit`，统一保存 final/lexical/vector rank、词法分数、RRF、章节权重、最终分数和来源；Context 仍只消费受验证的真实 Chunk，不把排序元数据变成证据。每个 Feature 的 query ID 纳入 Retriever 版本，避免不同算法的审计坐标冲突。
+- 审计迁移：新增幂等 `055_report_hybrid_schema.sql`，扩展首次报告 Retrieval Hit 的 `hybrid` 原因、final rank、section weight、final score 和 query sources；迁移已在当前真实 PostgreSQL 数据卷执行并回查成功，旧报告和 Citation 未修改。
+- 降级语义：当前部署级 Embedding 默认关闭，因此首次报告和追问都运行共享 Hybrid 内核的词法分支并明确记录 `LEXICAL_ONLY`；不得以 `hybrid-rrf-v1` 版本名掩盖实际没有向量命中。Embedding query adapter 和 Chunk Profile 自动索引/激活仍是下一保存点。
+- 真实验收：隔离集成测试从现有 Corpus 选择同时具备摘要和独立权利要求的 READY Version，创建随机 Case/Run，执行真实 PostgreSQL 词法→Hybrid fallback→强制证据→审计落库，验证 RRF/final/source 字段和零 vector rank，最后级联清理随机业务记录并保留共享 Corpus。
+- 验证：Hybrid 接线、旧兼容路径、强制证据、Context 预算、Repository、runtime、迁移与基础设施聚焦 40 项通过；真实 PostgreSQL 集成 1 项通过；完整离线套件 411 项通过、5 项按设计跳过。

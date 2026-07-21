@@ -46,6 +46,7 @@ from .postgres_citations import PostgreSQLCitationRepository
 from .postgres_report import PostgreSQLReportScopeRepository
 from .report_retrieval import (
     InitialReportRetriever,
+    ReportEvidenceHit,
     ReportDocumentScope,
     ReportRetrievalError,
     ReportRetrievalQuery,
@@ -109,6 +110,7 @@ __all__ = [
     "PostgreSQLCitationRepository",
     "PostgreSQLReportScopeRepository",
     "InitialReportRetriever",
+    "ReportEvidenceHit",
     "ReportDocumentScope",
     "ReportRetrievalError",
     "ReportRetrievalQuery",

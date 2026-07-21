@@ -10,6 +10,7 @@ LEXICAL_SCHEMA_PATH = Path("deploy/rag/postgres-init/030_lexical_schema.sql")
 REPORT_RETRIEVAL_SCHEMA_PATH = Path("deploy/rag/postgres-init/035_report_retrieval_schema.sql")
 REPORT_CITATION_SCHEMA_PATH = Path("deploy/rag/postgres-init/040_report_citation_schema.sql")
 FOLLOWUP_SCHEMA_PATH = Path("deploy/rag/postgres-init/050_followup_schema.sql")
+REPORT_HYBRID_SCHEMA_PATH = Path("deploy/rag/postgres-init/055_report_hybrid_schema.sql")
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -20,6 +21,7 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.report_retrieval_sql = REPORT_RETRIEVAL_SCHEMA_PATH.read_text(encoding="utf-8")
         self.report_citation_sql = REPORT_CITATION_SCHEMA_PATH.read_text(encoding="utf-8")
         self.followup_sql = FOLLOWUP_SCHEMA_PATH.read_text(encoding="utf-8")
+        self.report_hybrid_sql = REPORT_HYBRID_SCHEMA_PATH.read_text(encoding="utf-8")
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
         self.assertIn("BEGIN;", self.sql)
@@ -129,6 +131,18 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("terminal follow-up turn is immutable", sql)
         self.assertIn("fk_model_context_followup_turn", sql)
         self.assertIn("'050_followup_schema'", sql)
+        self.assertNotIn("TRUNCATE", sql.upper())
+        self.assertNotIn("DELETE FROM", sql.upper())
+
+    def test_report_hybrid_schema_records_explainable_fusion_coordinates(self) -> None:
+        sql = self.report_hybrid_sql
+        self.assertIn("'hybrid'", sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS final_rank", sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS section_weight", sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS final_score", sql)
+        self.assertIn("query_sources_json JSONB", sql)
+        self.assertIn("'055_report_hybrid_schema'", sql)
+        self.assertNotIn("DROP TABLE", sql.upper())
         self.assertNotIn("TRUNCATE", sql.upper())
         self.assertNotIn("DELETE FROM", sql.upper())
 

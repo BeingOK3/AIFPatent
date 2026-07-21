@@ -112,10 +112,12 @@ def build_initial_report_rag(config: AppConfig) -> InitialReportRagService | Non
         return None
     dsn = _required_environment("AIFPATENT_POSTGRES_DSN")
     chunks = PostgreSQLPatentChunkRepository(dsn)
+    lexical = PostgreSQLLexicalSearchRepository(dsn)
     retriever = InitialReportRetriever(
         PostgreSQLReportScopeRepository(dsn),
-        PostgreSQLLexicalSearchRepository(dsn),
+        lexical,
         chunk_repository=chunks,
+        hybrid_search=HybridRetriever(lexical, config.rag.hybrid),
     )
     return InitialReportRagService(retriever, PostgreSQLContextRepository(dsn))
 
