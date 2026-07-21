@@ -290,6 +290,16 @@ class EmbeddingService:
                 raise EmbeddingError("embedding cache returned a non-normalized vector")
 
 
+class ProfiledQueryEmbedding:
+    """Expose normalized query vectors together with their immutable Profile ID."""
+
+    def __init__(self, service: EmbeddingService) -> None:
+        self.service = service
+
+    async def embed_query(self, text: str) -> tuple[tuple[float, ...], str]:
+        return await self.service.embed_query(text), self.service.profile.profile_id
+
+
 __all__ = [
     "CachedEmbedding",
     "EmbeddingCache",
@@ -298,4 +308,5 @@ __all__ = [
     "EmbeddingProvider",
     "EmbeddingService",
     "OpenAICompatibleEmbeddingProvider",
+    "ProfiledQueryEmbedding",
 ]

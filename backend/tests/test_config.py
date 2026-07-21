@@ -53,6 +53,27 @@ class ConfigTests(unittest.TestCase):
             with patch.dict("os.environ", {"AI4PATENT_CONFIG": str(path)}):
                 self.assertEqual(load_config().source_path, path.resolve())
 
+    def test_embedding_deployment_overrides_do_not_require_tracked_config_edits(self) -> None:
+        environment = {
+            "AIFPATENT_EMBEDDING_ENABLED": "true",
+            "AIFPATENT_EMBEDDING_PROVIDER": "openai-compatible",
+            "AIFPATENT_EMBEDDING_MODEL": "multilingual-deploy-v2",
+            "AIFPATENT_EMBEDDING_BASE_URL": "https://embedding.example/v1",
+            "AIFPATENT_EMBEDDING_DIMENSIONS": "1536",
+        }
+        with patch.dict("os.environ", environment, clear=True):
+            config = load_config(CONFIG_PATH)
+        self.assertTrue(config.embedding.enabled)
+        self.assertEqual(config.embedding.model, "multilingual-deploy-v2")
+        self.assertEqual(config.embedding.dimensions, 1536)
+        self.assertEqual(str(config.embedding.base_url), "https://embedding.example/v1")
+
+        with patch.dict(
+            "os.environ", {"AIFPATENT_EMBEDDING_ENABLED": "sometimes"}, clear=True
+        ):
+            with self.assertRaisesRegex(ConfigError, "must be true or false"):
+                load_config(CONFIG_PATH)
+
     def test_deep_review_minimum_cannot_drop_below_ten(self) -> None:
         self.raw["search"]["modes"]["quick"]["deep_review_min"] = 9
         with tempfile.TemporaryDirectory() as directory:

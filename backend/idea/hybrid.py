@@ -136,7 +136,11 @@ class HybridRetriever:
                 )
             )
             self._validate_vector(vector_hits, request)
-            mode = RetrievalMode.HYBRID
+            if vector_hits:
+                mode = RetrievalMode.HYBRID
+            else:
+                mode = RetrievalMode.LEXICAL_ONLY
+                limitations.extend(("VECTOR_NO_HITS", "LEXICAL_ONLY"))
         else:
             mode = RetrievalMode.LEXICAL_ONLY
             limitations.append("LEXICAL_ONLY")

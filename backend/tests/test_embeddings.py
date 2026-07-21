@@ -12,6 +12,7 @@ from idea.embeddings import (
     EmbeddingProfile,
     EmbeddingService,
     OpenAICompatibleEmbeddingProvider,
+    ProfiledQueryEmbedding,
 )
 
 
@@ -91,6 +92,14 @@ class EmbeddingTests(unittest.TestCase):
 
         self.assertEqual(vector, (0.0, 1.0))
         self.assertEqual(cache.values, {})
+
+    def test_profiled_query_keeps_vector_and_profile_coordinates_atomic(self) -> None:
+        service = EmbeddingService(FakeProvider(), MemoryCache())
+        vector, profile_id = asyncio.run(
+            ProfiledQueryEmbedding(service).embed_query("缓存淘汰")
+        )
+        self.assertEqual(vector, (0.0, 1.0))
+        self.assertEqual(profile_id, service.profile.profile_id)
 
     def test_chunk_indexing_verifies_hash_links_and_activates_explicit_scope(self) -> None:
         from types import SimpleNamespace

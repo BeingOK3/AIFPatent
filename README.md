@@ -17,7 +17,7 @@ AIFPatent 当前 `develop` 版本提供可直接运行的首次报告 RAG 闭环
 
 当前 `develop` 已默认启用并通过真实 DeepSeek 运行态验收的报告内证据追问 MVP：可从完成的首次报告选择深读文献建立 Thread，每轮重新检索冻结 Corpus，运行独立七节点 Workflow，输出结构化回答并展开可回查的 Citation 原文；页面提供 SSE 状态与取消，模型 Base URL/Model/API Key 仍为刷新即丢失的瞬时 BYOK。首次报告与追问现在共用相同的 RRF、章节权重、多样性和冻结范围门禁；未配置部署级 Embedding 时均明确降级为 `LEXICAL_ONLY`，不会伪装成向量混合召回。
 
-尚未完成：部署级跨语言 Embedding 的自动索引/激活与质量验收、真实人工标注评测集、reranker、专利族变体与法律状态增强、多租户/认证。详细边界记录在 `development/followup-rag/development-log.md`。
+尚未完成：选择并配置真实跨语言 Embedding Provider 后的质量验收、真实人工标注评测集、reranker、专利族变体与法律状态增强、多租户/认证。详细边界记录在 `development/followup-rag/development-log.md`。
 
 ## 新机器直接运行
 
@@ -59,6 +59,28 @@ Base URL、Model 和 API Key 必须在网页“模型 API（本页临时使用�
 首次报告完成后，结果区会出现“基于本报告继续追问”。选择允许检索的深读文献并创建会话后，每次发送问题仍使用页面顶部三项模型配置；服务重启时未完成 Turn 会失败并要求重新提交，不会保存或恢复 API Key。
 
 模型 ID 按供应商规则区分大小写。DeepSeek 当前接口返回的是 `deepseek-v4-flash`/`deepseek-v4-pro` 这类规范小写 ID；页面应填写接口实际返回的 ID，而不是展示标题。
+
+聊天模型 BYOK 与 Embedding 凭证是两个独立安全域。默认 `AIFPATENT_EMBEDDING_ENABLED=false`，不会请求 Embedding 服务。需要启用真正的向量混合召回时，只在服务器 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env` 中加入部署级参数，不修改 `config/ai4patent.json`：
+
+```dotenv
+AIFPATENT_EMBEDDING_ENABLED=true
+AIFPATENT_EMBEDDING_PROVIDER=openai-compatible
+AIFPATENT_EMBEDDING_MODEL=YOUR_MULTILINGUAL_EMBEDDING_MODEL
+AIFPATENT_EMBEDDING_BASE_URL=https://YOUR_EMBEDDING_PROVIDER/v1
+AIFPATENT_EMBEDDING_DIMENSIONS=1024
+EMBEDDING_API_KEY=YOUR_DEPLOYMENT_EMBEDDING_KEY
+```
+
+首次启用或更换模型/维度后，先回填已有 READY Chunk，再启动应用：
+
+```bash
+docker compose --env-file deploy/rag/rag.env --file deploy/rag/compose.yml run \
+  --rm --no-deps --volume "$PWD:/workspace:ro" --workdir /workspace \
+  --env PYTHONPATH=/workspace/backend app python tools/index_embeddings.py
+./start.sh
+```
+
+在已安装后端依赖的源码开发环境也可直接运行 `python3 tools/index_embeddings.py`。不要把网页输入的 DeepSeek 聊天 Key 当作 Embedding 凭证；两者不会互相回退。
 
 CLI 也只从当前进程环境读取凭证，不接受明文 `--api-key`：
 

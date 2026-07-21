@@ -666,3 +666,13 @@
 - 降级语义：当前部署级 Embedding 默认关闭，因此首次报告和追问都运行共享 Hybrid 内核的词法分支并明确记录 `LEXICAL_ONLY`；不得以 `hybrid-rrf-v1` 版本名掩盖实际没有向量命中。Embedding query adapter 和 Chunk Profile 自动索引/激活仍是下一保存点。
 - 真实验收：隔离集成测试从现有 Corpus 选择同时具备摘要和独立权利要求的 READY Version，创建随机 Case/Run，执行真实 PostgreSQL 词法→Hybrid fallback→强制证据→审计落库，验证 RRF/final/source 字段和零 vector rank，最后级联清理随机业务记录并保留共享 Corpus。
 - 验证：Hybrid 接线、旧兼容路径、强制证据、Context 预算、Repository、runtime、迁移与基础设施聚焦 40 项通过；真实 PostgreSQL 集成 1 项通过；完整离线套件 411 项通过、5 项按设计跳过。
+
+## 2026-07-22 — IDEA-EMBED-RUNTIME-001
+
+- 类型：Phase 4 部署级 Embedding 自动入库、历史回填和首次报告/追问共享 runtime 接线。
+- 单一 Profile：新增 `ProfiledQueryEmbedding`，把规范化 query vector 与 `EmbeddingProfile.profile_id` 原子返回；`build_runtime` 只创建一份 `EmbeddingService`、query adapter 和 `PgVectorIndex`，同时注入 Corpus 新 Chunk、首次报告和追问，防止三条路径使用不同模型/维度坐标。
+- 新数据索引：启用 Embedding 后，`PatentChunkPersistenceService` 先验证完整确定性 Chunk 集，再按正文 hash 缓存/关联向量，最后只对本次完整 Chunk scope 激活 Profile；索引或关联失败时 Corpus Run 不会继续链接不完整向量状态。关闭时 indexer 为 `None`，不会读取部署凭证或调用 Provider。
+- 历史回填：新增 `tools/index_embeddings.py`，可对全部或指定 READY Version 分批索引，并仅在所有批次成功后一次激活完整 Chunk scope；输出只有 Profile、Provider、Model 和计数，不包含正文、向量、DSN 或凭证。
+- 本机配置：Compose 支持通过 Git 忽略的 `deploy/rag/rag.env` 覆盖 enabled/provider/model/base URL/dimensions 和部署级 `EMBEDDING_API_KEY`，无需修改 tracked JSON；聊天 BYOK 永不回退为 Embedding Key。启用但缺少 Key 或未把同一 shared runtime 注入所有路径时启动 fail closed。
+- 诚实降级：即使已配置 vector adapter，只要本次 vector 零命中，`HybridRetriever` 仍返回 `LEXICAL_ONLY` 并增加 `VECTOR_NO_HITS`，不得仅凭配置存在宣称 `HYBRID`。健康接口在默认关闭时显示 `LEXICAL_ONLY`，启用时只报告部署凭证存在性。
+- 验证：Chunk 索引顺序、query/profile 原子性、历史分批回填、配置覆盖、凭证门禁、双检索入口共享对象、健康脱敏和零向量命中降级等 70 项聚焦测试通过。当前未配置真实跨语言 Embedding Provider，因此不伪造线上向量质量或 Recall 提升结论；下一步仍需在私有人工标注集上完成真实回填和 baseline/candidate 比较。

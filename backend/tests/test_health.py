@@ -61,6 +61,8 @@ class HealthServiceTests(unittest.TestCase):
         self.assertEqual(result["components"]["langgraph_checkpointer"]["thread_key"], "run_id")
         self.assertEqual(result["components"]["model"]["credential_source"], "per_run")
         self.assertEqual(result["components"]["model"]["status"], "runtime_required")
+        self.assertEqual(result["components"]["embedding"]["status"], "disabled")
+        self.assertEqual(result["components"]["embedding"]["mode"], "LEXICAL_ONLY")
 
     def test_one_online_provider_can_degrade_without_core_failure(self) -> None:
         result = asyncio.run(self.service(google_ok=False).check())
@@ -103,6 +105,22 @@ class HealthServiceTests(unittest.TestCase):
         result = asyncio.run(self.service().check())
         rendered = json.dumps(result)
         self.assertNotIn("apiKey", rendered)
+
+    def test_enabled_embedding_reports_only_deployment_credential_presence(self) -> None:
+        settings = self.config.embedding.model_copy(update={"enabled": True})
+        config = self.config.model_copy(update={"embedding": settings})
+        service = HealthService(
+            config, self.db, self.cache,
+            google_patents_probe=self.service().google_patents_probe,
+            workflow_recovery_ready=lambda: True,
+        )
+        with patch.dict("os.environ", {settings.api_key_env: "secret-value"}):
+            result = asyncio.run(service.check())
+        component = result["components"]["embedding"]
+        self.assertTrue(component["ok"])
+        self.assertEqual(component["status"], "configured")
+        self.assertEqual(component["credential_source"], "deployment_environment")
+        self.assertNotIn("secret-value", json.dumps(component))
 
     def test_google_probe_falls_back_from_broken_proxy_to_direct(self) -> None:
         service = HealthService(

@@ -212,6 +212,16 @@ class HybridRetrieverTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provided together"):
             self.request(embedding_profile_id=None)
 
+    def test_configured_vector_with_zero_hits_does_not_claim_hybrid_mode(self) -> None:
+        lexical = FakeLexical((
+            LexicalHit("hq-1", 1, 1.0, "fts", chunk("lexical")),
+        ))
+        result = asyncio.run(HybridRetriever(
+            lexical, self.settings, vector=FakeVector(())
+        ).search(self.request()))
+        self.assertEqual(result.mode, RetrievalMode.LEXICAL_ONLY)
+        self.assertEqual(result.limitations, ("VECTOR_NO_HITS", "LEXICAL_ONLY"))
+
 
 if __name__ == "__main__":
     unittest.main()

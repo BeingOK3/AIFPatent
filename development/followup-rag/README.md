@@ -6,7 +6,7 @@
 
 仍未完成的后续范围：
 
-- 部署级跨语言 Embedding 的自动 Chunk 索引、Profile 激活与真实质量验收；
+- 选定真实跨语言 Embedding Provider 后的私有语料回填与质量验收；
 - 真实人工标注的私有 RAG 评测集与可选语义 reranker；
 - Citation 更精细的页码、段落定位与原网页跳转；
 - 专利族 Variant、法律状态和二次研究增强；

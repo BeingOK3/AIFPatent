@@ -130,6 +130,15 @@ class FakeHybridSearch:
         )
 
 
+class FakeQueryEmbedding:
+    def __init__(self):
+        self.queries = []
+
+    async def embed_query(self, text):
+        self.queries.append(text)
+        return (0.0, 1.0), "ep-fixture"
+
+
 class InitialReportRetrieverTests(unittest.TestCase):
     def setUp(self) -> None:
         self.features = (
@@ -177,16 +186,21 @@ class InitialReportRetrieverTests(unittest.TestCase):
             final_score=0.021,
             sources=("lexical",),
         ),))
+        embedding = FakeQueryEmbedding()
         result = asyncio.run(InitialReportRetriever(
             FakeScopeRepository(self.scopes[:1]),
             FakeLexicalSearch(),
             hybrid_search=hybrid,
+            query_embedding=embedding,
         ).retrieve(run_id="run-1", features=self.features[:1]))
 
         self.assertEqual(result.retriever_version, "hybrid-rrf-v1")
         self.assertEqual(result.limitations, ("LEXICAL_ONLY",))
         self.assertEqual(len(hybrid.requests), 1)
         self.assertEqual(hybrid.requests[0].allowed_version_ids, ("cv-1",))
+        self.assertEqual(hybrid.requests[0].semantic_embedding, (0.0, 1.0))
+        self.assertEqual(hybrid.requests[0].embedding_profile_id, "ep-fixture")
+        self.assertEqual(embedding.queries, ["cache eviction"])
         self.assertEqual(result.selections[0].selection_reason, "hybrid")
         self.assertEqual(result.selections[0].hit.lexical_rank, 2)
         self.assertEqual(result.selections[0].hit.rrf_score, 0.02)

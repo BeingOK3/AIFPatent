@@ -71,6 +71,29 @@ class PatentChunkerTests(unittest.TestCase):
         self.assertEqual(persisted, PatentChunker().chunk(self.version, self.document))
         self.assertEqual(repository.calls, [persisted])
 
+    def test_persistence_indexes_then_activates_complete_chunk_scope(self) -> None:
+        class MemoryChunks:
+            async def put_many_if_absent(self, chunks):
+                return chunks
+
+        class Indexer:
+            def __init__(self):
+                self.events = []
+
+            async def index_chunks(self, chunks):
+                self.events.append(("index", tuple(item.chunk_id for item in chunks)))
+                return ()
+
+            async def activate_for_chunks(self, chunk_ids):
+                self.events.append(("activate", tuple(chunk_ids)))
+
+        indexer = Indexer()
+        persisted = asyncio.run(PatentChunkPersistenceService(
+            repository=MemoryChunks(), embedding_indexer=indexer,
+        ).persist(self.version, self.document))
+        ids = tuple(item.chunk_id for item in persisted)
+        self.assertEqual(indexer.events, [("index", ids), ("activate", ids)])
+
 
 if __name__ == "__main__":
     unittest.main()

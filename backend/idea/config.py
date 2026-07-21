@@ -249,6 +249,28 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     except json.JSONDecodeError as exc:
         raise ConfigError(f"configuration is not valid JSON: {selected}: {exc}") from exc
 
+    embedding = dict(raw.get("embedding") or {})
+    overrides = {
+        "provider": os.environ.get("AIFPATENT_EMBEDDING_PROVIDER", "").strip(),
+        "model": os.environ.get("AIFPATENT_EMBEDDING_MODEL", "").strip(),
+        "base_url": os.environ.get("AIFPATENT_EMBEDDING_BASE_URL", "").strip(),
+        "dimensions": os.environ.get("AIFPATENT_EMBEDDING_DIMENSIONS", "").strip(),
+    }
+    enabled = os.environ.get("AIFPATENT_EMBEDDING_ENABLED", "").strip().lower()
+    if enabled:
+        if enabled not in {"true", "false", "1", "0"}:
+            raise ConfigError("AIFPATENT_EMBEDDING_ENABLED must be true or false")
+        embedding["enabled"] = enabled in {"true", "1"}
+    for key in ("provider", "model", "base_url"):
+        if overrides[key]:
+            embedding[key] = overrides[key]
+    if overrides["dimensions"]:
+        try:
+            embedding["dimensions"] = int(overrides["dimensions"])
+        except ValueError as exc:
+            raise ConfigError("AIFPATENT_EMBEDDING_DIMENSIONS must be an integer") from exc
+    raw = {**raw, "embedding": embedding}
+
     try:
         config = AppConfig.model_validate({**raw, "source_path": selected})
     except ValidationError as exc:

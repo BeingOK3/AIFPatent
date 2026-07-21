@@ -11,6 +11,12 @@ from .config import AppConfig
 from .corpus import PatentCorpusIngestService, PatentCorpusService
 from .database import Database
 from .document_analysis import DocumentAnalysisService
+from .embeddings import (
+    EmbeddingError,
+    EmbeddingService,
+    OpenAICompatibleEmbeddingProvider,
+    ProfiledQueryEmbedding,
+)
 from .execution import WorkflowExecutor
 from .followup_api import FollowupTaskManager
 from .followup_context import FollowupContextBuilder
@@ -35,7 +41,9 @@ from .postgres_citations import PostgreSQLCitationRepository
 from .postgres_lexical import PostgreSQLLexicalSearchRepository
 from .postgres_followup import PostgreSQLFollowupRepository
 from .postgres_followup_data import PostgreSQLFollowupDataSource
+from .postgres_embeddings import PostgreSQLEmbeddingCache
 from .postgres_report import PostgreSQLReportScopeRepository
+from .postgres_vector import PgVectorIndex
 from .providers import ExaMcpProvider, GooglePatentsProvider
 from .reporting import ReportService
 from .report_rag import InitialReportRagService
@@ -60,6 +68,13 @@ class IdeaRuntime:
     followup_manager: FollowupTaskManager | None = None
 
 
+@dataclass(frozen=True)
+class EmbeddingRuntime:
+    service: EmbeddingService
+    query: ProfiledQueryEmbedding
+    vector: PgVectorIndex
+
+
 class RuntimeConfigurationError(RuntimeError):
     """Raised when an enabled runtime feature lacks required infrastructure."""
 
@@ -71,11 +86,46 @@ def _required_environment(name: str) -> str:
     return value
 
 
+def build_embedding_runtime(config: AppConfig) -> EmbeddingRuntime | None:
+    if not config.embedding.enabled:
+        return None
+    dsn = _required_environment("AIFPATENT_POSTGRES_DSN")
+    provider = OpenAICompatibleEmbeddingProvider(config.embedding)
+    try:
+        provider.api_key()
+    except EmbeddingError as exc:
+        raise RuntimeConfigurationError(str(exc)) from exc
+    service = EmbeddingService(
+        provider,
+        PostgreSQLEmbeddingCache(dsn),
+        normalization=config.embedding.normalization,
+        batch_size=config.embedding.batch_size,
+    )
+    return EmbeddingRuntime(
+        service=service,
+        query=ProfiledQueryEmbedding(service),
+        vector=PgVectorIndex(service.profile, dsn),
+    )
+
+
+def _require_embedding_runtime(
+    config: AppConfig, embedding_runtime: EmbeddingRuntime | None
+) -> None:
+    if config.embedding.enabled and embedding_runtime is None:
+        raise RuntimeConfigurationError(
+            "enabled embedding requires one shared runtime for indexing and queries"
+        )
+
+
 def build_corpus_ingest(
-    config: AppConfig, *, database: Database | object | None = None
+    config: AppConfig,
+    *,
+    database: Database | object | None = None,
+    embedding_runtime: EmbeddingRuntime | None = None,
 ) -> PatentCorpusIngestService | None:
     if not config.features.patent_corpus:
         return None
+    _require_embedding_runtime(config, embedding_runtime)
     dsn = _required_environment("AIFPATENT_POSTGRES_DSN")
     if database is None:
         raise RuntimeConfigurationError(
@@ -98,7 +148,10 @@ def build_corpus_ingest(
         run_links=PostgreSQLCorpusRunLinkRepository(dsn),
         prerequisites=PostgreSQLCorpusPrerequisiteRepository(database, dsn),
         chunk_persistence=PatentChunkPersistenceService(
-            repository=PostgreSQLPatentChunkRepository(dsn)
+            repository=PostgreSQLPatentChunkRepository(dsn),
+            embedding_indexer=(
+                embedding_runtime.service if embedding_runtime is not None else None
+            ),
         ),
     )
 
@@ -107,9 +160,12 @@ def build_corpus_ingest(
 _build_corpus_ingest = build_corpus_ingest
 
 
-def build_initial_report_rag(config: AppConfig) -> InitialReportRagService | None:
+def build_initial_report_rag(
+    config: AppConfig, *, embedding_runtime: EmbeddingRuntime | None = None
+) -> InitialReportRagService | None:
     if not config.features.initial_review_rag:
         return None
+    _require_embedding_runtime(config, embedding_runtime)
     dsn = _required_environment("AIFPATENT_POSTGRES_DSN")
     chunks = PostgreSQLPatentChunkRepository(dsn)
     lexical = PostgreSQLLexicalSearchRepository(dsn)
@@ -117,27 +173,42 @@ def build_initial_report_rag(config: AppConfig) -> InitialReportRagService | Non
         PostgreSQLReportScopeRepository(dsn),
         lexical,
         chunk_repository=chunks,
-        hybrid_search=HybridRetriever(lexical, config.rag.hybrid),
+        hybrid_search=HybridRetriever(
+            lexical,
+            config.rag.hybrid,
+            vector=(embedding_runtime.vector if embedding_runtime is not None else None),
+        ),
+        query_embedding=(
+            embedding_runtime.query if embedding_runtime is not None else None
+        ),
     )
     return InitialReportRagService(retriever, PostgreSQLContextRepository(dsn))
 
 
 def build_followup_manager(
-    config: AppConfig, model: StructuredModelClient
+    config: AppConfig,
+    model: StructuredModelClient,
+    *,
+    embedding_runtime: EmbeddingRuntime | None = None,
 ) -> FollowupTaskManager | None:
     if not config.features.followup_rag:
         return None
+    _require_embedding_runtime(config, embedding_runtime)
     dsn = _required_environment("AIFPATENT_POSTGRES_DSN")
     repository = PostgreSQLFollowupRepository(dsn)
     hybrid = HybridRetriever(
         PostgreSQLLexicalSearchRepository(dsn),
         config.rag.hybrid,
+        vector=(embedding_runtime.vector if embedding_runtime is not None else None),
     )
     handler = FollowupBusinessHandler(
         repository=repository,
         data_source=PostgreSQLFollowupDataSource(dsn),
         model=StructuredFollowupModel(model),
-        retriever=MultiQueryFollowupRetriever(hybrid),
+        retriever=MultiQueryFollowupRetriever(
+            hybrid,
+            embedding=(embedding_runtime.query if embedding_runtime is not None else None),
+        ),
         context_builder=FollowupContextBuilder(ContextAssembler()),
         context_repository=PostgreSQLContextRepository(dsn),
         system_prompt=(
@@ -227,8 +298,13 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
     reporting = ReportService(
         database, run_store, agents, citations=citation_repository
     )
-    corpus_ingest = build_corpus_ingest(config, database=database)
-    report_rag = build_initial_report_rag(config)
+    embedding_runtime = build_embedding_runtime(config)
+    corpus_ingest = build_corpus_ingest(
+        config, database=database, embedding_runtime=embedding_runtime
+    )
+    report_rag = build_initial_report_rag(
+        config, embedding_runtime=embedding_runtime
+    )
     executor = WorkflowExecutor(
         config,
         database,
@@ -246,7 +322,9 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
         corpus_ingest=corpus_ingest,
         report_rag=report_rag,
     )
-    followup_manager = build_followup_manager(config, model)
+    followup_manager = build_followup_manager(
+        config, model, embedding_runtime=embedding_runtime
+    )
     return IdeaRuntime(
         config, database, cache, run_store, harness, executor, debug_log,
         followup_manager,

@@ -38,6 +38,7 @@ class HealthService:
         cache = self._check_cache()
         langgraph = self._check_langgraph()
         model = self._check_model_auth()
+        embedding = self._check_embedding_auth()
         exa = self._check_exa_config()
         google = await self._timed_google_probe()
         recovery_ready = self.workflow_recovery_ready()
@@ -47,7 +48,10 @@ class HealthService:
             "detail": "recovery loop is ready" if recovery_ready else "workflow not connected yet",
         }
         provider_available = exa["ok"] or google["ok"] or self.config.search.providers.local_cache.enabled
-        core_ok = database["ok"] and cache["ok"] and langgraph["ok"] and model["ok"]
+        core_ok = (
+            database["ok"] and cache["ok"] and langgraph["ok"]
+            and model["ok"] and embedding["ok"]
+        )
         all_online = exa["ok"] and google["ok"]
         status = "ok" if core_ok and all_online and recovery_ready else "degraded"
         if not core_ok or not provider_available:
@@ -66,6 +70,7 @@ class HealthService:
                 "database": database,
                 "langgraph_checkpointer": langgraph,
                 "model": model,
+                "embedding": embedding,
                 "exa_mcp": exa,
                 "google_patents_local": google,
                 "cache": cache,
@@ -125,6 +130,28 @@ class HealthService:
             "base_url": str(self.config.model.base_url),
             "credential_source": "per_run",
             "detail": "enter an API Token in the page for each browser session",
+        }
+
+    def _check_embedding_auth(self) -> dict:
+        settings = self.config.embedding
+        if not settings.enabled:
+            return {
+                "ok": True,
+                "status": "disabled",
+                "mode": "LEXICAL_ONLY",
+            }
+        configured = bool(os.environ.get(settings.api_key_env, "").strip())
+        return {
+            "ok": configured,
+            "status": "configured" if configured else "error",
+            "provider": settings.provider,
+            "model": settings.model,
+            "dimensions": settings.dimensions,
+            "credential_source": "deployment_environment",
+            "detail": (
+                "embedding credential is configured"
+                if configured else "embedding credential is missing"
+            ),
         }
 
     def _check_exa_config(self) -> dict:

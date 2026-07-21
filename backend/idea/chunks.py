@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol, Sequence
 
 from .corpus import CorpusVersion
 from .providers import FetchedDocument
@@ -34,6 +34,12 @@ class PatentChunkRepository(Protocol):
     async def put_many_if_absent(
         self, chunks: tuple[PatentChunk, ...]
     ) -> tuple[PatentChunk, ...]: ...
+
+
+class ChunkEmbeddingIndexer(Protocol):
+    async def index_chunks(self, chunks: Sequence[Any]) -> tuple[Any, ...]: ...
+
+    async def activate_for_chunks(self, chunk_ids: Sequence[str]) -> None: ...
 
 
 class ChunkPersistenceError(RuntimeError):
@@ -156,9 +162,11 @@ class PatentChunkPersistenceService:
         *,
         repository: PatentChunkRepository,
         chunker: PatentChunker | None = None,
+        embedding_indexer: ChunkEmbeddingIndexer | None = None,
     ) -> None:
         self.repository = repository
         self.chunker = chunker or PatentChunker()
+        self.embedding_indexer = embedding_indexer
 
     async def persist(
         self, version: CorpusVersion, document: FetchedDocument
@@ -169,11 +177,17 @@ class PatentChunkPersistenceService:
         persisted = await self.repository.put_many_if_absent(expected)
         if persisted != expected:
             raise ChunkPersistenceError("persisted Chunk set does not match deterministic output")
+        if self.embedding_indexer is not None:
+            await self.embedding_indexer.index_chunks(persisted)
+            await self.embedding_indexer.activate_for_chunks(
+                tuple(item.chunk_id for item in persisted)
+            )
         return persisted
 
 
 __all__ = [
     "ChunkPersistenceError",
+    "ChunkEmbeddingIndexer",
     "PatentChunk",
     "PatentChunker",
     "PatentChunkPersistenceService",

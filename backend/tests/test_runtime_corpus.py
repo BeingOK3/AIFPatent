@@ -8,7 +8,13 @@ from idea.config import load_config
 from idea.corpus import PatentCorpusIngestService
 from idea.chunks import PatentChunkPersistenceService
 from idea.hybrid import HybridRetriever
-from idea.runtime import RuntimeConfigurationError, _build_corpus_ingest, build_initial_report_rag
+from idea.runtime import (
+    RuntimeConfigurationError,
+    _build_corpus_ingest,
+    build_embedding_runtime,
+    build_followup_manager,
+    build_initial_report_rag,
+)
 from idea.report_rag import InitialReportRagService
 from idea.postgres_corpus import (
     PostgreSQLCorpusPrerequisiteRepository,
@@ -73,6 +79,64 @@ class RuntimeCorpusTests(unittest.TestCase):
         self.assertIsInstance(service.retriever.hybrid_search, HybridRetriever)
         self.assertEqual(service.retriever.retriever_version, "hybrid-rrf-v1")
         self.assertIsNone(build_initial_report_rag(self.disabled))
+
+    def test_enabled_embedding_requires_deployment_secret_and_one_shared_runtime(self) -> None:
+        embedding = self.enabled.embedding.model_copy(update={"enabled": True})
+        config = self.enabled.model_copy(update={"embedding": embedding})
+        with patch.dict(
+            os.environ,
+            {"AIFPATENT_POSTGRES_DSN": "postgresql://test"},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeConfigurationError, "credential"):
+                build_embedding_runtime(config)
+        with self.assertRaisesRegex(RuntimeConfigurationError, "shared runtime"):
+            build_initial_report_rag(
+                config.model_copy(update={
+                    "features": config.features.model_copy(
+                        update={"initial_review_rag": True}
+                    )
+                })
+            )
+
+    def test_embedding_runtime_wires_same_profile_into_report_vector_and_query(self) -> None:
+        features = self.enabled.features.model_copy(update={
+            "initial_review_rag": True,
+            "followup_rag": True,
+        })
+        embedding = self.enabled.embedding.model_copy(update={"enabled": True})
+        config = self.enabled.model_copy(
+            update={"features": features, "embedding": embedding}
+        )
+        environment = {
+            "AIFPATENT_POSTGRES_DSN": "postgresql://test",
+            embedding.api_key_env: "deployment-secret",
+            "AIFPATENT_S3_ENDPOINT_URL": "http://object-store:9000",
+            "AIFPATENT_S3_BUCKET": "aifpatent-corpus",
+            "AIFPATENT_S3_ACCESS_KEY": "local-user",
+            "AIFPATENT_S3_SECRET_KEY": "local-secret",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            shared = build_embedding_runtime(config)
+            service = build_initial_report_rag(config, embedding_runtime=shared)
+            corpus = _build_corpus_ingest(
+                config, database=object(), embedding_runtime=shared
+            )
+            followup = build_followup_manager(
+                config, object(), embedding_runtime=shared
+            )
+
+        self.assertIsNotNone(shared)
+        self.assertIs(service.retriever.hybrid_search.vector, shared.vector)
+        self.assertIs(service.retriever.query_embedding, shared.query)
+        self.assertEqual(
+            shared.vector.profile.profile_id,
+            shared.service.profile.profile_id,
+        )
+        self.assertIs(corpus.chunk_persistence.embedding_indexer, shared.service)
+        followup_retriever = followup.workflow.handler.retriever
+        self.assertIs(followup_retriever.hybrid.vector, shared.vector)
+        self.assertIs(followup_retriever.embedding, shared.query)
 
 
 if __name__ == "__main__":
