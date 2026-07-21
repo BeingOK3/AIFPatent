@@ -18,6 +18,16 @@ from .chunks import (
     PatentChunkPersistenceService,
     PatentChunkRepository,
 )
+from .corpus_migration import (
+    CorpusMigrationError,
+    HistoricalCorpusCandidate,
+    HistoricalCorpusFetcher,
+    HistoricalCorpusMigrator,
+    MigrationOutcome,
+    MigrationReport,
+    MigrationStatus,
+    RetrievalCorpusFetcher,
+)
 from .context import AssembledModelContext, ContextAssembler, ContextAssemblyError
 from .context_adapter import LangChainAdapterUnavailable, to_langchain_messages, to_message_dicts
 from .s3_object_store import S3ObjectStore
@@ -35,11 +45,19 @@ __all__ = [
     "ConfigError",
     "CorpusError",
     "CorpusIngestResult",
+    "CorpusMigrationError",
     "CorpusRunLink",
     "CorpusVersion",
     "CorpusVersionSource",
     "PatentCorpusIngestService",
     "PatentCorpusService",
+    "HistoricalCorpusCandidate",
+    "HistoricalCorpusFetcher",
+    "HistoricalCorpusMigrator",
+    "MigrationOutcome",
+    "MigrationReport",
+    "MigrationStatus",
+    "RetrievalCorpusFetcher",
     "PostgreSQLCorpusError",
     "PostgreSQLCorpusPrerequisiteRepository",
     "PostgreSQLCorpusRunLinkRepository",

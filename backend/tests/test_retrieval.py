@@ -240,6 +240,36 @@ class RetrievalServiceTests(unittest.TestCase):
             )
         self.assertTrue(cancelled)
 
+    def test_rehydrate_document_reuses_provider_fallback_without_transient_write(self) -> None:
+        primary = FakeProvider("google_patents_local", fail_fetch=True)
+        fallback = FakeProvider("exa_mcp")
+        service = RetrievalService(
+            self.db,
+            [primary, fallback],
+            search_timeout_seconds={primary.name: 1, fallback.name: 1},
+        )
+
+        document, failures = asyncio.run(
+            service.rehydrate_document(
+                run_id=self.run["run_id"],
+                publication_number="US123A1",
+                url="https://patents.google.com/patent/US123A1/en",
+                language="en",
+            )
+        )
+
+        self.assertEqual(document.publication_number, "US123A1")
+        self.assertEqual(failures, ("google_patents_local:ERROR",))
+        self.assertEqual(primary.fetch_calls, 1)
+        self.assertEqual(fallback.fetch_calls, 1)
+        with self.db.connect() as connection:
+            documents = connection.execute(
+                "SELECT COUNT(*) FROM patent_documents"
+            ).fetchone()[0]
+            calls = connection.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
+        self.assertEqual(documents, 0)
+        self.assertEqual(calls, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

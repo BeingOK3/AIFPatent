@@ -385,3 +385,20 @@
 - 真实验收：随机隔离文档完成 Version、Source、Chunk 和 Run Link 写入及幂等重试；预置同一 Version/Chunker 的额外 stale Chunk 后，整批写入按预期拒绝，删除测试冲突行后流程恢复；测试结束精确清理 PostgreSQL 与 MinIO，退出钩子关闭全部 Compose 容器。
 - 自动化验证：Chunk/Corpus/PostgreSQL/Runtime 聚焦测试 22 项通过；完整离线套件 262 项通过、1 项按设计跳过；显式真实 PostgreSQL/MinIO 集成测试 1 项通过；`compileall`、Compose `config --quiet`、`git diff --check` 和秘密扫描通过；最终代码复审结论为 READY。
 - 空间边界：验收后根文件系统可用 18G，超过至少保留 5G 的门槛；保留可复用镜像和数据卷，未删除项目、数据库卷或 VS Code 数据。
+
+## 2026-07-21 — IDEA-CORPUS-MIGRATE-001
+
+- 类型：Phase 2 历史 Run 全文迁移与缺失正文重建入口。
+- 安全默认：`tools/rehydrate_corpus.py` 默认 dry-run，只有显式 `--apply` 才允许抓取和 Corpus 写入；支持按 Run、数量上限筛选，并把不含专利正文的 JSON 审计报告以 `0600` 权限原子落盘。
+- 迁移语义：只扫描 `COMPLETED`/`COMPLETED_WITH_LIMITATIONS` Run 中 `deep_reviewed=true` 的文档，普通候选继续只保留元数据；优先验证 SQLite 暂存正文 SHA-256 后迁移，正文缺失时标记 `REHYDRATABLE`，apply 模式通过既有 `RetrievalService`/`ProviderRunner` 复用 Provider 顺序、超时、限流、熔断、降级和 Tool Call 审计。
+- 幂等与隔离：已存在 READY Run→Version 绑定时返回 `ALREADY_READY`；重建公开号与历史身份不一致、正文哈希不一致或绑定异常时 fail closed；单文档失败记录稳定错误码并继续处理后续文档，不把正文或异常中的已配置凭据写入报告。
+- 运行时边界：迁移 CLI 只装配 Database、Cache、Provider 和 Corpus 适配器，不构建模型客户端、不恢复未完成工作流，也不调用大模型；公开 `build_corpus_ingest` 供维护工具复用，保留旧私有别名兼容既有调用。
+- 涉及文件：`backend/idea/corpus_migration.py`、`backend/idea/retrieval.py`、`backend/idea/runtime.py`、`backend/idea/__init__.py`、`tools/rehydrate_corpus.py` 及对应测试。
+
+## 2026-07-21 — IDEA-CORPUS-MIGRATE-001-VERIFY
+
+- 类型：历史 Corpus 迁移真实运行态验收补记。
+- 真实验收：随机隔离的终态历史 Run 完成 dry-run `LOCAL_READY`、首次 apply `MIGRATED_LOCAL`、重复 apply `ALREADY_READY`；PostgreSQL Version/Source/Chunk/Run-Link 与 MinIO Blob 写入后按随机身份精确清理。完整 Corpus 集成测试 2 项通过。
+- CLI 冒烟：清空 PostgreSQL/S3 环境变量后，针对现有历史 SQLite 以 `--limit 1` 执行默认 dry-run，仍返回 `REHYDRATABLE`；未构造 Provider、Corpus、Cache 或外部连接，私有报告写入 `/tmp` 且不含正文或凭据。
+- 自动化验证：完整离线套件 278 项通过、2 项按设计跳过；`compileall`、`git diff --check`、秘密模式扫描和定向安全测试通过。
+- 空间边界：验收时根文件系统可用 18G，超过至少保留 5G 的门槛；测试完成后关闭 Compose 运行容器，保留可复用镜像和数据卷。

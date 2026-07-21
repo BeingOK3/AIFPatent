@@ -54,7 +54,7 @@ def _required_environment(name: str) -> str:
     return value
 
 
-def _build_corpus_ingest(
+def build_corpus_ingest(
     config: AppConfig, *, database: Database | object | None = None
 ) -> PatentCorpusIngestService | None:
     if not config.features.patent_corpus:
@@ -84,6 +84,10 @@ def _build_corpus_ingest(
             repository=PostgreSQLPatentChunkRepository(dsn)
         ),
     )
+
+
+# Backward-compatible private name for callers from the earlier transition unit.
+_build_corpus_ingest = build_corpus_ingest
 
 
 def build_runtime(config: AppConfig) -> IdeaRuntime:
@@ -145,7 +149,7 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
     value = ValueAnalysisService(database, agents)
     audit = AuditService(database, agents, minimum_deep_reviews=minimum)
     reporting = ReportService(database, run_store, agents)
-    corpus_ingest = _build_corpus_ingest(config, database=database)
+    corpus_ingest = build_corpus_ingest(config, database=database)
     executor = WorkflowExecutor(
         config,
         database,

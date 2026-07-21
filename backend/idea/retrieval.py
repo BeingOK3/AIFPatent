@@ -373,6 +373,29 @@ class RetrievalService:
             documents=documents, document_ids=document_ids, limitations=limitations
         )
 
+    async def rehydrate_document(
+        self,
+        *,
+        run_id: str,
+        publication_number: str,
+        url: str = "",
+        language: str = "en",
+    ) -> tuple[FetchedDocument | None, tuple[str, ...]]:
+        """Fetch one historical document through the normal provider controls.
+
+        Rehydration deliberately does not update SQLite's transient document store;
+        the corpus migrator validates identity and owns the durable write.
+        """
+        document, failures = await self._fetch_with_fallback(
+            run_id,
+            publication_number,
+            [url] if url else [],
+            language,
+        )
+        return document, tuple(
+            f"{failure['provider']}:{failure['status']}" for failure in failures
+        )
+
     async def _fetch_with_fallback(
         self,
         run_id: str,
