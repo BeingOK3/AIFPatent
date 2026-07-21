@@ -1,0 +1,16 @@
+# RAG target dependencies
+
+This development-only stack provides PostgreSQL 17 + pgvector 0.8.2, Redis 8.4.4 and a locally built MinIO server. It does not switch the application away from the current SQLite runtime; the RAG feature flags remain disabled until their migration gates are complete.
+
+```bash
+tools/rag_infra.py up
+tools/rag_infra.py status
+tools/rag_infra.py check
+tools/rag_infra.py down
+```
+
+The first `up` creates `deploy/rag/rag.env` atomically with random credentials and mode `0600`. The file is Git ignored. Commands never print its values. `down` preserves named volumes; this tool intentionally has no reset or volume-deletion command.
+
+The MinIO community server is built from the pinned `RELEASE.2025-10-15T17-29-55Z` source tag rather than an older prebuilt image. The initial build therefore needs access to Go module sources. PostgreSQL initializes the `vector` and `pg_trgm` extensions only when its named volume is first created.
+
+Ports bind to `127.0.0.1` by default and can be changed in `rag.env`. These credentials and services are for local development only.

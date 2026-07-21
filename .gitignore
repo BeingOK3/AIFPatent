@@ -19,6 +19,7 @@ data/langgraph/
 # Secrets - API keys, NEVER commit
 .env
 .env.*
+deploy/rag/rag.env
 
 # User workspace data (runtime)
 workspace/

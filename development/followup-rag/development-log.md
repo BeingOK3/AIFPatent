@@ -67,3 +67,21 @@
 - 结果：配置与端口目标测试 11 项通过；完整离线套件 195 项通过；Python compileall、两份配置 JSON 语法和 `git diff --check` 通过。
 - 环境说明：默认沙箱禁止 TestClient/临时 HTTP fixture 所需的本机通信并造成假性等待；在受控测试权限下 API 12 项、Execution 10 项和 CLI 6 项均通过，确认不是代码回归。
 - 安全检查：默认配置中的三个新功能继续关闭；配置快照、测试输出和 Git diff 不包含模型 API Key。
+
+## 2026-07-21 — IDEA-INFRA-DEV-001
+
+- 类型：Phase 0 目标依赖开发模板与管理 CLI。
+- 依赖模板：新增 PostgreSQL 17 + pgvector 0.8.2、Redis 8.4.4 和 S3-compatible ObjectStore Compose 服务；端口默认仅绑定回环地址，数据使用独立命名卷，PostgreSQL 首次初始化 `vector`/`pg_trgm`。
+- MinIO 来源：社区服务器从固定安全修复 tag `RELEASE.2025-10-15T17-29-55Z` 源码构建，不依赖更早的预构建服务镜像。
+- 凭证语义：`tools/rag_infra.py up` 在缺失时以排他创建、随机值和 `0600` 权限生成 Git 忽略的 `deploy/rag/rag.env`；不回显值、不覆盖既有文件，placeholder、缺失值或过宽权限 fail closed。
+- 运维语义：提供 `init/up/status/check/down`；`up` 等待健康检查，`down` 默认保留卷，故意不提供隐式 reset/删除卷操作。
+- 当前边界：本模板不切换现有 SQLite 运行时，三个 RAG feature flag 继续默认关闭。
+- 涉及文件：`deploy/rag/`、`tools/rag_infra.py`、`backend/tests/test_rag_infra.py`、`.gitignore`、根 `README.md`、本日志。
+- 验证：待运行 CLI/模板目标测试、完整离线套件、编译和格式检查；当前主机未安装 Docker，Compose 容器运行态验证需在具备 Docker 的环境完成。
+
+## 2026-07-21 — IDEA-INFRA-DEV-001-VERIFY
+
+- 类型：Phase 0 目标依赖模板验证补记。
+- 结果：RAG infrastructure 目标测试 5 项通过；完整离线套件 200 项通过；Compose YAML 可解析；CLI 编译和帮助输出通过；`git diff --check` 通过。
+- 安全检查：`rag.env` 被 Git 忽略，随机凭证只在本地文件创建时生成且权限为 `0600`；模板未包含密码，`down` 不带卷删除参数。
+- 环境限制：主机未安装 Docker/Compose，因此未执行镜像构建、容器健康检查或 PostgreSQL/Redis/MinIO 运行态验证。

@@ -137,6 +137,15 @@ development/core/          核心系统开发与迁移历史
 development/followup-rag/  追问、耐久语料和混合 RAG 后续设计
 ```
 
+后续 RAG 开发使用隔离的目标依赖栈；它不会自动切换当前 SQLite 运行时：
+
+```bash
+tools/rag_infra.py up
+tools/rag_infra.py status
+```
+
+首次启动会生成 Git 忽略且权限为 `0600` 的本地随机凭证。详细说明见 `deploy/rag/README.md`。
+
 当前已实现架构见 `docs/aifpatent-architecture.md`。核心系统历史位于 `development/core/`；评审后追问、耐久全文语料和混合 RAG 属于独立后续开发域，位于 `development/followup-rag/`。
 
 ## License
