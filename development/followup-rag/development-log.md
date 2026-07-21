@@ -85,3 +85,18 @@
 - 结果：RAG infrastructure 目标测试 5 项通过；完整离线套件 200 项通过；Compose YAML 可解析；CLI 编译和帮助输出通过；`git diff --check` 通过。
 - 安全检查：`rag.env` 被 Git 忽略，随机凭证只在本地文件创建时生成且权限为 `0600`；模板未包含密码，`down` 不带卷删除参数。
 - 环境限制：主机未安装 Docker/Compose，因此未执行镜像构建、容器健康检查或 PostgreSQL/Redis/MinIO 运行态验证。
+
+## 2026-07-21 — IDEA-OBJECT-STORE-001
+
+- 类型：Phase 1 本地 ObjectStore 基准适配器。
+- 实现：新增 `FileObjectStore`，实现 `ObjectStore` 端口的内容寻址写入、读取和 stat；写入先校验 SHA-256，再通过同目录临时文件、fsync 和不可覆盖 hard-link 原子落盘。
+- 安全语义：拒绝绝对路径、`..`、反斜杠、符号链接和越出 root 的父目录；对象文件权限为 `0600`；同一 Key 不允许不同正文覆盖，允许同哈希幂等复用。
+- 兼容边界：本地适配器只作为开发/测试基准，生产 S3/MinIO 适配器必须保持相同不可变 Key、哈希和条件写契约。
+- 涉及文件：`backend/idea/object_store.py`、`backend/tests/test_object_store.py`、本日志。
+- 验证：待运行 ObjectStore 目标测试、完整离线套件、编译和格式检查。
+
+## 2026-07-21 — IDEA-OBJECT-STORE-001-VERIFY
+
+- 类型：Phase 1 本地 ObjectStore 验证补记。
+- 结果：ObjectStore、RAG infra、配置和端口目标测试共 21 项通过；完整离线套件 205 项通过；compileall 和 `git diff --check` 通过。
+- 安全检查：不同正文不能覆盖同一 Key；临时文件、对象文件和元数据文件均不向组/其他用户开放；符号链接、路径穿越和错误哈希均 fail closed。
