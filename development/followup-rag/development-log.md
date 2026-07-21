@@ -586,3 +586,15 @@
 - 范围门禁：本轮 Hybrid 结果的 Retriever 版本必须与 Turn 一致，Chunk Version/公开号必须精确匹配冻结 scope，重复或越界 Chunk fail closed；Context Manifest 保存完整冻结 Version allowlist，而不是仅从碰巧入选的 Chunk 反推范围。
 - 持久化一致性：`record_retrieval` 新增显式 `selected_chunk_ids`，只能是本轮检索结果的非空子集；数据库的 `selected_for_context` 由最终预算选择决定，后续 Citation 仍只能引用实际进入模型 Context 的 Chunk。
 - 验证：Context/历史/答案/持久化聚焦 20 项通过；真实 PostgreSQL 隔离验收验证显式 Context selection、Citation、Turn 终态及清理；完整离线套件 383 项通过、4 项按设计跳过，`compileall` 与 `git diff --check` 通过。
+
+## 2026-07-22 — IDEA-FOLLOWUP-WF-001-HANDLER
+
+- 类型：Phase 4 七节点业务 Handler、严格计划、模型与多查询检索接线。
+- 固定节点接线：`FollowupBusinessHandler` 为七个既定节点分别装配源数据、计划、检索、Context、模型回答、验证和持久化；节点中间业务载荷只存在于当前 Turn 的临时内存，不写 LangGraph Checkpoint，终态/失败/取消后由 Workflow 主动清理。
+- 计划契约：新增严格 `FollowupPlan`，校验冻结 Turn mode、公开号子集、已知 Feature、章节枚举、去重 query rewrite 及 NEW_RESEARCH/设计规避一致性；Agent 不能借计划扩大文献或 Feature 范围。
+- 数据源：`PostgreSQLFollowupDataSource` 从源 Run 加载耐久 IDEA Feature、Run 限制、Novelty/Value 摘要以及同 Thread 最近最多 5 个成功回答；Turn→Thread→Run 身份、Feature 前缀和 source span 均 fail closed。
+- 多查询检索：每个已验证 rewrite 使用完全相同的计划文献 Version allowlist 和章节过滤调用共享 `HybridRetriever`；跨查询按 Chunk 合并 RRF 贡献、正文哈希去重并再次应用全局文献/section 多样性配额，聚合 query ID 稳定可审计。Embedding 未提供时明确保留 `LEXICAL_ONLY`。
+- 模型：现有 `StructuredModelClient` 注册 follow-up planner/answerer 严格 Schema，继续复用网页瞬时 BYOK、OpenAI-compatible Base URL、结构化重试和中文输出门禁；请求只含问题、范围、Feature、历史、计划与已装配 Context，不接收或持久化 API Key 参数。
+- 原子完成顺序：先记录仅实际进入 Context 的 Retrieval selection 与 Context Manifest，再调用模型；回答通过 Alias/Feature/Publication/法律边界校验后，先写永久 Citation，最后才把 Turn 置为成功终态。任一中间失败不生成伪成功回答。
+- 验证：计划、Retriever、模型适配器、Handler、固定 Workflow 聚焦测试通过；真实 PostgreSQL 隔离验收覆盖 Feature、源 Run 摘要、父 Turn 历史、Retrieval/Citation/终态与精确清理；完整离线套件 393 项通过、4 项按设计跳过，`compileall`、`git diff --check` 通过，根文件系统仍有 18G 可用。
+- 未完成：Web API、后台任务/BYOK 生命周期、SSE 事件与前端 Thread UI 尚未开放；因此本保存点不宣称用户已能从网页发起追问。

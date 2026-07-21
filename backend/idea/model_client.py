@@ -14,9 +14,9 @@ from urllib.parse import urlsplit
 import httpx
 import openai
 from langchain_openai import ChatOpenAI
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from .agent_schemas import AgentModel, agent_json_schema, validate_agent_output
+from .agent_schemas import agent_json_schema, validate_agent_output
 from .config import ModelSettings
 
 
@@ -49,7 +49,7 @@ def _is_primarily_chinese(value: str) -> bool:
     return cjk_count > 0 and cjk_count * 4 >= latin_count
 
 
-def _validate_user_facing_language(agent_name: str, output: AgentModel) -> None:
+def _validate_user_facing_language(agent_name: str, output: BaseModel) -> None:
     """Reject English-only judgment text so the structured retry can correct it."""
     data = output.model_dump(mode="json")
     texts: list[tuple[str, str]] = []
@@ -101,6 +101,27 @@ def _validate_user_facing_language(agent_name: str, output: AgentModel) -> None:
         ):
             add(field, data.get(field))
         add_list("action_recommendations", data.get("action_recommendations"))
+    elif agent_name == "patent-followup-planner":
+        add("rationale", data.get("rationale"))
+    elif agent_name == "patent-followup-answerer":
+        add("direct_answer", data.get("direct_answer"))
+        add("legal_boundary", data.get("legal_boundary"))
+        add_list("differences", data.get("differences"))
+        add_list("limitations", data.get("limitations"))
+        for index, item in enumerate(data.get("overlap_items", [])):
+            for field in ("idea_feature", "patent_element", "analysis"):
+                add(f"overlap_items[{index}].{field}", item.get(field))
+        for index, item in enumerate(data.get("design_around_options", [])):
+            for field in ("title", "change", "expected_effect"):
+                add(f"design_around_options[{index}].{field}", item.get(field))
+            add_list(
+                f"design_around_options[{index}].engineering_tradeoffs",
+                item.get("engineering_tradeoffs"),
+            )
+            add_list(
+                f"design_around_options[{index}].remaining_risks",
+                item.get("remaining_risks"),
+            )
 
     invalid = [path for path, text in texts if not _is_primarily_chinese(text)]
     if invalid:
@@ -131,7 +152,7 @@ def runtime_model_config(config: RuntimeModelConfig) -> Iterator[None]:
 class AgentCallResult:
     agent_name: str
     model: str
-    output: AgentModel
+    output: BaseModel
     attempts: int
     duration_ms: int
     usage: dict[str, int]

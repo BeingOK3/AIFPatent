@@ -58,6 +58,7 @@ class RecordingHandler:
         self.fail_step = fail_step
         self.block_step = block_step
         self.calls = []
+        self.discarded = []
 
     async def execute(self, turn_id, step, attempt):
         self.calls.append((step, attempt))
@@ -69,6 +70,9 @@ class RecordingHandler:
             await self.repository.complete_turn(
                 turn_id, answer={"answer_type": "DIRECT", "direct_answer": "完成"}
             )
+
+    def discard(self, turn_id):
+        self.discarded.append(turn_id)
 
 
 class FollowupWorkflowTests(unittest.TestCase):
@@ -98,6 +102,7 @@ class FollowupWorkflowTests(unittest.TestCase):
         self.assertEqual(status, TurnStatus.COMPLETED)
         self.assertEqual([item[0] for item in handler.calls], list(FOLLOWUP_WORKFLOW_STEPS))
         self.assertTrue(all(attempt == 1 for _, attempt in handler.calls))
+        self.assertEqual(handler.discarded, ["turn-1"])
 
     def test_checkpoint_state_contract_contains_identifiers_and_progress_only(self) -> None:
         self.assertEqual(
@@ -117,6 +122,7 @@ class FollowupWorkflowTests(unittest.TestCase):
         self.assertEqual(status, TurnStatus.FAILED)
         self.assertEqual(repository.failures[0][0], "RuntimeError")
         self.assertNotIn(FOLLOWUP_WORKFLOW_STEPS[3], [item[0] for item in handler.calls])
+        self.assertEqual(handler.discarded, ["turn-1"])
 
     def test_terminal_turn_is_idempotent_and_does_not_run_handlers(self) -> None:
         repository = MemoryRepository(TurnStatus.COMPLETED_WITH_LIMITATIONS)

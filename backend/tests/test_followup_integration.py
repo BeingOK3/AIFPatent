@@ -15,6 +15,7 @@ from idea.followup import (
 )
 from idea.hybrid import HybridHit, HybridSearchResult, RetrievalMode
 from idea.postgres_followup import PostgreSQLFollowupRepository
+from idea.postgres_followup_data import PostgreSQLFollowupDataSource
 
 
 @unittest.skipUnless(
@@ -82,6 +83,20 @@ class FollowupIntegrationTests(unittest.TestCase):
                     """,
                     (run_id, document_id, version_id, timestamp),
                 )
+                await cursor.execute(
+                    """
+                    INSERT INTO idea_features(
+                        feature_id, run_id, ordinal, feature_text, source_type,
+                        metadata_json
+                    ) VALUES (%s, %s, 1, %s, 'normalized', %s::jsonb)
+                    """,
+                    (
+                        f"{run_id}:F1",
+                        run_id,
+                        "根据热度淘汰缓存块",
+                        '{"external_feature_id":"F1","required":true}',
+                    ),
+                )
             await connection.commit()
 
             thread = await repository.create_thread(
@@ -111,6 +126,12 @@ class FollowupIntegrationTests(unittest.TestCase):
                 {"lexical_queries": ["缓存 淘汰"], "semantic_query": "缓存淘汰特征"},
             )
             self.assertIsNotNone(planned.plan)
+            source = await PostgreSQLFollowupDataSource(dsn).load(
+                run_id=run_id, turn=planned
+            )
+            self.assertEqual(source.features[0].feature_id, "F1")
+            self.assertEqual(source.recent_turns, ())
+            self.assertIn('"run_status":"COMPLETED"', source.report_summary)
             async with connection.cursor() as cursor:
                 await cursor.execute(
                     """
@@ -213,6 +234,10 @@ class FollowupIntegrationTests(unittest.TestCase):
                 retriever_version="hybrid-rrf-v1",
             )
             await repository.start_turn(child.turn_id)
+            child_source = await PostgreSQLFollowupDataSource(dsn).load(
+                run_id=run_id, turn=await repository.get_turn(child.turn_id)
+            )
+            self.assertEqual([item.turn_id for item in child_source.recent_turns], [turn.turn_id])
             failed = await repository.fail_turn(
                 child.turn_id,
                 error_code="FIXTURE_FAILURE",

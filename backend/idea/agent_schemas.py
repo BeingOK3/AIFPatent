@@ -238,7 +238,7 @@ class ReportComposerOutput(AgentModel):
     action_recommendations: list[str]
 
 
-AGENT_OUTPUT_MODELS: dict[str, type[AgentModel]] = {
+AGENT_OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "patent-idea-parser": IdeaParserOutput,
     "patent-query-planner": QueryPlannerOutput,
     "patent-document-analyzer": DocumentAnalyzerOutput,
@@ -249,7 +249,17 @@ AGENT_OUTPUT_MODELS: dict[str, type[AgentModel]] = {
 }
 
 
-def validate_agent_output(agent_name: str, value: dict[str, Any]) -> AgentModel:
+def register_agent_output_model(agent_name: str, model: type[BaseModel]) -> None:
+    name = agent_name.strip()
+    if not name:
+        raise ValueError("agent name must not be empty")
+    existing = AGENT_OUTPUT_MODELS.get(name)
+    if existing is not None and existing is not model:
+        raise ValueError(f"agent output model already registered: {name}")
+    AGENT_OUTPUT_MODELS[name] = model
+
+
+def validate_agent_output(agent_name: str, value: dict[str, Any]) -> BaseModel:
     try:
         model = AGENT_OUTPUT_MODELS[agent_name]
     except KeyError as exc:

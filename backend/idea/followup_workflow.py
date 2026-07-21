@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol, TypedDict
@@ -95,7 +96,7 @@ class FollowupWorkflow:
             current = await self.repository.get_turn(turn_id)
             if current is not None and current.status == TurnStatus.RUNNING:
                 await self.repository.cancel_turn(turn_id)
-            self._clear_attempts(turn_id)
+            await self._release_turn(turn_id)
             raise
         except Exception as exc:
             current = await self.repository.get_turn(turn_id)
@@ -105,7 +106,7 @@ class FollowupWorkflow:
                     error_code=type(exc).__name__,
                     error_message=str(exc) or "follow-up workflow failed",
                 )
-            self._clear_attempts(turn_id)
+            await self._release_turn(turn_id)
             return TurnStatus.FAILED
 
         completed = await self.repository.get_turn(turn_id)
@@ -121,9 +122,9 @@ class FollowupWorkflow:
                     error_code="PERSIST_FOLLOWUP_RESPONSE_INCOMPLETE",
                     error_message="final workflow node did not persist a terminal response",
                 )
-            self._clear_attempts(turn_id)
+            await self._release_turn(turn_id)
             return TurnStatus.FAILED
-        self._clear_attempts(turn_id)
+        await self._release_turn(turn_id)
         return completed.status
 
     async def aclose(self) -> None:
@@ -186,6 +187,14 @@ class FollowupWorkflow:
     def _clear_attempts(self, turn_id: str) -> None:
         for key in [value for value in self._attempts if value[0] == turn_id]:
             self._attempts.pop(key, None)
+
+    async def _release_turn(self, turn_id: str) -> None:
+        self._clear_attempts(turn_id)
+        discard = getattr(self.handler, "discard", None)
+        if discard is not None:
+            result = discard(turn_id)
+            if inspect.isawaitable(result):
+                await result
 
 
 __all__ = [
