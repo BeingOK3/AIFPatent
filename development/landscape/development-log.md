@@ -196,3 +196,11 @@
 - 验证：SerpAPI Provider、配置、Landscape 调度、前端、基础设施和容器契约共 47 个定向测试通过；Python 编译、Node 语法、JSON 解析与 `git diff --check` 通过。真实 Key 扫描确认已跟踪文件命中数为 0。
 - 限制：外部 SerpAPI 受控请求因当前工具网络授权限制未执行；已完成可注入 Transport 的搜索/详情/错误/缓存契约测试，部署环境真实检索保留为下一次联调项。
 - Git：本实现作为第 20 个工作单元，与第 19 个设计提交一起推送远程 `develop`。
+
+## 2026-07-22 — LANDSCAPE-PROVIDER-INCIDENT-021
+
+- 类型：最新 Run 的网络、Provider 和凭证日志事故复盘。
+- 结论：Docker DNS 和一般 HTTPS 出站正常；Google Patents 单站直连超时，Exa 为 HTTP 429，SerpAPI 为查询语义/空结果分类错误，不是三个搜索引擎都无法联网。
+- 安全：发现 `httpx` INFO 把带查询参数的 SerpAPI URL 写入旧容器日志；修复要求关闭底层完整 URL 日志、重建容器并建议轮换已暴露 Key。
+- 决策：当前部署默认只启用已实测连通的 SerpAPI；保留 Exa/Google Provider，通过配置在具备额度或网络条件的环境重新启用。
+- 设计：详见 `network-provider-incident.md`；代码、测试与容器验收作为第 22 个工作单元。
