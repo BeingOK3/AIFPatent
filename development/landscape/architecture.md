@@ -24,10 +24,13 @@
 
 ### 2.1 模式
 
-- `TECHNOLOGY`：技术方向必填，重点友商可选；友商只高亮和对比，不过滤其他申请人。
-- `COMPETITOR`：重点友商必填，技术方向可选；友商别名用于严格后过滤。
+页面不要求用户预选模式，而是根据两类输入确定性派生，并在提交前展示：
 
-同时填写技术方向和友商时不得隐式改变模式，避免无意形成过窄 AND 查询。
+- `TECHNOLOGY`：只填写技术方向，检索该方向内所有申请人；
+- `COMPETITOR`：只填写重点友商，按友商及系统生成别名严格过滤；
+- `TECHNOLOGY_COMPETITOR`：同时填写技术方向和重点友商，检索技术方向与友商的交集。
+
+后端重新计算派生模式；客户端传入模式与实际输入不一致时拒绝请求。派生模式进入不可变 Run 输入、数据库、API 和报告，模型不能改变。
 
 ### 2.2 时间
 
@@ -41,14 +44,15 @@ publication_start <= publication_date <= publication_end
 
 ### 2.3 友商别名
 
-页面按行输入友商，使用 `|` 分隔经过用户确认的别名，例如：
+页面按行输入友商主名称，不要求用户维护别名。`PLAN_SEARCH` 使用模型为每个主名称生成用于专利申请人检索的中英文名称、常用公司全称和历史名称，并遵守：
 
-```text
-华为 | Huawei | Huawei Technologies
-三星 | Samsung | Samsung Electronics
-```
+- 输出必须逐一对应用户输入的主名称，不能增加新的友商主体；
+- 每个友商最多 12 个别名，程序做 NFKC、大小写、空白和重复校验；
+- 原始主名称始终进入严格匹配集合；
+- 模型失败时降级为只使用主名称，并在报告中标注；
+- 实际使用的主名称、模型生成别名和来源 `MODEL_INFERRED` 必须进入查询阶段结果、调试接口和最终报告。
 
-模型可以生成检索词，但不能把未经用户确认的公司别名加入严格过滤集合。
+友商别名会影响严格申请人过滤，因此报告不得把它们描述为已经完成工商主体核验的法律名称。
 
 ### 2.4 预算
 
@@ -232,6 +236,7 @@ POST   /api/landscape/runs/{run_id}/rerun
 GET    /api/landscape/runs/{run_id}/report
 GET    /api/landscape/runs/{run_id}/report.md
 GET    /api/landscape/runs/{run_id}/patents.csv
+GET    /api/landscape/runs/{run_id}/debug
 DELETE /api/landscape/runs/{run_id}
 ```
 
@@ -239,11 +244,12 @@ DELETE /api/landscape/runs/{run_id}
 
 ## 8. 页面
 
-`/landscape` 使用独立 HTML/JS/CSS，顶部导航可返回 `/`。页面三栏：
+`/landscape` 使用独立 HTML/JS/CSS，顶部导航可返回 `/`。页面包含：
 
 1. 历史分析 Run；
 2. 输入、预算和实时步骤；
-3. 概览、趋势、法域、聚类、逐件精读和限制。
+3. 概览、趋势、法域、聚类、逐件精读和限制；
+4. 运行调试：当前节点、尝试、查询、Provider 状态、命中/排除计数和错误。
 
 第一版图表使用原生 HTML/CSS/SVG，不引入 npm、CDN 或新的镜像构建链。所有外部文本使用 `textContent`，不得把专利标题、模型内容或来源 HTML 注入 `innerHTML`。
 

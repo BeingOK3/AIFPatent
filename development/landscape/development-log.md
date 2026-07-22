@@ -102,3 +102,12 @@
 - 冻结边界：仅修改 `frontend/index.html` 和 `frontend/style.css` 的静态导航，未修改 `frontend/app.js` 或 IDEA 业务状态机。
 - 测试：`test_frontend.py` 新增入口 URL、名称、报告说明和样式契约；前端 7 个测试通过，`git diff --check` 通过。
 - Git：功能提交 `a053de6`；本日志提交后将按两提交节奏一起推送远程。
+
+## 2026-07-22 — LANDSCAPE-MODES-DESIGN-011
+
+- 类型：三模式、友商别名和运行调试增量设计。
+- 决策：页面不显示模式单选框；根据技术方向和友商是否填写自动派生 `TECHNOLOGY`、`COMPETITOR`、`TECHNOLOGY_COMPETITOR`，后端复算并显式持久化，兼顾输入简洁和运行可审计。
+- 别名：用户只输入友商主名称；模型在 `PLAN_SEARCH` 逐一生成最多 12 个检索别名，程序禁止新增主体并规范化去重；失败降级为主名称，实际使用别名进入报告和调试。
+- 调试：新增独立 `/api/landscape/runs/{run_id}/debug`，页面展示步骤尝试、查询、Provider 状态、命中/排除计数和错误，不返回凭证或完整模型请求。
+- 展示：首页入口删除“新业务模块”字样，仅保留“专利态势分析”及报告说明。
+- 涉及文件：`architecture.md` 和本日志；运行时代码待下一工作单元实施。
