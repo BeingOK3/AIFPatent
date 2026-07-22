@@ -85,3 +85,11 @@
 - 凭证核验：Landscape 配置快照仅包含 `base_url`、`credential_source`、`model`，凭证来源为 `per_run_memory`；仓库敏感 Key 模式扫描无命中。
 - 回归：Landscape 29 个单元测试通过；既有前端/容器/启动脚本 12 个针对性回归通过；Node 语法和 `git diff --check` 通过；四个 Docker 服务保持健康。
 - 结论：MVP 可从 `/landscape` 创建任务并产出一件以上真实新公开专利精读、统计、聚类和可下载报告；IDEA 业务代码和页面状态机未修改。
+
+## 2026-07-22 — LANDSCAPE-DOCS-008
+
+- 类型：MVP 验收归档。
+- 实现：新增 `acceptance.md`，固化页面/API 入口、真实 Run 输入与输出、测试/容器/凭证核验、已知 Provider 限制和下一批建议；实施计划标记完成。
+- Git 节奏：本提交作为第 8 个工作单元，将与第 7 个真实验收修复提交一起推送远程 `develop`。
+- 涉及文件：`development/landscape/{README,implementation-plan,acceptance,development-log}.md`。
+- 验证：文档不包含 API Key；`git diff --check` 待提交前执行。

@@ -15,4 +15,4 @@
 - `architecture.md`：MVP 需求分析、架构和数据/API 契约。
 - `implementation-plan.md`：可提交、可验收的开发切片。
 - `development-log.md`：只追加的开发和验证记录。
-
+- `acceptance.md`：真实 Run、容器、凭证和已知限制验收结论。
