@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 import unicodedata
 from collections import Counter
 from datetime import date, timedelta
@@ -13,6 +14,7 @@ from idea.merge import MergedHit, merge_hits, normalize_publication_number
 from idea.providers.base import (
     ProviderResult,
     ProviderRunner,
+    ProviderStatus,
     SearchHit,
     SearchProvider,
     SearchQuery,
@@ -45,8 +47,15 @@ class LandscapeSearchResult(LandscapeModel):
     coverage: LandscapeSearchCoverage
 
 
-def scoped_provider_query_text(query_text: str, scope: LandscapeScope) -> str:
-    """Append provider-side hints; post-filtering remains the authoritative date gate."""
+def scoped_provider_query_text(
+    query_text: str, scope: LandscapeScope, provider: str = "google_patents_local"
+) -> str:
+    """Build provider-specific hints; post-filtering remains the authoritative date gate."""
+    if provider == "exa_mcp":
+        return (
+            f"{query_text} patent published from {scope.publication_start.isoformat()} "
+            f"to {scope.publication_end.isoformat()}"
+        )
     after = (scope.publication_start - timedelta(days=1)).strftime("%Y%m%d")
     before = (scope.publication_end + timedelta(days=1)).strftime("%Y%m%d")
     return f"{query_text} after=publication:{after} before=publication:{before}"
@@ -169,16 +178,60 @@ async def execute_provider_queries(
     plan: LandscapeQueryPlan,
     providers: list[SearchProvider],
     runner: ProviderRunner | None = None,
-    timeout_seconds: float = 30.0,
+    timeout_seconds: float | dict[str, float] = 30.0,
 ) -> list[ProviderResult]:
     validate_query_plan_scope(plan, scope)
     runner = runner or ProviderRunner()
+    semaphores = {provider.name: asyncio.Semaphore(1) for provider in providers}
+    circuits: dict[str, tuple[str, str] | None] = {provider.name: None for provider in providers}
+    last_call_at: dict[str, float] = {}
+    rate_limited_until: dict[str, float] = {}
+
+    def provider_timeout(name: str) -> float:
+        if isinstance(timeout_seconds, dict):
+            return timeout_seconds.get(name, 30.0)
+        return timeout_seconds
+
+    async def call(provider: SearchProvider, query: SearchQuery) -> ProviderResult:
+        async with semaphores[provider.name]:
+            circuit = circuits[provider.name]
+            if circuit is not None:
+                return ProviderResult(
+                    provider=provider.name,
+                    operation="search",
+                    request_id=query.query_id,
+                    status=ProviderStatus.DISABLED,
+                    duration_ms=0,
+                    error_code=circuit[0],
+                    error_message=circuit[1],
+                )
+            if provider.name == "exa_mcp":
+                delay = max(
+                    0.0,
+                    last_call_at.get(provider.name, 0.0) + 1.0 - time.monotonic(),
+                    rate_limited_until.get(provider.name, 0.0) - time.monotonic(),
+                )
+                if delay:
+                    await asyncio.sleep(delay)
+            result = await runner.search(
+                provider, query, timeout_seconds=provider_timeout(provider.name)
+            )
+            last_call_at[provider.name] = time.monotonic()
+            if result.status == ProviderStatus.TIMEOUT and provider.name == "google_patents_local":
+                circuits[provider.name] = (
+                    "PROVIDER_CIRCUIT_OPEN",
+                    "Google Patents timed out; remaining queries skipped for this run",
+                )
+            if result.error_message and "429 Too Many Requests" in result.error_message:
+                rate_limited_until[provider.name] = time.monotonic() + 10.0
+            return result
+
     calls = []
     for query_index, planned in enumerate(plan.queries, start=1):
         query_id = f"LQ-{query_index}"
         query = SearchQuery(
             query_id=query_id,
-            text=scoped_provider_query_text(planned.query_text, scope),
+            text=planned.query_text,
             language=planned.language,
             round_number=1,
             limit=scope.budget.per_query_limit,
@@ -186,7 +239,10 @@ async def execute_provider_queries(
             material_types=["patent"],
         )
         for provider in providers:
-            calls.append(runner.search(provider, query, timeout_seconds=timeout_seconds))
+            provider_query = query.model_copy(
+                update={"text": scoped_provider_query_text(planned.query_text, scope, provider.name)}
+            )
+            calls.append(call(provider, provider_query))
     return list(await asyncio.gather(*calls)) if calls else []
 
 

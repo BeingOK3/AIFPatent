@@ -145,6 +145,26 @@ class CompetitorAliasPlan(LandscapeModel):
     competitors: list[CompetitorAliasResolution] = Field(min_length=1, max_length=20)
 
 
+class TechnicalDirectionExpansion(LandscapeModel):
+    original_term: str = Field(min_length=1, max_length=500)
+    chinese_terms: list[str] = Field(min_length=1, max_length=8)
+    english_terms: list[str] = Field(min_length=1, max_length=8)
+    source: Literal["MODEL_INFERRED"]
+
+    @field_validator("chinese_terms", "english_terms")
+    @classmethod
+    def normalize_terms(cls, values: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            value = " ".join(raw.split())
+            key = value.casefold()
+            if value and key not in seen:
+                seen.add(key)
+                result.append(value)
+        return result
+
+
 class LandscapePlannedQuery(LandscapeModel):
     query_text: str = Field(min_length=2, max_length=500)
     language: Literal["zh", "en", "mixed"]
@@ -153,7 +173,8 @@ class LandscapePlannedQuery(LandscapeModel):
 
 class LandscapeQueryPlan(LandscapeModel):
     direction_terms: list[str] = Field(default_factory=list, max_length=30)
-    queries: list[LandscapePlannedQuery] = Field(min_length=2, max_length=6)
+    direction_english_terms: list[str] = Field(default_factory=list, max_length=8)
+    queries: list[LandscapePlannedQuery] = Field(min_length=2, max_length=40)
 
 
 class EvidenceItem(LandscapeModel):

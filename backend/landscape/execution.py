@@ -14,6 +14,7 @@ from .clustering import LandscapeClusteringError, LandscapeClusteringService
 from .database import LandscapeDatabase
 from .planning import (
     CompetitorAliasService,
+    TechnicalDirectionService,
     build_deterministic_query_plan,
     fallback_alias_plan,
     scope_with_alias_plan,
@@ -23,7 +24,6 @@ from .schemas import LandscapeQueryPlan, LandscapeScope
 from .search import (
     execute_provider_queries,
     exclusion_reason,
-    scoped_provider_query_text,
     strict_filter_and_select,
 )
 from .store import LandscapeRunStore
@@ -52,9 +52,11 @@ class LandscapeExecutionService:
         )
         self.clustering = LandscapeClusteringService(model)
         self.aliases = CompetitorAliasService(model)
+        self.directions = TechnicalDirectionService(model)
         self.report_service = report_service
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
+        self.enrichment_stats: dict[str, dict[str, int]] = {}
         self.cluster_failures: dict[str, str] = {}
 
     async def handle_step(
@@ -78,6 +80,11 @@ class LandscapeExecutionService:
 
     async def plan_search(self, run_id: str) -> dict[str, Any]:
         scope = self.scope(run_id)
+        direction_expansion = (
+            await self.directions.expand(scope.technology_direction)
+            if scope.technology_direction
+            else None
+        )
         alias_error = None
         if scope.competitors:
             try:
@@ -89,13 +96,13 @@ class LandscapeExecutionService:
         else:
             alias_plan = None
             effective_scope = scope
-        plan = build_deterministic_query_plan(effective_scope)
+        plan = build_deterministic_query_plan(effective_scope, direction_expansion)
         self.database.put_queries(
             run_id,
             [
                 {
                     "query_id": self.query_key(run_id, index),
-                    "query_text": scoped_provider_query_text(query.query_text, scope),
+                    "query_text": query.query_text,
                     "language": query.language,
                     "rationale": query.rationale,
                 }
@@ -105,6 +112,11 @@ class LandscapeExecutionService:
         return {
             "plan": plan.model_dump(mode="json"),
             "competitor_aliases": alias_plan.model_dump(mode="json")["competitors"] if alias_plan else [],
+            "technical_direction_expansion": (
+                direction_expansion.model_dump(mode="json")
+                if direction_expansion
+                else None
+            ),
             "alias_resolution_error": alias_error,
         }
 
@@ -116,7 +128,7 @@ class LandscapeExecutionService:
             plan=plan,
             providers=self.providers,
             runner=self.runner,
-            timeout_seconds=max(self.provider_timeout_seconds.values(), default=30),
+            timeout_seconds=self.provider_timeout_seconds,
         )
         return {"results": [result.model_dump(mode="json") for result in results]}
 
@@ -147,7 +159,10 @@ class LandscapeExecutionService:
                     exclusion_reason=reason.value if reason else None,
                     raw=hit.model_dump(mode="json"),
                 )
-        return {"result": result.model_dump(mode="json")}
+        return {
+            "result": result.model_dump(mode="json"),
+            "enrichment": self.enrichment_stats.get(run_id, {}),
+        }
 
     async def fetch_details(self, run_id: str) -> dict[str, Any]:
         scope = self.scope(run_id)
@@ -331,22 +346,38 @@ class LandscapeExecutionService:
         Search indexes often omit patent-specific dates. The strict filter still rejects a
         document when this enrichment cannot recover a real ISO publication date.
         """
-        requests: list[tuple[ProviderResult, SearchHit]] = [
-            (result, hit)
-            for result in results
-            if result.succeeded
-            for hit in result.hits
-            if not hit.publication_date and hit.publication_number
-        ]
+        unique_requests: dict[tuple[str, str], SearchHit] = {}
+        missing_hit_count = 0
+        for result in results:
+            if not result.succeeded:
+                continue
+            for hit in result.hits:
+                if hit.publication_date or not hit.publication_number:
+                    continue
+                missing_hit_count += 1
+                key = (hit.provider, hit.publication_number.replace(" ", "").upper())
+                unique_requests.setdefault(key, hit)
+        try:
+            enrichment_limit = self.scope(run_id).budget.candidate_limit
+        except KeyError:
+            enrichment_limit = 100
+        requests = list(unique_requests.items())[:enrichment_limit]
+        self.enrichment_stats[run_id] = {
+            "missing_hit_count": missing_hit_count,
+            "unique_publication_count": len(unique_requests),
+            "attempted_count": len(requests),
+            "reused_hit_count": max(0, missing_hit_count - len(unique_requests)),
+            "truncated_count": max(0, len(unique_requests) - len(requests)),
+        }
         if not requests:
             return results
         semaphore = asyncio.Semaphore(2)
         prefetched: dict[str, FetchedDocument] = {}
 
-        async def enrich(result: ProviderResult, hit: SearchHit):
+        async def enrich(key: tuple[str, str], hit: SearchHit):
             provider = next((item for item in self.providers if item.name == hit.provider), None)
             if provider is None:
-                return hit
+                return key, hit
             async with semaphore:
                 fetched = await self.runner.fetch(
                     provider,
@@ -358,31 +389,37 @@ class LandscapeExecutionService:
                     timeout_seconds=self.provider_timeout_seconds.get(provider.name, 60),
                 )
             if not fetched.succeeded or fetched.document is None:
-                return hit
+                return key, hit
             document = fetched.document
             if not document.publication_date:
-                return hit
+                return key, hit
             prefetched[hit.publication_number or ""] = document
-            return hit.model_copy(
-                update={
-                    "publication_date": document.publication_date,
-                    "filing_date": document.filing_date or hit.filing_date,
-                    "assignee": document.assignee or hit.assignee,
-                    "title": document.title or hit.title,
-                    "family_id": document.family_id or hit.family_id,
-                    "raw": {**hit.raw, "metadata_enriched": True},
-                }
+            return (
+                key,
+                hit.model_copy(
+                    update={
+                        "publication_date": document.publication_date,
+                        "filing_date": document.filing_date or hit.filing_date,
+                        "assignee": document.assignee or hit.assignee,
+                        "title": document.title or hit.title,
+                        "family_id": document.family_id or hit.family_id,
+                        "raw": {**hit.raw, "metadata_enriched": True},
+                    }
+                ),
             )
 
-        enriched = await asyncio.gather(*(enrich(result, hit) for result, hit in requests))
-        replacements = {
-            (id(result), hit.publication_number): value
-            for (result, hit), value in zip(requests, enriched, strict=True)
-        }
+        enriched = await asyncio.gather(*(enrich(key, hit) for key, hit in requests))
+        replacements = dict(enriched)
         updated: list[ProviderResult] = []
         for result in results:
             hits = [
-                replacements.get((id(result), hit.publication_number), hit)
+                replacements.get(
+                    (
+                        hit.provider,
+                        (hit.publication_number or "").replace(" ", "").upper(),
+                    ),
+                    hit,
+                )
                 for hit in result.hits
             ]
             updated.append(result.model_copy(update={"hits": hits}))

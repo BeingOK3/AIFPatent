@@ -19,10 +19,14 @@ from landscape.store import LandscapeRunStore
 class EnrichmentProvider(SearchProvider):
     name = "fixture_enrichment"
 
+    def __init__(self):
+        self.fetch_calls = 0
+
     async def search(self, query):
         return []
 
     async def fetch(self, request: FetchRequest) -> FetchedDocument:
+        self.fetch_calls += 1
         return FetchedDocument(
             provider=self.name,
             publication_number=request.publication_number or "US1A1",
@@ -50,11 +54,12 @@ class LandscapeEnrichmentTests(unittest.TestCase):
             database.initialize()
             store = LandscapeRunStore(root / "runs")
             report = LandscapeReportService(database, store)
+            provider = EnrichmentProvider()
             service = LandscapeExecutionService(
                 database=database,
                 store=store,
                 model=StructuredModelClient(load_config().model),
-                providers=[EnrichmentProvider()],
+                providers=[provider],
                 provider_timeout_seconds={"fixture_enrichment": 1},
                 analysis_concurrency=1,
                 report_service=report,
@@ -76,9 +81,15 @@ class LandscapeEnrichmentTests(unittest.TestCase):
                     )
                 ],
             )
-            enriched = asyncio.run(service._enrich_missing_dates("run-1", [result]))
+            duplicate = result.model_copy(update={"request_id": "LQ-2"})
+            enriched = asyncio.run(
+                service._enrich_missing_dates("run-1", [result, duplicate])
+            )
             self.assertEqual(enriched[0].hits[0].publication_date, "2026-06-15")
+            self.assertEqual(enriched[1].hits[0].publication_date, "2026-06-15")
             self.assertIn("US1A1", service.prefetched_documents["run-1"])
+            self.assertEqual(provider.fetch_calls, 1)
+            self.assertEqual(service.enrichment_stats["run-1"]["reused_hit_count"], 1)
 
 
 if __name__ == "__main__":

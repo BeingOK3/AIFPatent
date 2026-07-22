@@ -1,15 +1,46 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from datetime import date
 
-from idea.providers.base import SearchHit
-from landscape.schemas import AnalysisBudget, AnalysisMode, CompetitorInput, LandscapeScope
+from idea.providers.base import SearchHit, SearchProvider
+from landscape.schemas import (
+    AnalysisBudget,
+    AnalysisMode,
+    CompetitorInput,
+    LandscapePlannedQuery,
+    LandscapeQueryPlan,
+    LandscapeScope,
+)
 from landscape.search import (
     assignee_matches_confirmed_competitor,
+    execute_provider_queries,
     scoped_provider_query_text,
     strict_filter_and_select,
 )
+
+
+class TrackingProvider(SearchProvider):
+    def __init__(self, name: str, delay: float):
+        self.name = name
+        self.delay = delay
+        self.active = 0
+        self.max_active = 0
+        self.calls = 0
+
+    async def search(self, query):
+        self.calls += 1
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            await asyncio.sleep(self.delay)
+            return []
+        finally:
+            self.active -= 1
+
+    async def fetch(self, request):
+        raise NotImplementedError
 
 
 def hit(
@@ -137,6 +168,54 @@ class LandscapeSearchTests(unittest.TestCase):
         text = scoped_provider_query_text("liquid cooling", self.technology_scope())
         self.assertIn("after=publication:20260331", text)
         self.assertIn("before=publication:20260701", text)
+        exa = scoped_provider_query_text(
+            "liquid cooling", self.technology_scope(), "exa_mcp"
+        )
+        self.assertIn("published from 2026-04-01 to 2026-06-30", exa)
+        self.assertNotIn("after=publication", exa)
+
+    def test_queries_are_serialized_per_provider(self) -> None:
+        provider = TrackingProvider("fixture_serial", 0.01)
+        plan = LandscapeQueryPlan(
+            direction_terms=["liquid cooling"],
+            direction_english_terms=["liquid cooling"],
+            queries=[
+                LandscapePlannedQuery(query_text="liquid cooling", language="en", rationale="one"),
+                LandscapePlannedQuery(query_text='"liquid cooling"', language="en", rationale="two"),
+            ],
+        )
+        results = asyncio.run(
+            execute_provider_queries(
+                scope=self.technology_scope(),
+                plan=plan,
+                providers=[provider],
+                timeout_seconds={provider.name: 1},
+            )
+        )
+        self.assertEqual(provider.calls, 2)
+        self.assertEqual(provider.max_active, 1)
+        self.assertEqual([item.status.value for item in results], ["EMPTY", "EMPTY"])
+
+    def test_google_timeout_opens_run_scoped_circuit(self) -> None:
+        provider = TrackingProvider("google_patents_local", 0.1)
+        plan = LandscapeQueryPlan(
+            direction_terms=["liquid cooling"],
+            direction_english_terms=["liquid cooling"],
+            queries=[
+                LandscapePlannedQuery(query_text="liquid cooling", language="en", rationale="one"),
+                LandscapePlannedQuery(query_text='"liquid cooling"', language="en", rationale="two"),
+            ],
+        )
+        results = asyncio.run(
+            execute_provider_queries(
+                scope=self.technology_scope(),
+                plan=plan,
+                providers=[provider],
+                timeout_seconds={provider.name: 0.01},
+            )
+        )
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual([item.status.value for item in results], ["TIMEOUT", "DISABLED"])
 
 
 if __name__ == "__main__":

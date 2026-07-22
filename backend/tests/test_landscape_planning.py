@@ -19,7 +19,17 @@ from landscape.schemas import (
     LandscapePlannedQuery,
     LandscapeQueryPlan,
     LandscapeScope,
+    TechnicalDirectionExpansion,
 )
+
+
+def direction_expansion() -> TechnicalDirectionExpansion:
+    return TechnicalDirectionExpansion(
+        original_term="数据中心液冷",
+        chinese_terms=["数据中心液冷", "冷板液冷", "浸没式液冷"],
+        english_terms=["data center liquid cooling", "cold plate cooling", "immersion cooling"],
+        source="MODEL_INFERRED",
+    )
 
 
 class LandscapePlanningTests(unittest.TestCase):
@@ -31,9 +41,55 @@ class LandscapePlanningTests(unittest.TestCase):
             publication_start=date(2026, 4, 1),
             publication_end=date(2026, 7, 1),
         )
-        plan = build_deterministic_query_plan(scope)
+        plan = build_deterministic_query_plan(scope, direction_expansion())
         self.assertGreaterEqual(len(plan.queries), 2)
-        self.assertLessEqual(len(plan.queries), 6)
+        self.assertLessEqual(len(plan.queries), 40)
+        self.assertIn("data center liquid cooling", " ".join(item.query_text for item in plan.queries))
+        validate_query_plan_scope(plan, scope)
+
+    def test_every_competitor_receives_bilingual_combined_queries(self) -> None:
+        competitors = [
+            CompetitorInput(name="中科曙光", aliases=["Sugon"]),
+            CompetitorInput(name="华为", aliases=["Huawei"]),
+            CompetitorInput(name="英伟达", aliases=["NVIDIA"]),
+            CompetitorInput(name="浪潮", aliases=["Inspur"]),
+        ]
+        scope = LandscapeScope(
+            technology_direction="数据中心液冷",
+            competitors=competitors,
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 7, 1),
+        )
+        plan = build_deterministic_query_plan(scope, direction_expansion())
+        self.assertEqual(len(plan.queries), 8)
+        for competitor in competitors:
+            queries = [
+                item for item in plan.queries if competitor.name in item.rationale
+            ]
+            self.assertEqual(len(queries), 2, competitor.name)
+            joined = " ".join(item.query_text for item in queries)
+            self.assertIn(competitor.name, joined)
+            self.assertIn("data center liquid cooling", joined)
+            self.assertIn("数据中心液冷", joined)
+        validate_query_plan_scope(plan, scope)
+
+    def test_competitor_only_plan_covers_every_competitor(self) -> None:
+        scope = LandscapeScope(
+            competitors=[
+                CompetitorInput(name="Huawei", aliases=["华为"]),
+                CompetitorInput(name="Samsung", aliases=["三星"]),
+                CompetitorInput(name="NVIDIA", aliases=["英伟达"]),
+                CompetitorInput(name="Inspur", aliases=["浪潮"]),
+            ],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 7, 1),
+        )
+        plan = build_deterministic_query_plan(scope)
+        self.assertEqual(len(plan.queries), 8)
+        for competitor in scope.competitors:
+            self.assertEqual(
+                sum(competitor.name in item.query_text for item in plan.queries), 2
+            )
         validate_query_plan_scope(plan, scope)
 
     def test_combined_mode_plan_must_retain_both_anchors(self) -> None:
@@ -44,12 +100,14 @@ class LandscapePlanningTests(unittest.TestCase):
             publication_end=date(2026, 7, 1),
         )
         plan = LandscapeQueryPlan(
+            direction_terms=["数据中心液冷", "liquid cooling"],
+            direction_english_terms=["liquid cooling"],
             queries=[
                 LandscapePlannedQuery(query_text="数据中心液冷", language="zh", rationale="x"),
                 LandscapePlannedQuery(query_text="liquid cooling", language="en", rationale="x"),
             ]
         )
-        with self.assertRaisesRegex(ValueError, "confirmed competitor"):
+        with self.assertRaisesRegex(ValueError, "competitor: Huawei"):
             validate_query_plan_scope(plan, scope)
 
     def test_alias_plan_cannot_change_or_cross_competitor_entities(self) -> None:
@@ -103,7 +161,7 @@ class LandscapePlanningTests(unittest.TestCase):
                 LandscapePlannedQuery(query_text="Apple", language="en", rationale="x"),
             ]
         )
-        with self.assertRaisesRegex(ValueError, "confirmed competitor"):
+        with self.assertRaisesRegex(ValueError, "competitor: Huawei"):
             validate_query_plan_scope(plan, scope)
 
 
