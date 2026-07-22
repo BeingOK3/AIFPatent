@@ -93,3 +93,12 @@
 - Git 节奏：本提交作为第 8 个工作单元，将与第 7 个真实验收修复提交一起推送远程 `develop`。
 - 涉及文件：`development/landscape/{README,implementation-plan,acceptance,development-log}.md`。
 - 验证：文档不包含 API Key；`git diff --check` 待提交前执行。
+
+## 2026-07-22 — LANDSCAPE-ENTRY-009
+
+- 类型：首页业务入口补充。
+- 原因：独立页面和 `/landscape` 路由已可用，但 IDEA 首页没有可见导航，用户只能手工输入 URL。
+- 实现：首页右上方新增“专利态势分析 / 生成新公开专利调查报告”入口卡片，桌面端与系统状态并列，移动端自适应整行展示。
+- 冻结边界：仅修改 `frontend/index.html` 和 `frontend/style.css` 的静态导航，未修改 `frontend/app.js` 或 IDEA 业务状态机。
+- 测试：`test_frontend.py` 新增入口 URL、名称、报告说明和样式契约；前端 7 个测试通过，`git diff --check` 通过。
+- Git：功能提交 `a053de6`；本日志提交后将按两提交节奏一起推送远程。

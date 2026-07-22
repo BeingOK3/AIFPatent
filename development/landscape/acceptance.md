@@ -7,6 +7,7 @@
 ## 可用入口
 
 - 页面：`http://localhost:8001/landscape`
+- 首页入口：打开 `http://localhost:8001`，点击右上方“专利态势分析”卡片。
 - API：`/api/landscape/*`
 - 启动：项目根目录执行 `./start.sh`
 - 停止并保留数据：项目根目录执行 `./stop.sh`
