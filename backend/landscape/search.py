@@ -185,7 +185,6 @@ async def execute_provider_queries(
     semaphores = {provider.name: asyncio.Semaphore(1) for provider in providers}
     circuits: dict[str, tuple[str, str] | None] = {provider.name: None for provider in providers}
     last_call_at: dict[str, float] = {}
-    rate_limited_until: dict[str, float] = {}
 
     def provider_timeout(name: str) -> float:
         if isinstance(timeout_seconds, dict):
@@ -209,7 +208,6 @@ async def execute_provider_queries(
                 delay = max(
                     0.0,
                     last_call_at.get(provider.name, 0.0) + 1.0 - time.monotonic(),
-                    rate_limited_until.get(provider.name, 0.0) - time.monotonic(),
                 )
                 if delay:
                     await asyncio.sleep(delay)
@@ -231,8 +229,15 @@ async def execute_provider_queries(
                     result.error_code,
                     result.error_message or "SerpAPI provider disabled for this run",
                 )
-            elif result.error_message and "429 Too Many Requests" in result.error_message:
-                rate_limited_until[provider.name] = time.monotonic() + 10.0
+            elif (
+                provider.name == "exa_mcp"
+                and result.error_message
+                and "429 Too Many Requests" in result.error_message
+            ):
+                circuits[provider.name] = (
+                    "EXA_RATE_LIMITED",
+                    "Exa anonymous quota or rate limit reached; remaining queries skipped",
+                )
             return result
 
     calls = []

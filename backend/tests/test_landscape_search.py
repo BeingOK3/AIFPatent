@@ -256,6 +256,40 @@ class LandscapeSearchTests(unittest.TestCase):
         self.assertEqual(provider.calls, 1)
         self.assertEqual([item.status.value for item in results], ["ERROR", "DISABLED"])
 
+    def test_exa_rate_limit_opens_run_scoped_circuit(self) -> None:
+        provider = FailingProvider("exa_mcp", "HTTPStatusError")
+
+        async def rate_limited(_query):
+            provider.calls += 1
+            error = RuntimeError("429 Too Many Requests")
+            error.error_code = "HTTPStatusError"
+            raise error
+
+        provider.search = rate_limited
+        plan = LandscapeQueryPlan(
+            direction_terms=["liquid cooling"],
+            direction_english_terms=["liquid cooling"],
+            queries=[
+                LandscapePlannedQuery(
+                    query_text="liquid cooling", language="en", rationale="one"
+                ),
+                LandscapePlannedQuery(
+                    query_text='"liquid cooling"', language="en", rationale="two"
+                ),
+            ],
+        )
+        results = asyncio.run(
+            execute_provider_queries(
+                scope=self.technology_scope(),
+                plan=plan,
+                providers=[provider],
+                timeout_seconds={provider.name: 1},
+            )
+        )
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual([item.status.value for item in results], ["ERROR", "DISABLED"])
+        self.assertEqual(results[1].error_code, "EXA_RATE_LIMITED")
+
 
 if __name__ == "__main__":
     unittest.main()

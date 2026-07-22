@@ -38,6 +38,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.rag.hybrid.final_limit, 12)
         self.assertEqual(config.search.providers.exa_mcp.fetch_tool, "web_fetch_exa")
         self.assertEqual(config.search.providers.exa_mcp.fetch_max_characters, 300_000)
+        self.assertFalse(config.search.providers.exa_mcp.enabled)
+        self.assertFalse(config.search.providers.google_patents_local.enabled)
+        self.assertTrue(config.search.providers.serpapi_google_patents.enabled)
         self.assertEqual(
             config.search.providers.serpapi_google_patents.search_engine,
             "google_patents",

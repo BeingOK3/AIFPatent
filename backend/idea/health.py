@@ -11,6 +11,7 @@ import httpx
 from .cache import CacheStore
 from .config import AppConfig
 from .database import Database
+from .providers.serpapi import SerpApiPatentProvider
 
 
 Probe = Callable[[], Awaitable[tuple[bool, str]]]
@@ -39,6 +40,7 @@ class HealthService:
         langgraph = self._check_langgraph()
         model = self._check_model_auth()
         embedding = self._check_embedding_auth()
+        serpapi = self._check_serpapi_config()
         exa = self._check_exa_config()
         google = await self._timed_google_probe()
         recovery_ready = self.workflow_recovery_ready()
@@ -47,12 +49,15 @@ class HealthService:
             "status": "ready" if recovery_ready else "pending",
             "detail": "recovery loop is ready" if recovery_ready else "workflow not connected yet",
         }
-        provider_available = exa["ok"] or google["ok"] or self.config.search.providers.local_cache.enabled
+        online_providers = (serpapi, exa, google)
+        provider_available = any(
+            component.get("available", False) for component in online_providers
+        ) or self.config.search.providers.local_cache.enabled
         core_ok = (
             database["ok"] and cache["ok"] and langgraph["ok"]
             and model["ok"] and embedding["ok"]
         )
-        all_online = exa["ok"] and google["ok"]
+        all_online = all(component["ok"] for component in online_providers)
         status = "ok" if core_ok and all_online and recovery_ready else "degraded"
         if not core_ok or not provider_available:
             status = "error"
@@ -71,6 +76,7 @@ class HealthService:
                 "langgraph_checkpointer": langgraph,
                 "model": model,
                 "embedding": embedding,
+                "serpapi_google_patents": serpapi,
                 "exa_mcp": exa,
                 "google_patents_local": google,
                 "cache": cache,
@@ -157,14 +163,37 @@ class HealthService:
     def _check_exa_config(self) -> dict:
         settings = self.config.search.providers.exa_mcp
         if not settings.enabled:
-            return {"ok": False, "status": "disabled"}
+            return {"ok": True, "status": "disabled", "available": False}
         configured = bool(str(settings.endpoint)) and bool(
             settings.search_tool and settings.fetch_tool
         )
         return {
             "ok": configured,
+            "available": configured,
             "status": "configured" if configured else "error",
             "detail": "unified configuration present; runtime calls are audited separately",
+        }
+
+    def _check_serpapi_config(self) -> dict:
+        settings = self.config.search.providers.serpapi_google_patents
+        if not settings.enabled:
+            return {"ok": True, "status": "disabled", "available": False}
+        try:
+            SerpApiPatentProvider(settings).api_key()
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status": "error",
+                "available": False,
+                "credential_source": "local_json",
+                "detail": getattr(exc, "error_code", type(exc).__name__),
+            }
+        return {
+            "ok": True,
+            "status": "configured",
+            "available": True,
+            "credential_source": "local_json",
+            "detail": "local credential is configured",
         }
 
     async def _probe_google_patents(self) -> tuple[bool, str]:
@@ -184,7 +213,12 @@ class HealthService:
         try:
             try:
                 response = await probe(trust_env=settings.trust_environment_proxy)
-            except (ImportError, httpx.ProxyError, httpx.ConnectError):
+            except (
+                ImportError,
+                httpx.ProxyError,
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+            ):
                 if not settings.fallback_to_direct or not settings.trust_environment_proxy:
                     raise
                 response = await probe(trust_env=False)
@@ -193,6 +227,14 @@ class HealthService:
             return False, type(exc).__name__
 
     async def _timed_google_probe(self) -> dict:
+        if not self.config.search.providers.google_patents_local.enabled:
+            return {
+                "ok": True,
+                "status": "disabled",
+                "available": False,
+                "detail": "disabled by configuration",
+                "duration_ms": 0,
+            }
         started = time.monotonic()
         try:
             ok, detail = await self.google_patents_probe()
@@ -200,6 +242,7 @@ class HealthService:
             ok, detail = False, type(exc).__name__
         return {
             "ok": ok,
+            "available": ok,
             "status": "ready" if ok else "degraded",
             "detail": detail,
             "duration_ms": round((time.monotonic() - started) * 1000),

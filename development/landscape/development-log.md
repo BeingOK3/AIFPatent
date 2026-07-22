@@ -204,3 +204,14 @@
 - 安全：发现 `httpx` INFO 把带查询参数的 SerpAPI URL 写入旧容器日志；修复要求关闭底层完整 URL 日志、重建容器并建议轮换已暴露 Key。
 - 决策：当前部署默认只启用已实测连通的 SerpAPI；保留 Exa/Google Provider，通过配置在具备额度或网络条件的环境重新启用。
 - 设计：详见 `network-provider-incident.md`；代码、测试与容器验收作为第 22 个工作单元。
+
+## 2026-07-22 — LANDSCAPE-PROVIDER-RECOVERY-022
+
+- 类型：默认搜索链路恢复、限流熔断、日期规范化和日志凭证修复。
+- SerpAPI：纯申请人 OR 检索转换为官方 `assignee` 参数，名称含逗号时使用括号；“未返回结果”映射为成功空集，不再误报 Provider 故障。真实结构化申请人检索返回 10 条结果。
+- 调度：当前环境默认只启用 SerpAPI；匿名 Exa 和 Google 直连默认关闭但保留实现。Exa 重新启用后若首次 429，会立即对当前 Run 熔断；Google/Exa/健康探测均补齐代理连接超时后的直连回退。
+- 健康：新增 SerpAPI 本地凭证健康项；disabled Provider 被视为正常配置且不计入在线可用性，部署结果为 `overall=ok`、SerpAPI=`configured`。
+- 日期：修复最新季度 Run 实际只有一个月的问题；非自定义预设由后端按结束日强制规范为 1/3/6/12 个自然月，前端同步使用 UTC 和月末安全计算。
+- 安全：关闭 `httpx`/`httpcore` 完整 URL INFO 日志；启动时定向脱敏旧日志 query-string Key。6 个历史值已替换为 `[REDACTED]`，持久化日志和新容器 stdout 的真实 Key 命中均为 0。
+- 验证：49 项 Landscape 测试、74 项 Provider/健康/配置/容器测试、Python 编译、Node 语法和 Diff 检查通过；App、PostgreSQL、Redis、MinIO 均 healthy。
+- Git：本实现作为第 22 个工作单元，将与第 21 个事故分析提交一起推送远程 `develop`。

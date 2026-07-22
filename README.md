@@ -49,6 +49,8 @@ chmod 600 config/provider-credentials.local.json
 
 真实文件已同时加入 `.gitignore` 和 `.dockerignore`；Compose 将其作为只读 Secret 挂载，不会烘焙进应用镜像。
 
+当前默认检索策略只启用 SerpAPI。匿名 Exa MCP 在无独立额度时容易返回 429，Google Patents 直连在部分国内网络会连接超时，因此两者默认关闭但实现仍保留；部署环境具备 Exa 额度或可访问 Google 时，可在 `config/ai4patent.json` 对应 Provider 中重新设置 `enabled: true`。不要用 `ping` 判断搜索是否可用：不少站点会禁用 ICMP，应以 `/api/system/health` 和实际 HTTPS 请求为准。
+
 浏览器访问 `http://localhost:8001`。停止服务并保留数据：
 
 ```bash

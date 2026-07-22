@@ -1,6 +1,6 @@
 # Landscape Provider 网络与检索故障复盘
 
-状态：`APPROVED_FOR_IMPLEMENTATION`
+状态：`IMPLEMENTED_AND_VERIFIED`
 
 日期：2026-07-22
 
@@ -33,3 +33,11 @@
 - 默认运行时只装配 SerpAPI，Google 直连和匿名 Exa 不制造全局 Provider Failure。
 - 新容器日志不再出现 `api_key=`、SerpAPI Key 或完整外部请求 URL。
 - 容器内受控 SerpAPI 查询至少返回一条结构化专利结果。
+
+## 验收结果
+
+- 新 Provider 使用结构化申请人参数真实检索返回 10 条结果。
+- 服务健康状态为 `ok`，SerpAPI 为 `configured`，Exa 和 Google 直连为 `disabled`。
+- 旧持久化日志中的 6 个 Key 值已原位替换为 `[REDACTED]`，新容器 stdout 和应用日志真实 Key 命中均为 0。
+- `QUARTER` 标签与一个月日期不一致的问题同时修复；后端现将季度范围规范为结束日前 3 个自然月。
+- 49 项 Landscape 测试和 74 项 Provider、健康、配置、容器相关测试通过，四个 Compose 服务均为 healthy。

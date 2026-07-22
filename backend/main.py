@@ -9,6 +9,7 @@ from idea.api import RunTaskManager, create_idea_router
 from idea.followup_api import create_followup_router
 from idea.config import load_config
 from idea.health import HealthService
+from idea.logging_security import redact_query_credentials
 from idea.runtime import build_runtime
 from landscape.api import create_landscape_router
 from landscape.runtime import build_landscape_runtime
@@ -20,6 +21,7 @@ UPLOADS = WORKSPACE / "uploads"
 UPLOADS.mkdir(parents=True, exist_ok=True)
 LOG_DIR = BASE / "logs"
 LOG_DIR.mkdir(exist_ok=True)
+redact_query_credentials(LOG_DIR / "aifpatent.log")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,6 +34,9 @@ logging.basicConfig(
 logger = logging.getLogger("aifpatent")
 # Suppress noisy uvicorn access logs (200 OK on every /api/files poll etc.)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+# httpx logs the complete URL at INFO; SerpAPI authenticates with a query parameter.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 app = FastAPI(title="AIFPatent 专利工作台")
 

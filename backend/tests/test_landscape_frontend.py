@@ -42,6 +42,11 @@ class LandscapeFrontendContractTests(unittest.TestCase):
         self.assertNotIn("serpapi_api_key", self.javascript)
         self.assertNotIn("localStorage", self.javascript)
 
+    def test_quarter_preset_uses_three_calendar_months(self) -> None:
+        self.assertIn("QUARTER: 3", self.javascript)
+        self.assertIn("getUTCFullYear", self.javascript)
+        self.assertIn("getUTCDate", self.javascript)
+
 
 if __name__ == "__main__":
     unittest.main()

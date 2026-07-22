@@ -526,7 +526,7 @@ class GooglePatentsProvider(SearchProvider):
             return await self._http_get(
                 url, trust_env=self.settings.trust_environment_proxy, gate=gate
             )
-        except (ImportError, httpx.ProxyError, httpx.ConnectError):
+        except (ImportError, httpx.ProxyError, httpx.ConnectError, httpx.ConnectTimeout):
             if not self.settings.fallback_to_direct or not self.settings.trust_environment_proxy:
                 raise
             return await self._http_get(url, trust_env=False, gate=gate)

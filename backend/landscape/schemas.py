@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from datetime import date
 from enum import StrEnum
 from typing import Literal
@@ -23,6 +24,22 @@ class PeriodPreset(StrEnum):
     SIX_MONTHS = "SIX_MONTHS"
     TWELVE_MONTHS = "TWELVE_MONTHS"
     CUSTOM = "CUSTOM"
+
+
+_PRESET_MONTHS = {
+    PeriodPreset.ONE_MONTH: 1,
+    PeriodPreset.QUARTER: 3,
+    PeriodPreset.SIX_MONTHS: 6,
+    PeriodPreset.TWELVE_MONTHS: 12,
+}
+
+
+def subtract_calendar_months(value: date, months: int) -> date:
+    month_index = value.year * 12 + value.month - 1 - months
+    year, zero_based_month = divmod(month_index, 12)
+    month = zero_based_month + 1
+    day = min(value.day, monthrange(year, month)[1])
+    return date(year, month, day)
 
 
 class RunStatus(StrEnum):
@@ -100,6 +117,11 @@ class LandscapeScope(LandscapeModel):
 
     @model_validator(mode="after")
     def validate_scope(self) -> "LandscapeScope":
+        preset_months = _PRESET_MONTHS.get(self.period_preset)
+        if preset_months is not None:
+            self.publication_start = subtract_calendar_months(
+                self.publication_end, preset_months
+            )
         if self.publication_end < self.publication_start:
             raise ValueError("publication_end must be >= publication_start")
         if (self.publication_end - self.publication_start).days > 366:

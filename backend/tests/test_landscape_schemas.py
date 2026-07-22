@@ -5,7 +5,12 @@ from datetime import date
 
 from pydantic import ValidationError
 
-from landscape.schemas import AnalysisMode, CompetitorInput, LandscapeScope
+from landscape.schemas import (
+    AnalysisMode,
+    CompetitorInput,
+    LandscapeScope,
+    PeriodPreset,
+)
 
 
 class LandscapeSchemaTests(unittest.TestCase):
@@ -75,6 +80,23 @@ class LandscapeSchemaTests(unittest.TestCase):
                 publication_start=date(2025, 1, 1),
                 publication_end=date(2026, 7, 1),
             )
+
+    def test_period_preset_is_server_authoritative(self) -> None:
+        scope = LandscapeScope(
+            technology_direction="液冷",
+            period_preset=PeriodPreset.QUARTER,
+            publication_start=date(2026, 6, 21),
+            publication_end=date(2026, 7, 22),
+        )
+        self.assertEqual(scope.publication_start, date(2026, 4, 22))
+
+        month_end = LandscapeScope(
+            technology_direction="液冷",
+            period_preset=PeriodPreset.ONE_MONTH,
+            publication_start=date(2026, 3, 1),
+            publication_end=date(2026, 3, 31),
+        )
+        self.assertEqual(month_end.publication_start, date(2026, 2, 28))
 
 
 if __name__ == "__main__":

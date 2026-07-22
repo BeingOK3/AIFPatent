@@ -18,6 +18,7 @@ SerpApiTransport = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 DescriptionTransport = Callable[[str], Awaitable[str]]
 
 _WINDOW_PATTERN = re.compile(r"\s+(after|before)=publication:(\d{8})(?=\s|$)")
+_ASSIGNEE_PATTERN = re.compile(r'assignee:"([^"]+)"', re.IGNORECASE)
 
 
 class SerpApiError(RuntimeError):
@@ -196,6 +197,7 @@ class SerpApiPatentProvider(SearchProvider):
 
     async def search(self, query: SearchQuery) -> list[SearchHit]:
         query_text, window = self._extract_window(query.text)
+        query_text, assignees = self._extract_assignees(query_text)
         arguments: dict[str, Any] = {
             "engine": self.settings.search_engine,
             "q": query_text,
@@ -204,6 +206,10 @@ class SerpApiPatentProvider(SearchProvider):
             "scholar": "false",
             "dups": "language",
         }
+        if assignees:
+            arguments["assignee"] = ",".join(
+                f"({name})" if "," in name else name for name in assignees
+            )
         arguments.update(window)
         payload = await self._call(arguments)
         results = payload.get("organic_results") or []
@@ -278,6 +284,18 @@ class SerpApiPatentProvider(SearchProvider):
             window[match.group(1)] = f"publication:{match.group(2)}"
         return _WINDOW_PATTERN.sub("", query_text).strip(), window
 
+    @staticmethod
+    def _extract_assignees(query_text: str) -> tuple[str, list[str]]:
+        """Move a pure assignee OR expression to SerpAPI's structured parameter."""
+        names = list(dict.fromkeys(_ASSIGNEE_PATTERN.findall(query_text)))
+        if not names:
+            return query_text, []
+        residual = _ASSIGNEE_PATTERN.sub("", query_text)
+        residual = re.sub(r"\bOR\b", "", residual, flags=re.IGNORECASE)
+        if residual.strip(" ()"):
+            return query_text, []
+        return names[0], names
+
     async def _call(self, arguments: dict[str, Any]) -> dict[str, Any]:
         cache_key = "serpapi:" + json.dumps(
             arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -298,7 +316,12 @@ class SerpApiPatentProvider(SearchProvider):
                         "SERPAPI_CONTRACT_ERROR", "SerpAPI returned a non-object response"
                     )
                 if payload.get("error"):
-                    raise self._payload_error(str(payload["error"]), key)
+                    error_message = str(payload["error"])
+                    if self._is_empty_result_error(error_message):
+                        payload = {**payload, "organic_results": []}
+                        payload.pop("error", None)
+                    else:
+                        raise self._payload_error(error_message, key)
                 if self.cache is not None:
                     self.cache.put_bytes(
                         cache_key,
@@ -330,6 +353,11 @@ class SerpApiPatentProvider(SearchProvider):
         if "run out" in lowered or "rate limit" in lowered or "searches" in lowered:
             return SerpApiError("SERPAPI_RATE_LIMITED", safe)
         return SerpApiError("SERPAPI_ERROR", safe)
+
+    @staticmethod
+    def _is_empty_result_error(message: str) -> bool:
+        normalized = message.casefold()
+        return "hasn't returned any results" in normalized or "has not returned any results" in normalized
 
     async def _http_json(self, params: dict[str, Any]) -> dict[str, Any]:
         try:

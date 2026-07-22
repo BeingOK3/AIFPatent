@@ -7,6 +7,7 @@ from pathlib import Path
 DOCKERFILE = Path("deploy/app/Dockerfile")
 DOCKERIGNORE = Path(".dockerignore")
 ENTRYPOINT = Path("deploy/app/container-entrypoint.sh")
+MAIN = Path("backend/main.py")
 
 
 class ApplicationContainerTests(unittest.TestCase):
@@ -14,6 +15,7 @@ class ApplicationContainerTests(unittest.TestCase):
         self.dockerfile = DOCKERFILE.read_text(encoding="utf-8")
         self.dockerignore = DOCKERIGNORE.read_text(encoding="utf-8")
         self.entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
+        self.main = MAIN.read_text(encoding="utf-8")
 
     def test_runtime_is_pinned_non_root_and_single_worker(self) -> None:
         self.assertIn("python:3.12.13-slim-bookworm@sha256:", self.dockerfile)
@@ -27,6 +29,10 @@ class ApplicationContainerTests(unittest.TestCase):
         self.assertIn("install -m 0400 -o 10001 -g 10001", self.entrypoint)
         self.assertIn("setpriv --reuid=10001 --regid=10001", self.entrypoint)
         self.assertNotIn("api_key", self.entrypoint.lower())
+
+    def test_http_client_does_not_log_complete_credential_urls(self) -> None:
+        self.assertIn('logging.getLogger("httpx").setLevel(logging.WARNING)', self.main)
+        self.assertIn('logging.getLogger("httpcore").setLevel(logging.WARNING)', self.main)
 
     def test_runtime_directories_and_assets_are_present(self) -> None:
         for path in (

@@ -25,6 +25,14 @@ class HealthServiceTests(unittest.TestCase):
         raw["storage"]["document_store_dir"] = str(root / "cache" / "documents")
         raw["storage"]["runs_dir"] = str(root / "runs")
         raw["storage"]["uploads_dir"] = str(root / "uploads")
+        credentials = root / "provider-credentials.json"
+        credentials.write_text(
+            json.dumps({"serpapi": {"api_key": "fixture-secret"}}),
+            encoding="utf-8",
+        )
+        raw["search"]["providers"]["serpapi_google_patents"]["api_key_file"] = str(
+            credentials
+        )
         config_path = root / "config.json"
         config_path.write_text(json.dumps(raw), encoding="utf-8")
         self.config = load_config(config_path)
@@ -40,12 +48,24 @@ class HealthServiceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def service(self, google_ok=True, recovery=True):
+    def service(self, google_ok=True, recovery=True, *, exa=False, google=False):
         async def google_probe():
             return google_ok, "fixture"
 
+        providers = self.config.search.providers.model_copy(
+            update={
+                "exa_mcp": self.config.search.providers.exa_mcp.model_copy(
+                    update={"enabled": exa}
+                ),
+                "google_patents_local": self.config.search.providers.google_patents_local.model_copy(
+                    update={"enabled": google}
+                ),
+            }
+        )
+        search = self.config.search.model_copy(update={"providers": providers})
+        config = self.config.model_copy(update={"search": search})
         return HealthService(
-            self.config,
+            config,
             self.db,
             self.cache,
             google_patents_probe=google_probe,
@@ -63,9 +83,18 @@ class HealthServiceTests(unittest.TestCase):
         self.assertEqual(result["components"]["model"]["status"], "runtime_required")
         self.assertEqual(result["components"]["embedding"]["status"], "disabled")
         self.assertEqual(result["components"]["embedding"]["mode"], "LEXICAL_ONLY")
+        self.assertEqual(
+            result["components"]["serpapi_google_patents"]["status"], "configured"
+        )
+        self.assertEqual(result["components"]["exa_mcp"]["status"], "disabled")
+        self.assertEqual(
+            result["components"]["google_patents_local"]["status"], "disabled"
+        )
 
     def test_one_online_provider_can_degrade_without_core_failure(self) -> None:
-        result = asyncio.run(self.service(google_ok=False).check())
+        result = asyncio.run(
+            self.service(google_ok=False, exa=True, google=True).check()
+        )
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], "degraded")
         self.assertTrue(result["components"]["exa_mcp"]["ok"])
@@ -75,13 +104,7 @@ class HealthServiceTests(unittest.TestCase):
         async def google_probe():
             return True, "fixture"
 
-        service = HealthService(
-            self.config,
-            self.db,
-            self.cache,
-            google_patents_probe=google_probe,
-            workflow_recovery_ready=lambda: True,
-        )
+        service = self.service(exa=True, google=True)
         result = asyncio.run(service.check())
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], "ok")
@@ -105,6 +128,7 @@ class HealthServiceTests(unittest.TestCase):
         result = asyncio.run(self.service().check())
         rendered = json.dumps(result)
         self.assertNotIn("apiKey", rendered)
+        self.assertNotIn("fixture-secret", rendered)
 
     def test_enabled_embedding_reports_only_deployment_credential_presence(self) -> None:
         settings = self.config.embedding.model_copy(update={"enabled": True})
@@ -123,12 +147,7 @@ class HealthServiceTests(unittest.TestCase):
         self.assertNotIn("secret-value", json.dumps(component))
 
     def test_google_probe_falls_back_from_broken_proxy_to_direct(self) -> None:
-        service = HealthService(
-            self.config,
-            self.db,
-            self.cache,
-            workflow_recovery_ready=lambda: True,
-        )
+        service = self.service(google=True)
         response = AsyncMock()
         response.status_code = 200
         with patch.object(

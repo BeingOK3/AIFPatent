@@ -84,7 +84,7 @@
         "fallback_to_direct": true
       },
       "exa_mcp": {
-        "enabled": true,
+        "enabled": false,
         "timeout_seconds": 45,
         "max_attempts": 3,
         "endpoint": "https://mcp.exa.ai/mcp",
@@ -93,7 +93,7 @@
         "fetch_max_characters": 300000
       },
       "google_patents_local": {
-        "enabled": true,
+        "enabled": false,
         "timeout_seconds": 45,
         "max_attempts": 3,
         "base_url": "https://patents.google.com",

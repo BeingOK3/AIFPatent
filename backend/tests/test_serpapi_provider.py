@@ -124,6 +124,36 @@ class SerpApiProviderTests(unittest.TestCase):
         self.assertEqual(arguments["num"], 10)
         self.assertEqual(arguments["api_key"], self.key)
 
+    def test_assignee_expression_uses_structured_parameter(self) -> None:
+        query = self.query().model_copy(
+            update={
+                "text": (
+                    'assignee:"华为" OR assignee:"Huawei Technologies Co., Ltd." '
+                    "after=publication:20250721 before=publication:20260723"
+                )
+            }
+        )
+        asyncio.run(self.provider().search(query))
+        arguments = self.calls[0]
+        self.assertEqual(arguments["q"], "华为")
+        self.assertEqual(
+            arguments["assignee"], "华为,(Huawei Technologies Co., Ltd.)"
+        )
+        self.assertNotIn("assignee:", arguments["q"])
+
+    def test_no_results_payload_is_a_successful_empty_result(self) -> None:
+        async def no_results(_arguments):
+            return {"error": "Google Patents hasn't returned any results for this query."}
+
+        result = asyncio.run(
+            ProviderRunner().search(
+                self.provider(transport=no_results), self.query(), timeout_seconds=1
+            )
+        )
+        self.assertEqual(result.status, ProviderStatus.EMPTY)
+        self.assertEqual(result.hits, [])
+        self.assertIsNone(result.error_code)
+
     def test_details_map_claims_description_family_and_offsets(self) -> None:
         request = FetchRequest(request_id="F-SERP-1", publication_number="US123A1")
         result = asyncio.run(

@@ -89,7 +89,7 @@ class McpHttpClient:
     ) -> tuple[dict, dict[str, str]]:
         try:
             return await self._post(payload, headers, trust_env=True)
-        except (ImportError, httpx.ProxyError, httpx.ConnectError):
+        except (ImportError, httpx.ProxyError, httpx.ConnectError, httpx.ConnectTimeout):
             return await self._post(payload, headers, trust_env=False)
 
     async def _post(

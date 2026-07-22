@@ -9,7 +9,7 @@
     return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
   }
   function today() { return new Date().toISOString().slice(0, 10); }
-  function shiftMonths(source, months) { const value = new Date(`${source}T00:00:00`); value.setMonth(value.getMonth() - months); return value.toISOString().slice(0, 10); }
+  function shiftMonths(source, months) { const value = new Date(`${source}T00:00:00Z`); const monthIndex = value.getUTCFullYear() * 12 + value.getUTCMonth() - months; const year = Math.floor(monthIndex / 12); const month = ((monthIndex % 12) + 12) % 12; const day = Math.min(value.getUTCDate(), new Date(Date.UTC(year, month + 1, 0)).getUTCDate()); return new Date(Date.UTC(year, month, day)).toISOString().slice(0, 10); }
   function presetDates() {
     const end = today(); const preset = $("period-preset").value;
     const months = { ONE_MONTH: 1, QUARTER: 3, SIX_MONTHS: 6, TWELVE_MONTHS: 12 }[preset];
