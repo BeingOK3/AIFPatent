@@ -55,7 +55,6 @@ class LandscapeRuntimeRequest(ApiModel):
             model=self.model,
         )
 
-
 class CreateLandscapeRunRequest(LandscapeRuntimeRequest):
     scope: LandscapeScope
 
@@ -82,6 +81,7 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
                     "model": request.model,
                     "base_url": str(request.base_url).rstrip("/"),
                     "credential_source": "per_run_memory",
+                    "serpapi_credential_source": "local_json",
                 },
             )
             store.initialize_run(
@@ -169,6 +169,7 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
                     "model": request.model,
                     "base_url": str(request.base_url).rstrip("/"),
                     "credential_source": "per_run_memory",
+                    "serpapi_credential_source": "local_json",
                 },
                 parent_run_id=run_id,
             )

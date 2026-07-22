@@ -37,7 +37,6 @@ app = FastAPI(title="AIFPatent 专利工作台")
 
 APP_CONFIG = load_config()
 IDEA_RUNTIME = build_runtime(APP_CONFIG)
-LANDSCAPE_RUNTIME = build_landscape_runtime(APP_CONFIG)
 IDEA_DB = IDEA_RUNTIME.database
 IDEA_CACHE = IDEA_RUNTIME.cache
 IDEA_RUN_STORE = IDEA_RUNTIME.run_store
@@ -48,6 +47,7 @@ IDEA_TASKS = RunTaskManager(
     IDEA_RUNTIME.executor,
     debug_log=IDEA_RUNTIME.debug_log,
 )
+LANDSCAPE_RUNTIME = build_landscape_runtime(APP_CONFIG, cache=IDEA_CACHE)
 HEALTH_SERVICE = HealthService(
     APP_CONFIG,
     IDEA_DB,

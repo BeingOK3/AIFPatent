@@ -222,7 +222,16 @@ async def execute_provider_queries(
                     "PROVIDER_CIRCUIT_OPEN",
                     "Google Patents timed out; remaining queries skipped for this run",
                 )
-            if result.error_message and "429 Too Many Requests" in result.error_message:
+            if provider.name == "serpapi_google_patents" and result.error_code in {
+                "SERPAPI_RATE_LIMITED",
+                "SERPAPI_API_KEY_REQUIRED",
+                "SERPAPI_AUTH_ERROR",
+            }:
+                circuits[provider.name] = (
+                    result.error_code,
+                    result.error_message or "SerpAPI provider disabled for this run",
+                )
+            elif result.error_message and "429 Too Many Requests" in result.error_message:
                 rate_limited_until[provider.name] = time.monotonic() + 10.0
             return result
 

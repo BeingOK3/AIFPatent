@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import secrets
 import shutil
@@ -16,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_ROOT = PROJECT_ROOT / "deploy" / "rag"
 COMPOSE_PATH = DEPLOY_ROOT / "compose.yml"
 ENV_PATH = DEPLOY_ROOT / "rag.env"
+PROVIDER_CREDENTIALS_PATH = PROJECT_ROOT / "config" / "provider-credentials.local.json"
 REQUIRED_KEYS = (
     "AIFPATENT_POSTGRES_DB",
     "AIFPATENT_POSTGRES_USER",
@@ -54,6 +56,36 @@ def _new_environment() -> str:
         "AIFPATENT_GOPROXY": "https://proxy.golang.org,direct",
     }
     return "".join(f"{key}={value}\n" for key, value in values.items())
+
+
+def _new_provider_credentials() -> str:
+    return json.dumps({"serpapi": {"api_key": ""}}, ensure_ascii=False, indent=2) + "\n"
+
+
+def ensure_provider_credentials(path: Path = PROVIDER_CREDENTIALS_PATH) -> bool:
+    """Create an ignored, private local provider credential file once."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise InfraError(f"invalid local provider credential JSON: {path}") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("serpapi"), dict):
+            raise InfraError("local provider credentials must contain a serpapi object")
+        if stat.S_IMODE(path.stat().st_mode) & 0o077:
+            raise InfraError("local provider credentials must use private permissions (0600)")
+        return False
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(_new_provider_credentials())
+            stream.flush()
+            os.fsync(stream.fileno())
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return True
 
 
 def _parse_environment(path: Path) -> dict[str, str]:
@@ -252,6 +284,12 @@ def run(action: str) -> int:
     created = ensure_environment()
     if created:
         print(f"created local credential file: {ENV_PATH.relative_to(PROJECT_ROOT)}")
+    provider_created = ensure_provider_credentials()
+    if provider_created:
+        print(
+            "created local provider credential file: "
+            f"{PROVIDER_CREDENTIALS_PATH.relative_to(PROJECT_ROOT)}"
+        )
     if action == "up":
         force_object_store = os.environ.get("AIFPATENT_REBUILD_OBJECT_STORE") == "1"
         for service in _build_services(force_object_store=force_object_store):
@@ -300,6 +338,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             created = ensure_environment()
             state = "created" if created else "already valid"
             print(f"local credential file {state}: {ENV_PATH.relative_to(PROJECT_ROOT)}")
+            provider_created = ensure_provider_credentials()
+            provider_state = "created" if provider_created else "already valid"
+            print(
+                f"local provider credential file {provider_state}: "
+                f"{PROVIDER_CREDENTIALS_PATH.relative_to(PROJECT_ROOT)}"
+            )
             return 0
         return run(arguments.action)
     except InfraError as exc:

@@ -35,7 +35,7 @@
         <div class="secret-box"><label class="field"><span>模型 API Key <b>*</b></span><input id="api-key" type="password" autocomplete="off" required placeholder="仅本次 Run 使用，不会保存"></label><div class="two-columns">
           <label class="field"><span>Base URL</span><input id="base-url" value="https://api.deepseek.com" required></label>
           <label class="field"><span>模型</span><input id="model" value="deepseek-v4-flash" required></label>
-        </div></div>
+        </div><p class="muted">SerpAPI 凭证由服务端本地私密 JSON 配置读取，不经过浏览器提交。</p></div>
         <button class="primary" id="submit-button" type="submit">开始分析 <span>→</span></button>
         <p id="form-message" class="form-message" role="status"></p>
       </form>

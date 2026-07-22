@@ -19,6 +19,7 @@ docs
 .env
 .env.*
 deploy/rag/rag.env
+config/provider-credentials.local.json
 
 node_modules
 Thumbs.db

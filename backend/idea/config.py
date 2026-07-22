@@ -128,6 +128,15 @@ class ExaSettings(ProviderSettings):
     fetch_max_characters: int = Field(ge=10_000, le=500_000)
 
 
+class SerpApiSettings(ProviderSettings):
+    endpoint: HttpUrl
+    api_key_file: Path
+    search_engine: str = Field(min_length=1)
+    details_engine: str = Field(min_length=1)
+    trust_environment_proxy: bool
+    fallback_to_direct: bool
+
+
 class GooglePatentsSettings(ProviderSettings):
     base_url: HttpUrl
     min_request_interval_seconds: float = Field(ge=0)
@@ -159,6 +168,7 @@ class LocalCacheProviderSettings(StrictModel):
 
 
 class SearchProviders(StrictModel):
+    serpapi_google_patents: SerpApiSettings
     exa_mcp: ExaSettings
     google_patents_local: GooglePatentsSettings
     local_cache: LocalCacheProviderSettings
@@ -287,4 +297,17 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             "document_store_dir": _absolute(config.storage.document_store_dir, root),
         }
     )
-    return config.model_copy(update={"storage": storage})
+    credentials_override = os.environ.get("AIFPATENT_PROVIDER_CREDENTIALS", "").strip()
+    serpapi = config.search.providers.serpapi_google_patents.model_copy(
+        update={
+            "api_key_file": _absolute(
+                Path(credentials_override) if credentials_override else config.search.providers.serpapi_google_patents.api_key_file,
+                root,
+            )
+        }
+    )
+    providers = config.search.providers.model_copy(
+        update={"serpapi_google_patents": serpapi}
+    )
+    search = config.search.model_copy(update={"providers": providers})
+    return config.model_copy(update={"storage": storage, "search": search})

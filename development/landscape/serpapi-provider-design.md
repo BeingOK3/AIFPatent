@@ -1,6 +1,6 @@
 # SerpAPI Google Patents Provider 设计
 
-状态：`APPROVED_FOR_IMPLEMENTATION`
+状态：`IMPLEMENTED_WITH_LIVE_PROBE_PENDING`
 
 日期：2026-07-22
 
@@ -29,11 +29,11 @@ dups=language
 
 ## 凭证生命周期
 
-- API 请求模型使用 `SecretStr`；空值表示未提供单次凭证。
-- 单次凭证通过 `ContextVar` 绑定当前异步 Run，支持并发 Run 隔离。
-- Provider 优先读取当前 Run 凭证，其次读取部署环境 `SERPAPI_API_KEY`。
-- HTTP 使用请求头 `X-SerpApi-Api-Key`，不把 Key 放进 URL query。
-- Runtime、日志、SQLite、报告和 Debug 只能记录 `per_run_memory | deployment_env | unavailable`，不能记录值。
+- Provider 从 `config/provider-credentials.local.json` 的 `serpapi.api_key` 读取凭证。
+- 真实本地文件加入 `.gitignore` 和 `.dockerignore`，仓库只提交 `config/provider-credentials.example.json`。
+- Docker Compose 通过只读 Secret 挂载本地文件，镜像层不包含真实凭证；本地模式直接读取同一文件。
+- 普通 Search API 按官方协议使用 `api_key` query 参数；应用不记录最终 URL，也不把 HTTP 异常原文透传到 Debug，以避免 URL 中的 Key 泄露。若未来切换 SerpAPI MCP，可使用其 Bearer Header 方式。
+- Runtime、日志、SQLite、报告和 Debug 只能记录来源 `local_json`，不能记录值。
 - 401/403/429 和响应中的 `error` 转换为稳定错误码；错误正文必须脱敏。
 
 ## 配额控制
@@ -57,7 +57,7 @@ dups=language
 ## 验收
 
 1. Provider 单测覆盖查询参数、解析、详情映射、API 错误和密钥脱敏。
-2. Landscape 前端包含独立 SerpAPI Key 密码框，请求负载携带但页面刷新不保留。
+2. Landscape 前端和 Run 请求不包含 SerpAPI Key；本地私密 JSON 和仓库模板字段一致。
 3. Run 配置快照、Debug、数据库和报告均不包含密钥。
 4. 三个 Provider 调用状态在 Debug 中独立显示并参与统一去重。
-5. 使用用户测试 Key 完成一次受控检索，确认至少返回结构化字段；不得在命令、日志或提交中暴露 Key。
+5. 使用用户测试 Key 完成一次受控检索，确认至少返回结构化字段；不得在命令、日志或提交中暴露 Key。当前沙箱外部请求授权受限，本项保留为部署环境联调，不影响本地契约、容器 Secret 与三 Provider 调度验收。

@@ -20,6 +20,7 @@ data/langgraph/
 .env
 .env.*
 deploy/rag/rag.env
+config/provider-credentials.local.json
 
 # User workspace data (runtime)
 workspace/

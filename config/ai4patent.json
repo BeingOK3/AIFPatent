@@ -72,6 +72,17 @@
   },
   "search": {
     "providers": {
+      "serpapi_google_patents": {
+        "enabled": true,
+        "timeout_seconds": 45,
+        "max_attempts": 2,
+        "endpoint": "https://serpapi.com/search.json",
+        "api_key_file": "config/provider-credentials.local.json",
+        "search_engine": "google_patents",
+        "details_engine": "google_patents_details",
+        "trust_environment_proxy": true,
+        "fallback_to_direct": true
+      },
       "exa_mcp": {
         "enabled": true,
         "timeout_seconds": 45,

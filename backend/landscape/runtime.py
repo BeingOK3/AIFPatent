@@ -6,7 +6,12 @@ from pathlib import Path
 
 from idea.config import AppConfig
 from idea.model_client import RuntimeModelConfig, StructuredModelClient
-from idea.providers import ExaMcpProvider, GooglePatentsProvider
+from idea.cache import CacheStore
+from idea.providers import (
+    ExaMcpProvider,
+    GooglePatentsProvider,
+    SerpApiPatentProvider,
+)
 
 from .database import LandscapeDatabase
 from .execution import LandscapeExecutionService
@@ -25,7 +30,11 @@ class LandscapeTaskManager:
         self.tasks: dict[str, asyncio.Task] = {}
         self._runtime_configs: dict[str, RuntimeModelConfig] = {}
 
-    def start(self, run_id: str, runtime_config: RuntimeModelConfig) -> bool:
+    def start(
+        self,
+        run_id: str,
+        runtime_config: RuntimeModelConfig,
+    ) -> bool:
         run = self.database.get_run(run_id)
         if run["status"] in {"COMPLETED", "COMPLETED_WITH_LIMITATIONS", "FAILED", "CANCELLED"}:
             return False
@@ -102,7 +111,9 @@ class LandscapeRuntime:
     tasks: LandscapeTaskManager
 
 
-def build_landscape_runtime(config: AppConfig) -> LandscapeRuntime:
+def build_landscape_runtime(
+    config: AppConfig, *, cache: CacheStore | None = None
+) -> LandscapeRuntime:
     database_path = config.storage.database.with_name("landscape.db")
     checkpoint_path = config.storage.langgraph_database.with_name("landscape-checkpoints.db")
     runs_dir = config.storage.runs_dir.parent / "landscape-runs"
@@ -117,12 +128,18 @@ def build_landscape_runtime(config: AppConfig) -> LandscapeRuntime:
     model = StructuredModelClient(config.model)
     providers = []
     timeouts: dict[str, float] = {}
+    if config.search.providers.serpapi_google_patents.enabled:
+        provider = SerpApiPatentProvider(
+            config.search.providers.serpapi_google_patents, cache=cache
+        )
+        providers.append(provider)
+        timeouts[provider.name] = config.search.providers.serpapi_google_patents.timeout_seconds
     if config.search.providers.google_patents_local.enabled:
-        provider = GooglePatentsProvider(config.search.providers.google_patents_local, cache=None)
+        provider = GooglePatentsProvider(config.search.providers.google_patents_local, cache=cache)
         providers.append(provider)
         timeouts[provider.name] = config.search.providers.google_patents_local.timeout_seconds
     if config.search.providers.exa_mcp.enabled:
-        provider = ExaMcpProvider(config.search.providers.exa_mcp, cache=None)
+        provider = ExaMcpProvider(config.search.providers.exa_mcp, cache=cache)
         providers.append(provider)
         timeouts[provider.name] = config.search.providers.exa_mcp.timeout_seconds
     report_service = LandscapeReportService(database, store)

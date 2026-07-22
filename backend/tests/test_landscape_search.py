@@ -43,6 +43,18 @@ class TrackingProvider(SearchProvider):
         raise NotImplementedError
 
 
+class FailingProvider(TrackingProvider):
+    def __init__(self, name: str, error_code: str):
+        super().__init__(name, 0)
+        self.error_code = error_code
+
+    async def search(self, query):
+        self.calls += 1
+        error = RuntimeError("provider unavailable")
+        error.error_code = self.error_code
+        raise error
+
+
 def hit(
     rank: int,
     publication: str | None,
@@ -216,6 +228,33 @@ class LandscapeSearchTests(unittest.TestCase):
         )
         self.assertEqual(provider.calls, 1)
         self.assertEqual([item.status.value for item in results], ["TIMEOUT", "DISABLED"])
+
+    def test_serpapi_missing_key_opens_run_scoped_circuit(self) -> None:
+        provider = FailingProvider(
+            "serpapi_google_patents", "SERPAPI_API_KEY_REQUIRED"
+        )
+        plan = LandscapeQueryPlan(
+            direction_terms=["liquid cooling"],
+            direction_english_terms=["liquid cooling"],
+            queries=[
+                LandscapePlannedQuery(
+                    query_text="liquid cooling", language="en", rationale="one"
+                ),
+                LandscapePlannedQuery(
+                    query_text='"liquid cooling"', language="en", rationale="two"
+                ),
+            ],
+        )
+        results = asyncio.run(
+            execute_provider_queries(
+                scope=self.technology_scope(),
+                plan=plan,
+                providers=[provider],
+                timeout_seconds={provider.name: 1},
+            )
+        )
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual([item.status.value for item in results], ["ERROR", "DISABLED"])
 
 
 if __name__ == "__main__":

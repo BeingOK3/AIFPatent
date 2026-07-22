@@ -456,7 +456,11 @@ class LandscapeExecutionService:
 
     async def _fetch_one(self, run_id: str, hit: MergedHit):
         publication = hit.publication_number or hit.title
-        for provider_name in hit.found_by or [provider.name for provider in self.providers]:
+        provider_order = list(hit.found_by)
+        provider_order.extend(
+            provider.name for provider in self.providers if provider.name not in provider_order
+        )
+        for provider_name in provider_order:
             provider = next((item for item in self.providers if item.name == provider_name), None)
             if provider is None:
                 continue

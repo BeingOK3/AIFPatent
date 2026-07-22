@@ -197,8 +197,24 @@
     "providers": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["exa_mcp", "google_patents_local", "local_cache"],
+      "required": ["serpapi_google_patents", "exa_mcp", "google_patents_local", "local_cache"],
       "properties": {
+        "serpapi_google_patents": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "timeout_seconds", "max_attempts", "endpoint", "api_key_file", "search_engine", "details_engine", "trust_environment_proxy", "fallback_to_direct"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "timeout_seconds": {"type": "integer", "minimum": 1},
+            "max_attempts": {"type": "integer", "minimum": 1},
+            "endpoint": {"type": "string", "format": "uri"},
+            "api_key_file": {"type": "string", "minLength": 1},
+            "search_engine": {"type": "string", "minLength": 1},
+            "details_engine": {"type": "string", "minLength": 1},
+            "trust_environment_proxy": {"type": "boolean"},
+            "fallback_to_direct": {"type": "boolean"}
+          }
+        },
         "exa_mcp": {
           "type": "object",
           "additionalProperties": false,

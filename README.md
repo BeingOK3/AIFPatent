@@ -7,7 +7,7 @@ AIFPatent 当前 `develop` 版本提供可直接运行的首次报告 RAG 闭环
 已完成：
 
 - 固定 11 步 LangGraph Workflow、不可变 Case/Run、重试、取消、审计和 Manifest；
-- Google Patents 与 EXA MCP 检索、全文抓取、候选去重和最少 10 篇深读门禁；
+- Google Patents、EXA MCP 与 SerpAPI Google Patents 检索、全文抓取、候选去重和最少 10 篇深读门禁；
 - PostgreSQL Corpus Version/Chunk、MinIO 正文对象、Redis 基础设施；
 - PostgreSQL FTS/`pg_trgm` 词法检索，严格限制在源 Run 的冻结 Version；
 - 每个 `F_i × D_j` 检索审计，强制摘要、全部独立权利要求和父权利要求链；
@@ -36,7 +36,18 @@ cd AIFPatent
 ./start.sh
 ```
 
-首次启动会检查至少 5GiB 可用空间，创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env`，先启动 PostgreSQL/Redis/MinIO 并执行幂等迁移，再启动 app、创建 Corpus Bucket 并等待健康检查。`rag.env` 只有本机基础设施随机凭证，不含模型密钥。
+首次启动会检查至少 5GiB 可用空间，创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env` 和 `config/provider-credentials.local.json`，先启动 PostgreSQL/Redis/MinIO 并执行幂等迁移，再启动 app、创建 Corpus Bucket 并等待健康检查。`rag.env` 只有本机基础设施随机凭证，不含模型密钥。
+
+SerpAPI Key 只写入本地私密 JSON；GitHub 只保留模板：
+
+```bash
+cp -n config/provider-credentials.example.json config/provider-credentials.local.json
+chmod 600 config/provider-credentials.local.json
+# 编辑 provider-credentials.local.json，把模板值替换成真实 SerpAPI Key
+./start.sh
+```
+
+真实文件已同时加入 `.gitignore` 和 `.dockerignore`；Compose 将其作为只读 Secret 挂载，不会烘焙进应用镜像。
 
 浏览器访问 `http://localhost:8001`。停止服务并保留数据：
 
@@ -142,7 +153,8 @@ tools/e2e_lexical_rag.py \
 backend/idea/                 Workflow、Corpus、检索、Context、Citation、报告
 backend/tests/                单元、合约与可选真实集成测试
 frontend/                     IDEA 单页工作区（BYOK 不持久化）
-config/ai4patent.json         系统设置（不含模型密钥）
+config/ai4patent.json         系统设置（不含模型或检索密钥）
+config/provider-credentials.example.json  检索凭证模板（可提交）
 deploy/rag/                   Docker Compose 与幂等 PostgreSQL 迁移
 tools/idea_workflow.py        确定性 HTTP CLI
 tools/e2e_lexical_rag.py      真实首次报告验收与 Citation 校验

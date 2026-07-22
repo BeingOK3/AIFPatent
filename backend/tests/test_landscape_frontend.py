@@ -36,6 +36,12 @@ class LandscapeFrontendContractTests(unittest.TestCase):
         referenced = set(re.findall(r'\$\("([A-Za-z][A-Za-z0-9_-]*)"\)', self.javascript))
         self.assertEqual(referenced - html_ids, set())
 
+    def test_serpapi_key_is_not_sent_by_browser(self) -> None:
+        self.assertIn("本地私密 JSON", self.html)
+        self.assertNotIn('id="serpapi-api-key"', self.html)
+        self.assertNotIn("serpapi_api_key", self.javascript)
+        self.assertNotIn("localStorage", self.javascript)
+
 
 if __name__ == "__main__":
     unittest.main()

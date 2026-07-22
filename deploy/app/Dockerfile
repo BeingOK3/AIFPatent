@@ -27,6 +27,7 @@ RUN groupadd --gid 10001 aifpatent \
 COPY --chown=10001:10001 backend /app/backend
 COPY --chown=10001:10001 frontend /app/frontend
 COPY --chown=10001:10001 config /app/config
+COPY --chmod=755 deploy/app/container-entrypoint.sh /usr/local/bin/aifpatent-entrypoint
 
 USER 10001:10001
 

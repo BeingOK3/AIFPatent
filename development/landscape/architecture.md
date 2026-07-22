@@ -258,7 +258,7 @@ GET    /api/landscape/runs/{run_id}/debug
 DELETE /api/landscape/runs/{run_id}
 ```
 
-创建 Run 请求携带当前页面临时 `base_url/model/api_key` 和可选 `serpapi_api_key`。TaskManager 只在进程内持有模型配置和 SerpAPI Key，终态、取消、异常和 shutdown 都清除；部署环境也可以通过 `SERPAPI_API_KEY` 提供服务级凭证。Run 只记录是否启用了临时 SerpAPI 凭证及凭证来源，不保存其值。服务重启时将遗留 `QUEUED/RUNNING` 标记为 `RUNTIME_API_KEY_REQUIRED_AFTER_RESTART`，用户通过 rerun 创建新的不可变 Run。
+创建 Run 请求只携带当前页面临时 `base_url/model/api_key`。SerpAPI 使用服务器本地 `config/provider-credentials.local.json`；该文件被 Git 和 Docker 构建上下文忽略，Docker 运行时通过只读 Secret 挂载，仓库只提交 `provider-credentials.example.json` 模板。Run 仅记录凭证来源 `local_json`，不保存值。模型 TaskManager 仍只在进程内持有模型配置，终态、取消、异常和 shutdown 都清除；服务重启时将遗留 `QUEUED/RUNNING` 标记为 `RUNTIME_API_KEY_REQUIRED_AFTER_RESTART`，用户通过 rerun 创建新的不可变 Run。
 
 ## 8. 页面
 

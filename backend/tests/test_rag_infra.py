@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import stat
 import tempfile
 import unittest
@@ -11,6 +12,23 @@ from tools import rag_infra
 
 
 class RagInfrastructureTests(unittest.TestCase):
+    def test_provider_credentials_are_created_once_as_private_ignored_json(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "provider-credentials.local.json"
+            self.assertTrue(rag_infra.ensure_provider_credentials(path))
+            self.assertFalse(rag_infra.ensure_provider_credentials(path))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(payload, {"serpapi": {"api_key": ""}})
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_provider_credentials_with_open_permissions_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "provider-credentials.local.json"
+            path.write_text('{"serpapi":{"api_key":"fixture"}}', encoding="utf-8")
+            os.chmod(path, 0o644)
+            with self.assertRaises(rag_infra.InfraError):
+                rag_infra.ensure_provider_credentials(path)
+
     def test_up_reuses_cached_object_store_image_unless_forced(self) -> None:
         self.assertEqual(
             rag_infra._build_services(lambda _image: True, force_object_store=False),
@@ -97,6 +115,11 @@ class RagInfrastructureTests(unittest.TestCase):
         self.assertIn("EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}", compose)
         self.assertIn("AIFPATENT_EMBEDDING_ENABLED:", compose)
         self.assertIn("AIFPATENT_EMBEDDING_MODEL:", compose)
+        self.assertIn("provider-credentials.local.json", compose)
+        self.assertIn("/run/secrets/provider-credentials.json", compose)
+        self.assertIn("/run/aifpatent/provider-credentials.json", compose)
+        self.assertIn('entrypoint: ["/usr/local/bin/aifpatent-entrypoint"]', compose)
+        self.assertIn('command: ["python", "-m", "uvicorn"', compose)
         self.assertIn("pgvector/pgvector:0.8.2-pg17-bookworm", compose)
         self.assertIn("redis:8.4.4-alpine", compose)
         self.assertIn("Dockerfile.minio", compose)

@@ -181,7 +181,18 @@
 
 - 类型：SerpAPI Google Patents 第三 Provider 增量设计。
 - 主链路：新增 `SerpApiPatentProvider`，使用 `google_patents` 做结构化专利检索、`google_patents_details` 获取摘要/权利要求/同族基础信息，继续复用统一 Provider 契约、严格公开日与申请人过滤、跨源去重和 Debug。
-- 凭证：页面允许输入单次 Run 的 `serpapi_api_key`；后端使用任务级上下文隔离，终态即清除，不进入 SQLite、Run 文件、配置快照、URL 日志或错误信息；部署级 `SERPAPI_API_KEY` 仅作为可选回退。
+- 凭证：根据部署约定改为服务器本地 `config/provider-credentials.local.json`；Git 和 Docker build 均忽略真实文件，仓库只提交 JSON 模板，Compose 以只读 Secret 注入。页面和 Run API 不接收 SerpAPI Key，SQLite、Run 文件、Debug 和错误信息均不保存值。
 - 三路分工：SerpAPI 定位为结构化主召回与首选详情源，Exa 定位为自然语言语义补召回，Google 直连定位为网络健康时的低成本补充。首版完整 fan-out 便于比较覆盖，后续推荐默认 `BALANCED` 调度。
 - 配额：SerpAPI 精确请求缓存应开启，查询使用官方日期参数并关闭 Scholar；详情只对严格过滤后的精读集合或日期缺失候选执行，避免按所有原始命中消耗额度。
 - Git：本设计为第 19 个工作单元；实现和验收作为第 20 个工作单元，两个提交后推送远程 `develop`。
+
+## 2026-07-22 — LANDSCAPE-SERPAPI-CORE-020
+
+- 类型：SerpAPI Google Patents Provider、本地 JSON 凭证和容器验收。
+- Provider：新增 `serpapi_google_patents` 搜索与详情实现，结构化映射公开号、日期、权利人、摘要、权利要求、Family 和全球申请信息；统一参与三 Provider fan-out、严格过滤、跨源去重、日期补全与详情回退。
+- 配额与诊断：确定性请求复用现有 Cache，缓存键和内容均不含 Key；401/403/429、响应错误及网络异常转换为稳定错误码，凭证/鉴权/额度错误后对当前 Run 熔断，其余 Provider 继续运行。
+- 凭证：真实 Key 只存在 `config/provider-credentials.local.json`，权限强制为 `0600`；Git 与 Docker build 均忽略该文件，只跟踪 `provider-credentials.example.json`。前端、Run 请求、配置快照和 Debug 不接收或输出 Key。
+- 容器：Compose 将宿主机私密文件只读挂载，入口复制为 UID/GID 10001、权限 `0400` 的运行时 Secret 后立即降权；容器 PID 1 为 UID/GID 10001，镜像 `/app/config` 不包含真实文件，四项服务均 healthy。
+- 验证：SerpAPI Provider、配置、Landscape 调度、前端、基础设施和容器契约共 47 个定向测试通过；Python 编译、Node 语法、JSON 解析与 `git diff --check` 通过。真实 Key 扫描确认已跟踪文件命中数为 0。
+- 限制：外部 SerpAPI 受控请求因当前工具网络授权限制未执行；已完成可注入 Transport 的搜索/详情/错误/缓存契约测试，部署环境真实检索保留为下一次联调项。
+- Git：本实现作为第 20 个工作单元，与第 19 个设计提交一起推送远程 `develop`。

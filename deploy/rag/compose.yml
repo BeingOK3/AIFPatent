@@ -2,6 +2,9 @@ name: aifpatent-rag
 
 services:
   app:
+    user: "0:0"
+    entrypoint: ["/usr/local/bin/aifpatent-entrypoint"]
+    command: ["python", "-m", "uvicorn", "main:app", "--app-dir", "/app/backend", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
     build:
       context: ../..
       dockerfile: deploy/app/Dockerfile
@@ -21,12 +24,17 @@ services:
       AIFPATENT_EMBEDDING_MODEL: ${AIFPATENT_EMBEDDING_MODEL:-}
       AIFPATENT_EMBEDDING_BASE_URL: ${AIFPATENT_EMBEDDING_BASE_URL:-}
       AIFPATENT_EMBEDDING_DIMENSIONS: ${AIFPATENT_EMBEDDING_DIMENSIONS:-}
+      AIFPATENT_PROVIDER_CREDENTIALS_SOURCE: /run/secrets/provider-credentials.json
+      AIFPATENT_PROVIDER_CREDENTIALS: /run/aifpatent/provider-credentials.json
     ports:
       - "127.0.0.1:${AIFPATENT_APP_PORT:-8001}:8001"
     volumes:
       - app-data:/app/data
       - app-workspace:/app/workspace
       - app-logs:/app/logs
+    secrets:
+      - source: provider-credentials
+        target: provider-credentials.json
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,3 +116,7 @@ volumes:
   postgres-data:
   redis-data:
   object-data:
+
+secrets:
+  provider-credentials:
+    file: ../../config/provider-credentials.local.json

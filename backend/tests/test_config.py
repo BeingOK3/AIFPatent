@@ -38,6 +38,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.rag.hybrid.final_limit, 12)
         self.assertEqual(config.search.providers.exa_mcp.fetch_tool, "web_fetch_exa")
         self.assertEqual(config.search.providers.exa_mcp.fetch_max_characters, 300_000)
+        self.assertEqual(
+            config.search.providers.serpapi_google_patents.search_engine,
+            "google_patents",
+        )
+        self.assertTrue(
+            config.search.providers.serpapi_google_patents.api_key_file.is_absolute()
+        )
         self.assertTrue(config.features.patent_corpus)
         self.assertTrue(config.features.initial_review_rag)
         self.assertTrue(config.features.followup_rag)
@@ -46,6 +53,18 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("apiKey", snapshot["model"])
         self.assertNotIn("api_key", snapshot["embedding"])
         self.assertEqual(snapshot["embedding"]["api_key_env"], "EMBEDDING_API_KEY")
+        self.assertNotIn("api_key", snapshot["search"]["providers"]["serpapi_google_patents"])
+
+    def test_provider_credentials_path_can_be_overridden_without_secret_in_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "providers.json"
+            with patch.dict(
+                "os.environ", {"AIFPATENT_PROVIDER_CREDENTIALS": str(path)}, clear=True
+            ):
+                config = load_config(CONFIG_PATH)
+        self.assertEqual(
+            config.search.providers.serpapi_google_patents.api_key_file, path.resolve()
+        )
 
     def test_environment_can_select_config_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
