@@ -36,7 +36,7 @@ cd AIFPatent
 ./start.sh
 ```
 
-首次启动会检查至少 5GiB 可用空间，创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env`，启动 app/PostgreSQL/Redis/MinIO，执行幂等迁移、创建 Corpus Bucket 并等待健康检查。`rag.env` 只有本机基础设施随机凭证，不含模型密钥。
+首次启动会检查至少 5GiB 可用空间，创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env`，先启动 PostgreSQL/Redis/MinIO 并执行幂等迁移，再启动 app、创建 Corpus Bucket 并等待健康检查。`rag.env` 只有本机基础设施随机凭证，不含模型密钥。
 
 浏览器访问 `http://localhost:8001`。停止服务并保留数据：
 

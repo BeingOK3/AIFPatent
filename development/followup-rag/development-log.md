@@ -676,3 +676,11 @@
 - 本机配置：Compose 支持通过 Git 忽略的 `deploy/rag/rag.env` 覆盖 enabled/provider/model/base URL/dimensions 和部署级 `EMBEDDING_API_KEY`，无需修改 tracked JSON；聊天 BYOK 永不回退为 Embedding Key。启用但缺少 Key 或未把同一 shared runtime 注入所有路径时启动 fail closed。
 - 诚实降级：即使已配置 vector adapter，只要本次 vector 零命中，`HybridRetriever` 仍返回 `LEXICAL_ONLY` 并增加 `VECTOR_NO_HITS`，不得仅凭配置存在宣称 `HYBRID`。健康接口在默认关闭时显示 `LEXICAL_ONLY`，启用时只报告部署凭证存在性。
 - 验证：Chunk 索引顺序、query/profile 原子性、历史分批回填、配置覆盖、凭证门禁、双检索入口共享对象、健康脱敏和零向量命中降级等 70 项聚焦测试通过。当前未配置真实跨语言 Embedding Provider，因此不伪造线上向量质量或 Recall 提升结论；下一步仍需在私有人工标注集上完成真实回填和 baseline/candidate 比较。
+
+## 2026-07-22 — OPS-STARTUP-MIGRATION-ORDER-001
+
+- 类型：已有 PostgreSQL 数据卷升级时的一键启动顺序修复。
+- 复现：新版 app 启动钩子会立即读取 `followup_turns`，但旧 `start.sh` 先对包含 app 的完整 Compose 栈执行 `up --wait`，成功后才调用迁移；旧数据卷缺少 `050_followup_schema.sql` 时 app 以 `UndefinedTable` 退出，脚本无法到达迁移步骤，失败重建期间还可能出现临时容器名称冲突。
+- 修正：`tools/rag_infra.py up` 现在依次构建镜像、只启动并等待 PostgreSQL/Redis/MinIO、执行 `020`～`055` 幂等迁移、启动并等待 app、确保 Corpus Bucket；根 `start.sh` 移除重复的后置迁移。直接调用 Infra CLI 和标准启动脚本共享同一安全顺序。
+- 数据安全：没有删除容器卷、表或业务记录；迁移仍使用 `IF NOT EXISTS`/迁移记录保护。启动与迁移不读取或保存模型 API Key。
+- 验证：基础设施与启动脚本聚焦测试 14 项通过；使用已有真实数据卷执行修复后的 `./start.sh` 成功，迁移先于 app 重建，app/PostgreSQL/Redis/MinIO 四服务全部 healthy，`127.0.0.1:8001/openapi.json` 可访问；正确入口 `PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s backend/tests` 全量 421 项通过、5 项按设计跳过。
