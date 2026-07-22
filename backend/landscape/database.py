@@ -646,6 +646,85 @@ class LandscapeDatabase:
             if cursor.rowcount != 1:
                 raise KeyError(run_id)
 
+    def debug_snapshot(self, run_id: str) -> dict[str, Any]:
+        """Return an operational view without raw provider/model payloads or credentials."""
+        run = self.get_run(run_id)
+        with self.connect() as connection:
+            step_rows = connection.execute(
+                """
+                SELECT step_name,attempt,status,input_hash,output_hash,error_code,error_message,
+                       started_at,completed_at
+                FROM landscape_steps WHERE run_id=? ORDER BY step_id
+                """,
+                (run_id,),
+            ).fetchall()
+            query_rows = connection.execute(
+                """
+                SELECT query_id,query_text,language,rationale,created_at
+                FROM landscape_queries WHERE run_id=? ORDER BY created_at,query_id
+                """,
+                (run_id,),
+            ).fetchall()
+            hit_rows = connection.execute(
+                """
+                SELECT provider,decision,COALESCE(exclusion_reason,'') exclusion_reason,
+                       COUNT(*) count
+                FROM landscape_hits WHERE run_id=?
+                GROUP BY provider,decision,COALESCE(exclusion_reason,'')
+                ORDER BY provider,decision,exclusion_reason
+                """,
+                (run_id,),
+            ).fetchall()
+
+        coverage: dict[str, Any] = {}
+        try:
+            filtered = self.get_stage_result(run_id, "FILTER_AND_SELECT")["value"]
+            coverage = filtered.get("result", {}).get("coverage", {})
+        except KeyError:
+            pass
+        aliases: list[dict[str, Any]] = []
+        alias_resolution_error = None
+        try:
+            plan = self.get_stage_result(run_id, "PLAN_SEARCH")["value"]
+            aliases = list(plan.get("competitor_aliases", []))
+            alias_resolution_error = plan.get("alias_resolution_error")
+        except KeyError:
+            pass
+
+        steps = []
+        for row in step_rows:
+            item = dict(row)
+            started_at = item.get("started_at")
+            completed_at = item.get("completed_at")
+            item["duration_ms"] = (
+                max(0, completed_at - started_at)
+                if started_at is not None and completed_at is not None
+                else None
+            )
+            steps.append(item)
+        return {
+            "run_id": run_id,
+            "status": run["status"],
+            "mode": run["mode"],
+            "steps": steps,
+            "queries": [dict(row) for row in query_rows],
+            "competitor_aliases": aliases,
+            "alias_resolution_error": alias_resolution_error,
+            "provider_statuses": coverage.get("provider_statuses", {}),
+            "coverage": {
+                key: coverage.get(key, default)
+                for key, default in (
+                    ("raw_hit_count", 0),
+                    ("eligible_hit_count", 0),
+                    ("unique_candidate_count", 0),
+                    ("selected_count", 0),
+                    ("truncated_count", 0),
+                    ("excluded_counts", {}),
+                )
+            },
+            "hit_stats": [dict(row) for row in hit_rows],
+        }
+
     def table_names(self) -> set[str]:
         with self.connect() as connection:
             rows = connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()

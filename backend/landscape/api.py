@@ -110,6 +110,13 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
         except KeyError:
             raise HTTPException(404, "landscape run not found")
 
+    @router.get("/runs/{run_id}/debug")
+    async def get_run_debug(run_id: str):
+        try:
+            return database.debug_snapshot(run_id)
+        except KeyError:
+            raise HTTPException(404, "landscape run not found")
+
     @router.get("/runs/{run_id}/events")
     async def run_events(run_id: str):
         try:

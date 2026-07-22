@@ -82,6 +82,43 @@ class LandscapeDatabaseTests(unittest.TestCase):
         self.assertEqual(run["mode"], AnalysisMode.TECHNOLOGY_COMPETITOR.value)
         self.assertEqual(self.db.list_runs()[0]["mode"], AnalysisMode.TECHNOLOGY_COMPETITOR.value)
 
+    def test_debug_snapshot_is_aggregated_and_excludes_raw_payloads(self) -> None:
+        run = self.create_run()
+        with self.db.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO landscape_steps(
+                    run_id,step_name,attempt,status,input_hash,output_hash,error_code,
+                    error_message,started_at,completed_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                """,
+                (run["run_id"], "PLAN_SEARCH", 1, "SUCCEEDED", "in", "out", None, None, 10, 25),
+            )
+        self.db.put_queries(
+            run["run_id"],
+            [{"query_id": "LQ-1", "query_text": "液冷", "language": "zh", "rationale": "方向"}],
+        )
+        self.db.put_hit(
+            run["run_id"],
+            hit_id="LH-1",
+            query_id="LQ-1",
+            provider="fixture",
+            publication_number="CN1A",
+            application_number="CN1",
+            publication_date="2026-05-01",
+            assignee="Example",
+            normalized_key="CN1A",
+            decision="EXCLUDED",
+            exclusion_reason="COMPETITOR_NOT_CONFIRMED",
+            raw={"large_provider_payload": "must-not-be-returned"},
+        )
+        snapshot = self.db.debug_snapshot(run["run_id"])
+        self.assertEqual(snapshot["steps"][0]["duration_ms"], 15)
+        self.assertEqual(snapshot["queries"][0]["query_text"], "液冷")
+        self.assertEqual(snapshot["hit_stats"][0]["count"], 1)
+        self.assertNotIn("raw", snapshot["hit_stats"][0])
+        self.assertNotIn("large_provider_payload", str(snapshot))
+
     def test_credentials_are_rejected_before_database_write(self) -> None:
         marker = "credential-must-never-persist"
         with self.assertRaisesRegex(ValueError, "sensitive field"):
