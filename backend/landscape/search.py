@@ -4,7 +4,7 @@ import asyncio
 import re
 import unicodedata
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 from enum import StrEnum
 
 from pydantic import Field
@@ -43,6 +43,13 @@ class LandscapeSearchCoverage(LandscapeModel):
 class LandscapeSearchResult(LandscapeModel):
     candidates: list[MergedHit]
     coverage: LandscapeSearchCoverage
+
+
+def scoped_provider_query_text(query_text: str, scope: LandscapeScope) -> str:
+    """Append provider-side hints; post-filtering remains the authoritative date gate."""
+    after = (scope.publication_start - timedelta(days=1)).strftime("%Y%m%d")
+    before = (scope.publication_end + timedelta(days=1)).strftime("%Y%m%d")
+    return f"{query_text} after=publication:{after} before=publication:{before}"
 
 
 def strict_filter_and_select(
@@ -171,7 +178,7 @@ async def execute_provider_queries(
         query_id = f"LQ-{query_index}"
         query = SearchQuery(
             query_id=query_id,
-            text=planned.query_text,
+            text=scoped_provider_query_text(planned.query_text, scope),
             language=planned.language,
             round_number=1,
             limit=scope.budget.per_query_limit,

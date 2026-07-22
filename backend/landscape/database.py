@@ -553,19 +553,36 @@ class LandscapeDatabase:
         document_ids: dict[str, str],
     ) -> None:
         assert_no_secrets(clusters)
-        try:
-            checkpoint = self.get_stage_result(run_id, "CLUSTER_PATENTS")
-        except KeyError:
-            checkpoint = None
-        if checkpoint is not None:
-            if checkpoint["value"] != clusters:
-                raise ValueError("landscape clusters are immutable")
-            return
         with self.connect() as connection:
-            if connection.execute(
-                "SELECT 1 FROM landscape_clusters WHERE run_id=? LIMIT 1", (run_id,)
-            ).fetchone() is not None:
-                raise ValueError("landscape clusters exist without a completion checkpoint")
+            existing_rows = connection.execute(
+                "SELECT * FROM landscape_clusters WHERE run_id=? ORDER BY cluster_id", (run_id,)
+            ).fetchall()
+            if existing_rows:
+                existing = []
+                for row in existing_rows:
+                    members = connection.execute(
+                        """
+                        SELECT publication_number FROM landscape_cluster_members
+                        WHERE run_id=? AND cluster_id=? ORDER BY publication_number
+                        """,
+                        (run_id, row["cluster_id"]),
+                    ).fetchall()
+                    existing.append(
+                        {
+                            "cluster_id": row["cluster_id"],
+                            "name": row["name"],
+                            "summary": row["summary"],
+                            "keywords": json.loads(row["keywords_json"]),
+                            "publication_numbers": [item["publication_number"] for item in members],
+                        }
+                    )
+                expected = [
+                    {**cluster, "publication_numbers": sorted(cluster["publication_numbers"])}
+                    for cluster in sorted(clusters, key=lambda item: item["cluster_id"])
+                ]
+                if canonical_json(existing) != canonical_json(expected):
+                    raise ValueError("landscape clusters are immutable")
+                return
             for cluster in clusters:
                 connection.execute(
                     "INSERT INTO landscape_clusters VALUES(?,?,?,?,?)",
@@ -579,7 +596,6 @@ class LandscapeDatabase:
                         "INSERT INTO landscape_cluster_members VALUES(?,?,?,?)",
                         (run_id, cluster["cluster_id"], document_ids[publication_number], publication_number),
                     )
-        self.put_stage_result(run_id, "CLUSTER_PATENTS", clusters)
 
     def put_report_record(
         self,

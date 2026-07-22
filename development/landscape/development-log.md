@@ -65,3 +65,23 @@
 - 可用性：页面直接使用 Landscape API/SSE，移动端响应式布局；模式切换自动更新必填字段，时间预设自动填充公开日窗口。
 - 涉及文件：`frontend/landscape.html`、`landscape.css`、`landscape.js`、本日志。
 - 验证：待执行 Node 语法检查、前端契约检查、全量回归和提交后推送。
+
+## 2026-07-22 — LANDSCAPE-ACCEPTANCE-007
+
+- 类型：容器、入口和真实模型验收。
+- 容器：应用镜像已重建，PostgreSQL、Redis、MinIO、App 四服务健康；OpenAPI 暴露 11 条 Landscape API 路径，`/landscape` 页面响应正常；小预算创建/取消契约测试通过。
+- 真实 Run：使用临时 DeepSeek BYOK、候选上限 10、精读上限 1 完整走完 8 个节点，状态为 `COMPLETED_WITH_LIMITATIONS`；Exa/Google 搜索命中公开日不足，严格日期门排除 10 条，Google Provider 同时受限流影响，报告明确记录限制，未伪造专利精读。
+- 修正：增加缺失公开日的受控详情元数据补全；只有补全得到真实 ISO 公开日才重新进入严格窗口过滤，补全失败仍排除；成功补全的全文复用于后续详情阶段，避免重复抓取。
+- 修正：由程序在每条 Provider Query 后追加公开日起止提示，并继续在返回后执行包含式硬过滤；查询提示扩大一日以适配 Provider 的严格 `after/before` 语义，最终范围仍以用户窗口为准。
+- 缺陷修复：真实 Run 已获得窗口内候选并成功调用 DeepSeek 精读，但聚类仓储与工作流重复写入同名阶段结果，触发不可变冲突；调整为阶段结果仅由 Workflow Harness 持有，聚类业务表通过自身内容重建进行幂等校验。
+- 凭证：真实 Run API Key 未写入代码、Git、Landscape SQLite、报告或日志；当前环境变量没有默认模型凭证。
+- 验证：Node 语法检查、Landscape 26 个测试和容器健康检查通过；补全逻辑测试与全量回归待执行。
+
+## 2026-07-22 — LANDSCAPE-ACCEPTANCE-007-COMPLETE
+
+- 真实结果：修复后使用失败 Run 的不可变输入重跑成功，8/8 节点完成；严格窗口内唯一候选 5 件，按预算成功精读 1 件 `US20260082513A1`，生成 1 个技术簇。
+- 报告：`report.json`、`report.md`、`patents.csv`、`input.json`、`manifest.json` 全部存在，Markdown/CSV 下载 HTTP 200；Manifest 完成门通过。
+- 限制：Google Patents Provider 当前不可用，Exa 主链路正常；部分详情补全专利位于窗口外并被硬过滤，报告记录 `PUBLICATION_DATE_OUTSIDE_WINDOW` 和 `PROVIDER_FAILURE`。
+- 凭证核验：Landscape 配置快照仅包含 `base_url`、`credential_source`、`model`，凭证来源为 `per_run_memory`；仓库敏感 Key 模式扫描无命中。
+- 回归：Landscape 29 个单元测试通过；既有前端/容器/启动脚本 12 个针对性回归通过；Node 语法和 `git diff --check` 通过；四个 Docker 服务保持健康。
+- 结论：MVP 可从 `/landscape` 创建任务并产出一件以上真实新公开专利精读、统计、聚类和可下载报告；IDEA 业务代码和页面状态机未修改。

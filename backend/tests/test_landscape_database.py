@@ -87,6 +87,25 @@ class LandscapeDatabaseTests(unittest.TestCase):
         self.assertEqual(self.db.get_run(active["run_id"])["error_code"], "RUNTIME_API_KEY_REQUIRED_AFTER_RESTART")
         self.assertEqual(self.db.get_run(complete["run_id"])["status"], RunStatus.COMPLETED.value)
 
+    def test_cluster_rows_are_idempotent_without_claiming_workflow_stage_result(self) -> None:
+        run = self.create_run()
+        clusters = [
+            {
+                "cluster_id": "CL-1",
+                "name": "液冷回路",
+                "summary": "冷板和循环泵。",
+                "keywords": ["液冷"],
+                "publication_numbers": ["CN1A"],
+            }
+        ]
+        self.db.put_clusters(run["run_id"], clusters, {"CN1A": "doc-1"})
+        self.db.put_clusters(run["run_id"], clusters, {"CN1A": "doc-1"})
+        with self.assertRaises(KeyError):
+            self.db.get_stage_result(run["run_id"], "CLUSTER_PATENTS")
+        changed = [{**clusters[0], "summary": "不同内容"}]
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.db.put_clusters(run["run_id"], changed, {"CN1A": "doc-1"})
+
 
 if __name__ == "__main__":
     unittest.main()

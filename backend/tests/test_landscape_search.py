@@ -5,7 +5,11 @@ from datetime import date
 
 from idea.providers.base import SearchHit
 from landscape.schemas import AnalysisBudget, AnalysisMode, CompetitorInput, LandscapeScope
-from landscape.search import assignee_matches_confirmed_competitor, strict_filter_and_select
+from landscape.search import (
+    assignee_matches_confirmed_competitor,
+    scoped_provider_query_text,
+    strict_filter_and_select,
+)
 
 
 def hit(
@@ -106,6 +110,11 @@ class LandscapeSearchTests(unittest.TestCase):
         self.assertEqual(result.coverage.selected_count, 10)
         self.assertEqual(result.coverage.truncated_count, 1)
         self.assertEqual(result.candidates[0].query_ids, ["LQ-1", "LQ-2"])
+
+    def test_provider_query_receives_program_owned_publication_window_hints(self) -> None:
+        text = scoped_provider_query_text("liquid cooling", self.technology_scope())
+        self.assertIn("after=publication:20260331", text)
+        self.assertIn("before=publication:20260701", text)
 
 
 if __name__ == "__main__":

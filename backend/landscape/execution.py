@@ -18,6 +18,7 @@ from .schemas import LandscapeQueryPlan, LandscapeScope
 from .search import (
     execute_provider_queries,
     exclusion_reason,
+    scoped_provider_query_text,
     strict_filter_and_select,
 )
 from .store import LandscapeRunStore
@@ -47,6 +48,7 @@ class LandscapeExecutionService:
         self.clustering = LandscapeClusteringService(model)
         self.report_service = report_service
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
+        self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.cluster_failures: dict[str, str] = {}
 
     async def handle_step(
@@ -76,7 +78,7 @@ class LandscapeExecutionService:
             [
                 {
                     "query_id": self.query_key(run_id, index),
-                    "query_text": query.query_text,
+                    "query_text": scoped_provider_query_text(query.query_text, scope),
                     "language": query.language,
                     "rationale": query.rationale,
                 }
@@ -101,6 +103,7 @@ class LandscapeExecutionService:
         scope = self.scope(run_id)
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.SEARCH_PUBLICATIONS.value)["value"]
         results = [ProviderResult.model_validate(item) for item in raw["results"]]
+        results = await self._enrich_missing_dates(run_id, results)
         batches = [(result.request_id, result.hits) for result in results if result.succeeded]
         statuses = {f"{result.request_id}:{result.provider}": result.status.value for result in results}
         result = strict_filter_and_select(batches, scope=scope, provider_statuses=statuses)
@@ -269,12 +272,81 @@ class LandscapeExecutionService:
 
         async def one(hit: MergedHit):
             async with semaphore:
+                prefetched = self.prefetched_documents.get(run_id, {}).get(hit.publication_number or "")
+                if prefetched is not None:
+                    return hit.publication_number or hit.title, prefetched, None
                 return await self._fetch_one(run_id, hit)
 
         results = await asyncio.gather(*(one(hit) for hit in hits))
         docs = {publication: document for publication, document, _ in results if document is not None}
         failures = {publication: error for publication, _, error in results if error is not None}
         return docs, failures
+
+    async def _enrich_missing_dates(
+        self, run_id: str, results: list[ProviderResult]
+    ) -> list[ProviderResult]:
+        """Use a bounded details call to recover authoritative publication dates.
+
+        Search indexes often omit patent-specific dates. The strict filter still rejects a
+        document when this enrichment cannot recover a real ISO publication date.
+        """
+        requests: list[tuple[ProviderResult, SearchHit]] = [
+            (result, hit)
+            for result in results
+            if result.succeeded
+            for hit in result.hits
+            if not hit.publication_date and hit.publication_number
+        ]
+        if not requests:
+            return results
+        semaphore = asyncio.Semaphore(2)
+        prefetched: dict[str, FetchedDocument] = {}
+
+        async def enrich(result: ProviderResult, hit: SearchHit):
+            provider = next((item for item in self.providers if item.name == hit.provider), None)
+            if provider is None:
+                return hit
+            async with semaphore:
+                fetched = await self.runner.fetch(
+                    provider,
+                    FetchRequest(
+                        request_id=f"LM-{run_id[:8]}-{_identifier(hit.publication_number or '')}",
+                        publication_number=hit.publication_number,
+                        url=hit.url or None,
+                    ),
+                    timeout_seconds=self.provider_timeout_seconds.get(provider.name, 60),
+                )
+            if not fetched.succeeded or fetched.document is None:
+                return hit
+            document = fetched.document
+            if not document.publication_date:
+                return hit
+            prefetched[hit.publication_number or ""] = document
+            return hit.model_copy(
+                update={
+                    "publication_date": document.publication_date,
+                    "filing_date": document.filing_date or hit.filing_date,
+                    "assignee": document.assignee or hit.assignee,
+                    "title": document.title or hit.title,
+                    "family_id": document.family_id or hit.family_id,
+                    "raw": {**hit.raw, "metadata_enriched": True},
+                }
+            )
+
+        enriched = await asyncio.gather(*(enrich(result, hit) for result, hit in requests))
+        replacements = {
+            (id(result), hit.publication_number): value
+            for (result, hit), value in zip(requests, enriched, strict=True)
+        }
+        updated: list[ProviderResult] = []
+        for result in results:
+            hits = [
+                replacements.get((id(result), hit.publication_number), hit)
+                for hit in result.hits
+            ]
+            updated.append(result.model_copy(update={"hits": hits}))
+        self.prefetched_documents[run_id] = prefetched
+        return updated
 
     async def _fetch_one(self, run_id: str, hit: MergedHit):
         publication = hit.publication_number or hit.title
