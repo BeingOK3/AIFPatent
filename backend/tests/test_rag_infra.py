@@ -125,7 +125,14 @@ class RagInfrastructureTests(unittest.TestCase):
         self.assertIn("deploy/app/Dockerfile", " ".join(app))
         self.assertIn("deploy/rag/Dockerfile.minio", " ".join(minio))
         self.assertIn("--load", app)
-        self.assertEqual(rag_infra._docker_command("up")[-4:], ["up", "--detach", "--no-build", "--wait"])
+        self.assertEqual(
+            rag_infra._docker_command("up-dependencies")[-7:],
+            ["up", "--detach", "--no-build", "--wait", "postgres", "redis", "object-store"],
+        )
+        self.assertEqual(
+            rag_infra._docker_command("up-app")[-5:],
+            ["up", "--detach", "--no-build", "--wait", "app"],
+        )
         for command in (app, minio):
             joined = " ".join(command).upper()
             self.assertNotIn("PASSWORD", joined)
@@ -141,6 +148,33 @@ class RagInfrastructureTests(unittest.TestCase):
         self.assertIn("035_report_retrieval_schema.sql", migrate)
         self.assertIn("040_report_citation_schema.sql", migrate)
         self.assertIn("055_report_hybrid_schema.sql", migrate)
+
+    def test_up_migrates_between_dependency_and_application_start(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = Path(directory) / "rag.env"
+            environment.write_text(rag_infra._new_environment(), encoding="utf-8")
+            commands: list[list[str]] = []
+
+            def fake_run(command, **_kwargs):
+                commands.append(command)
+                return type("Result", (), {"returncode": 0})()
+
+            with (
+                patch.object(rag_infra, "ENV_PATH", environment),
+                patch.object(rag_infra, "_build_services", return_value=()),
+                patch.object(rag_infra.subprocess, "run", side_effect=fake_run),
+            ):
+                self.assertEqual(rag_infra.run("up"), 0)
+
+        self.assertEqual(
+            commands[0][-7:],
+            ["up", "--detach", "--no-build", "--wait", "postgres", "redis", "object-store"],
+        )
+        self.assertIn("050_followup_schema.sql", commands[1][-1])
+        self.assertEqual(
+            commands[2][-5:], ["up", "--detach", "--no-build", "--wait", "app"]
+        )
+        self.assertEqual(commands[3][-4:-1], ["app", "python", "-c"])
 
 
 if __name__ == "__main__":

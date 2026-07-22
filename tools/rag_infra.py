@@ -112,7 +112,22 @@ def _docker_command(action: str) -> list[str]:
         str(COMPOSE_PATH),
     ]
     commands = {
+        # Retained for callers that inspect the legacy command shape. The
+        # `up` action itself now uses the staged commands below.
         "up": ["up", "--detach", "--no-build", "--wait"],
+        # Keep the application out of the first Compose transaction. New
+        # application versions may require additive migrations at startup,
+        # so dependencies must become ready before migrations run.
+        "up-dependencies": [
+            "up",
+            "--detach",
+            "--no-build",
+            "--wait",
+            "postgres",
+            "redis",
+            "object-store",
+        ],
+        "up-app": ["up", "--detach", "--no-build", "--wait", "app"],
         "down": ["down"],
         "status": ["ps"],
         "check": ["config", "--quiet"],
@@ -243,8 +258,28 @@ def run(action: str) -> int:
             built = subprocess.run(_build_command(service), cwd=PROJECT_ROOT, check=False)
             if built.returncode != 0:
                 return built.returncode
-    completed = subprocess.run(_docker_command(action), cwd=PROJECT_ROOT, check=False)
-    if completed.returncode != 0 or action != "up":
+
+        # Start only the services needed to execute migrations first. The app
+        # is deliberately started in a second Compose transaction after the
+        # schema is ready; otherwise startup hooks can query tables that do
+        # not exist yet on an existing PostgreSQL volume.
+        dependencies = subprocess.run(
+            _docker_command("up-dependencies"), cwd=PROJECT_ROOT, check=False
+        )
+        if dependencies.returncode != 0:
+            return dependencies.returncode
+        migration = subprocess.run(
+            _docker_command("migrate"), cwd=PROJECT_ROOT, check=False
+        )
+        if migration.returncode != 0:
+            return migration.returncode
+        completed = subprocess.run(
+            _docker_command("up-app"), cwd=PROJECT_ROOT, check=False
+        )
+        if completed.returncode != 0:
+            return completed.returncode
+    else:
+        completed = subprocess.run(_docker_command(action), cwd=PROJECT_ROOT, check=False)
         return completed.returncode
     bucket = subprocess.run(_docker_command("ensure-bucket"), cwd=PROJECT_ROOT, check=False)
     return bucket.returncode

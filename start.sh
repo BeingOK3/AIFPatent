@@ -67,7 +67,6 @@ trap cleanup_on_error ERR
 
 "$PYTHON" "$ROOT/tools/rag_infra.py" up
 started=true
-"$PYTHON" "$ROOT/tools/rag_infra.py" migrate
 
 env_file="$ROOT/deploy/rag/rag.env"
 port="$(awk -F= '$1 == "AIFPATENT_APP_PORT" {print $2}' "$env_file")"

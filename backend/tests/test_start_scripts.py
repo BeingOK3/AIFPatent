@@ -14,7 +14,7 @@ class StartScriptsTests(unittest.TestCase):
         self.assertIn("MIN_FREE_KB", self.start)
         self.assertIn("tools/rag_infra.py\" init", self.start)
         self.assertIn("tools/rag_infra.py\" up", self.start)
-        self.assertIn("tools/rag_infra.py\" migrate", self.start)
+        self.assertNotIn("tools/rag_infra.py\" migrate", self.start)
         self.assertIn("openapi.json", self.start)
 
     def test_default_stop_preserves_volumes_and_local_mode_is_explicit(self) -> None:
