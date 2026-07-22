@@ -45,3 +45,14 @@
 - 冻结确认：复用 `StructuredModelClient` 和 Agent Schema 注册扩展点，未修改 `backend/idea/`，未引入 RAG。
 - 涉及文件：`backend/landscape/{analysis,clustering,database}.py`、对应单元测试及本日志。
 - 验证：证据 offset/hash/类型、未知证据、公开号越界、缺少证据支持、单件簇及重复/遗漏/未知聚类成员测试通过；待全量 Landscape 回归并提交。
+
+## 2026-07-22 — LANDSCAPE-RUNTIME-005
+
+- 类型：固定 LangGraph 工作流、运行时、API 与报告。
+- 工作流：新增 8 个固定节点 `VALIDATE_SCOPE -> PLAN_SEARCH -> SEARCH_PUBLICATIONS -> FILTER_AND_SELECT -> FETCH_DETAILS -> ANALYZE_PATENTS -> CLUSTER_PATENTS -> BUILD_REPORT`，每个节点受步骤顺序、尝试次数、SQLite 状态和独立 checkpoint 保护。
+- 运行时：新增独立 `landscape.db`、`landscape-checkpoints.db`、`workspace/landscape-runs/` 装配；Provider 仅复用公共接口且不写 IDEA Cache/数据库；BYOK 只存在进程内 TaskManager，重启活动 Run 以明确错误码失败。
+- API：新增 Run 创建、历史、SSE 进度、取消、重跑、JSON/Markdown/CSV 报告和删除接口；共享入口仅在 `main.py` 装配新 Router 与 `/landscape` 路由，没有改 IDEA Router/Workflow/前端状态机。
+- 报告：程序计算申请日趋势、公开法域、逐件元数据和限制；模型只负责逐件解释与聚类，`manifest.json` 最后原子写入并回写数据库哈希记录。
+- 安全：API Key 使用 `SecretStr`，配置快照只保存模型、无凭证的 base URL 和内存凭证来源标记；报告下载前始终校验 Manifest。
+- 涉及文件：`backend/landscape/{workflow,execution,runtime,api,reporting}.py`、`backend/main.py`、工作流测试及本日志。
+- 验证：Landscape 领域、检索、分析、聚类和工作流共 26 个测试通过，待全量回归、页面实现后提交。

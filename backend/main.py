@@ -10,6 +10,8 @@ from idea.followup_api import create_followup_router
 from idea.config import load_config
 from idea.health import HealthService
 from idea.runtime import build_runtime
+from landscape.api import create_landscape_router
+from landscape.runtime import build_landscape_runtime
 
 BASE = Path(__file__).resolve().parent.parent
 FRONTEND = BASE / "frontend"
@@ -35,6 +37,7 @@ app = FastAPI(title="AIFPatent 专利工作台")
 
 APP_CONFIG = load_config()
 IDEA_RUNTIME = build_runtime(APP_CONFIG)
+LANDSCAPE_RUNTIME = build_landscape_runtime(APP_CONFIG)
 IDEA_DB = IDEA_RUNTIME.database
 IDEA_CACHE = IDEA_RUNTIME.cache
 IDEA_RUN_STORE = IDEA_RUNTIME.run_store
@@ -68,6 +71,7 @@ if IDEA_RUNTIME.followup_manager is not None:
             IDEA_RUNTIME.followup_manager,
         )
     )
+app.include_router(create_landscape_router(LANDSCAPE_RUNTIME))
 
 
 @app.on_event("startup")
@@ -83,10 +87,14 @@ async def resume_idea_runs():
                 "标记需要重新输入临时 API Token 的追问 Turns: %s",
                 interrupted_turns,
             )
+    interrupted_landscape = LANDSCAPE_RUNTIME.tasks.resume_incomplete()
+    if interrupted_landscape:
+        logger.info("标记需要重新输入临时 API Token 的专利态势分析 Runs: %s", interrupted_landscape)
 
 
 @app.on_event("shutdown")
 async def close_idea_runtime():
+    await LANDSCAPE_RUNTIME.tasks.aclose()
     if IDEA_RUNTIME.followup_manager is not None:
         await IDEA_RUNTIME.followup_manager.aclose()
     await IDEA_RUNTIME.executor.aclose()
@@ -179,6 +187,14 @@ async def delete_file(name: str):
 @app.get("/")
 async def index():
     return FileResponse(str(FRONTEND / "index.html"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+@app.get("/landscape")
+async def landscape_index():
+    return FileResponse(
+        str(FRONTEND / "landscape.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND)), name="static")

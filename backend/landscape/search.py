@@ -133,10 +133,40 @@ async def execute_search(
     runner: ProviderRunner | None = None,
     timeout_seconds: float = 30.0,
 ) -> tuple[LandscapeSearchResult, list[ProviderResult]]:
+    results = await execute_provider_queries(
+        scope=scope,
+        plan=plan,
+        providers=providers,
+        runner=runner,
+        timeout_seconds=timeout_seconds,
+    )
+    batches: list[tuple[str, list[SearchHit]]] = []
+    provider_statuses: dict[str, str] = {}
+    for result in results:
+        provider_statuses[f"{result.request_id}:{result.provider}"] = result.status.value
+        if result.succeeded:
+            batches.append((result.request_id, result.hits))
+    return (
+        strict_filter_and_select(
+            batches,
+            scope=scope,
+            provider_statuses=provider_statuses,
+        ),
+        results,
+    )
+
+
+async def execute_provider_queries(
+    *,
+    scope: LandscapeScope,
+    plan: LandscapeQueryPlan,
+    providers: list[SearchProvider],
+    runner: ProviderRunner | None = None,
+    timeout_seconds: float = 30.0,
+) -> list[ProviderResult]:
     validate_query_plan_scope(plan, scope)
     runner = runner or ProviderRunner()
     calls = []
-    identities: list[tuple[str, str]] = []
     for query_index, planned in enumerate(plan.queries, start=1):
         query_id = f"LQ-{query_index}"
         query = SearchQuery(
@@ -149,23 +179,8 @@ async def execute_search(
             material_types=["patent"],
         )
         for provider in providers:
-            identities.append((query_id, provider.name))
             calls.append(runner.search(provider, query, timeout_seconds=timeout_seconds))
-    results = list(await asyncio.gather(*calls)) if calls else []
-    batches: list[tuple[str, list[SearchHit]]] = []
-    provider_statuses: dict[str, str] = {}
-    for (query_id, provider_name), result in zip(identities, results, strict=True):
-        provider_statuses[f"{query_id}:{provider_name}"] = result.status.value
-        if result.succeeded:
-            batches.append((query_id, result.hits))
-    return (
-        strict_filter_and_select(
-            batches,
-            scope=scope,
-            provider_statuses=provider_statuses,
-        ),
-        results,
-    )
+    return list(await asyncio.gather(*calls)) if calls else []
 
 
 def _normalize_text(value: str) -> str:

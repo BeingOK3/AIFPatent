@@ -444,6 +444,62 @@ class LandscapeDatabase:
                     (status, error_code, error_message, run_id, document_id),
                 )
 
+    def put_queries(self, run_id: str, queries: list[dict[str, Any]]) -> None:
+        assert_no_secrets(queries)
+        with self.connect() as connection:
+            for query in queries:
+                values = (
+                    query["query_id"], run_id, query["query_text"], query["language"],
+                    query["rationale"], now_ms(),
+                )
+                existing = connection.execute(
+                    "SELECT * FROM landscape_queries WHERE query_id=?", (query["query_id"],)
+                ).fetchone()
+                if existing is None:
+                    connection.execute("INSERT INTO landscape_queries VALUES(?,?,?,?,?,?)", values)
+                elif tuple(existing[key] for key in (
+                    "query_id", "run_id", "query_text", "language", "rationale"
+                )) != values[:-1]:
+                    raise ValueError(f"landscape query is immutable: {query['query_id']}")
+
+    def put_hit(
+        self,
+        run_id: str,
+        *,
+        hit_id: str,
+        query_id: str,
+        provider: str,
+        publication_number: str | None,
+        application_number: str | None,
+        publication_date: str | None,
+        assignee: str | None,
+        normalized_key: str | None,
+        decision: str,
+        exclusion_reason: str | None,
+        raw: dict[str, Any],
+    ) -> None:
+        assert_no_secrets(raw)
+        encoded = canonical_json(raw)
+        with self.connect() as connection:
+            values = (
+                hit_id, run_id, query_id, provider, publication_number, application_number,
+                publication_date, assignee, normalized_key, decision, exclusion_reason,
+                encoded, now_ms(),
+            )
+            existing = connection.execute(
+                "SELECT * FROM landscape_hits WHERE hit_id=?", (hit_id,)
+            ).fetchone()
+            if existing is None:
+                connection.execute(
+                    "INSERT INTO landscape_hits VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", values
+                )
+            elif tuple(existing[key] for key in (
+                "hit_id", "run_id", "query_id", "provider", "publication_number",
+                "application_number", "publication_date", "assignee", "normalized_key",
+                "decision", "exclusion_reason", "raw_json",
+            )) != values[:-1]:
+                raise ValueError(f"landscape hit is immutable: {hit_id}")
+
     def put_evidence(self, run_id: str, document_id: str, items: list[dict[str, Any]]) -> None:
         assert_no_secrets(items)
         with self.connect() as connection:
@@ -524,6 +580,42 @@ class LandscapeDatabase:
                         (run_id, cluster["cluster_id"], document_ids[publication_number], publication_number),
                     )
         self.put_stage_result(run_id, "CLUSTER_PATENTS", clusters)
+
+    def put_report_record(
+        self,
+        run_id: str,
+        *,
+        report_json_path: str,
+        report_json_hash: str,
+        report_md_path: str,
+        report_md_hash: str,
+        patents_csv_path: str,
+        patents_csv_hash: str,
+        manifest_path: str,
+    ) -> None:
+        with self.connect() as connection:
+            values = (
+                run_id, report_json_path, report_json_hash, report_md_path, report_md_hash,
+                patents_csv_path, patents_csv_hash, manifest_path, now_ms(),
+            )
+            existing = connection.execute(
+                "SELECT * FROM landscape_reports WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if existing is None:
+                connection.execute(
+                    "INSERT INTO landscape_reports VALUES(?,?,?,?,?,?,?,?,?)", values
+                )
+            elif tuple(existing[key] for key in (
+                "run_id", "report_json_path", "report_json_hash", "report_md_path",
+                "report_md_hash", "patents_csv_path", "patents_csv_hash", "manifest_path",
+            )) != values[:-1]:
+                raise ValueError("landscape report record is immutable")
+
+    def delete_run(self, run_id: str) -> None:
+        with self.connect() as connection:
+            cursor = connection.execute("DELETE FROM landscape_runs WHERE run_id=?", (run_id,))
+            if cursor.rowcount != 1:
+                raise KeyError(run_id)
 
     def table_names(self) -> set[str]:
         with self.connect() as connection:
