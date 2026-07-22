@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>专利态势分析 · AIFPatent</title>
+  <link rel="stylesheet" href="/static/landscape.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">AIFPATENT / LANDSCAPE</p>
+      <h1>专利态势分析</h1>
+      <p class="subtitle">按公开日窗口观察技术方向或重点友商的新公开专利。</p>
+    </div>
+    <nav><a href="/">返回 IDEA 工作台</a></nav>
+  </header>
+
+  <main class="layout">
+    <section class="panel input-panel" aria-labelledby="input-title">
+      <div class="panel-heading"><div><p class="eyebrow">NEW ANALYSIS</p><h2 id="input-title">创建分析</h2></div><span class="badge">MVP · 非 RAG</span></div>
+      <form id="landscape-form">
+        <fieldset>
+          <legend>分析模式</legend>
+          <label class="radio"><input type="radio" name="mode" value="TECHNOLOGY" checked> 技术方向</label>
+          <label class="radio"><input type="radio" name="mode" value="COMPETITOR"> 重点友商</label>
+        </fieldset>
+        <label class="field" id="direction-field"><span>具体技术方向 <b>*</b></span><input id="technology-direction" maxlength="500" placeholder="例如：数据中心液冷散热"></label>
+        <label class="field" id="competitor-field"><span>重点友商 <small>每行一个，别名用 | 分隔</small></span><textarea id="competitors" rows="3" placeholder="华为 | Huawei | Huawei Technologies
+三星 | Samsung"></textarea></label>
+        <div class="two-columns">
+          <label class="field"><span>公开时间段</span><select id="period-preset"><option value="ONE_MONTH">近 1 个月</option><option value="QUARTER" selected>近 1 个季度</option><option value="SIX_MONTHS">近 6 个月</option><option value="TWELVE_MONTHS">近 12 个月</option><option value="CUSTOM">自定义</option></select></label>
+          <div class="field"><span>公开日窗口</span><div class="date-range"><input id="publication-start" type="date" required><input id="publication-end" type="date" required></div></div>
+        </div>
+        <details class="advanced"><summary>检索预算</summary><div class="two-columns">
+          <label class="field"><span>候选上限</span><input id="candidate-limit" type="number" min="10" max="200" value="100"></label>
+          <label class="field"><span>逐件精读上限</span><input id="analysis-limit" type="number" min="1" max="50" value="20"></label>
+        </div></details>
+        <div class="secret-box"><label class="field"><span>模型 API Key <b>*</b></span><input id="api-key" type="password" autocomplete="off" required placeholder="仅本次 Run 使用，不会保存"></label><div class="two-columns">
+          <label class="field"><span>Base URL</span><input id="base-url" value="https://api.deepseek.com" required></label>
+          <label class="field"><span>模型</span><input id="model" value="deepseek-v4-flash" required></label>
+        </div></div>
+        <button class="primary" id="submit-button" type="submit">开始分析 <span>→</span></button>
+        <p id="form-message" class="form-message" role="status"></p>
+      </form>
+    </section>
+
+    <aside class="panel history-panel" aria-labelledby="history-title">
+      <div class="panel-heading"><div><p class="eyebrow">RUN HISTORY</p><h2 id="history-title">历史任务</h2></div><button id="refresh-history" class="icon-button" title="刷新">↻</button></div>
+      <div id="history-list" class="history-list"><p class="muted">正在加载…</p></div>
+    </aside>
+
+    <section id="run-panel" class="panel run-panel hidden" aria-live="polite">
+      <div class="run-header"><div><p class="eyebrow">RUN STATUS</p><h2 id="run-title">专利态势分析</h2></div><div class="run-actions"><span id="run-status" class="status">QUEUED</span><button id="cancel-run" class="secondary hidden">取消任务</button></div></div>
+      <div id="step-list" class="step-list"></div>
+      <div id="report-view" class="report-view hidden"></div>
+    </section>
+  </main>
+  <script src="/static/landscape.js" defer></script>
+</body>
+</html>

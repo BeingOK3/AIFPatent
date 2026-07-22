@@ -90,6 +90,7 @@ backend/landscape/
   clustering.py       无向量的结构化主题聚类
   reporting.py        确定性统计、JSON/Markdown/CSV
   workflow.py         固定 LangGraph 和步骤状态
+  execution.py        节点业务编排和文献临时生命周期
   runtime.py          共享 Provider/Model 的只读装配
   api.py              Run、SSE、取消、报告和 BYOK 生命周期
 
@@ -290,4 +291,3 @@ Run：`QUEUED | RUNNING | COMPLETED | COMPLETED_WITH_LIMITATIONS | FAILED | CANC
 - 保证完整的全球同族数据；
 - 用户、组织、权限和多租户；
 - 分布式多 Worker 自动恢复。
-

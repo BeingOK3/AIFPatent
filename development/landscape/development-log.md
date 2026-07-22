@@ -56,3 +56,12 @@
 - 安全：API Key 使用 `SecretStr`，配置快照只保存模型、无凭证的 base URL 和内存凭证来源标记；报告下载前始终校验 Manifest。
 - 涉及文件：`backend/landscape/{workflow,execution,runtime,api,reporting}.py`、`backend/main.py`、工作流测试及本日志。
 - 验证：Landscape 领域、检索、分析、聚类和工作流共 26 个测试通过，待全量回归、页面实现后提交。
+
+## 2026-07-22 — LANDSCAPE-UI-006
+
+- 类型：独立专利态势分析页面。
+- 页面：新增 `/landscape`、`landscape.html`、`landscape.css`、`landscape.js`；提供技术方向/友商模式、公开日预设与自定义窗口、候选/精读预算、历史 Run、步骤进度、取消、趋势/法域条形统计、技术聚类、逐件精读、限制和 Markdown/CSV 下载。
+- 安全：前端所有动态文本经过 HTML 转义；API Key 使用密码输入框，不写 `localStorage`、Cookie 或 URL；现有 `frontend/app.js`、IDEA 页面和状态机未改动。
+- 可用性：页面直接使用 Landscape API/SSE，移动端响应式布局；模式切换自动更新必填字段，时间预设自动填充公开日窗口。
+- 涉及文件：`frontend/landscape.html`、`landscape.css`、`landscape.js`、本日志。
+- 验证：待执行 Node 语法检查、前端契约检查、全量回归和提交后推送。
