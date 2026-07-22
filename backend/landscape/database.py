@@ -406,6 +406,125 @@ class LandscapeDatabase:
             raise ValueError(f"landscape stage result hash mismatch: {stage_name}")
         return {"value": json.loads(row["result_json"]), "content_hash": row["content_hash"], "created_at": row["created_at"]}
 
+    def put_document(
+        self,
+        run_id: str,
+        *,
+        document_id: str,
+        publication_number: str,
+        status: str,
+        metadata: dict[str, Any],
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        assert_no_secrets(metadata)
+        encoded = canonical_json(metadata)
+        with self.connect() as connection:
+            existing = connection.execute(
+                "SELECT publication_number,metadata_json FROM landscape_run_documents WHERE run_id=? AND document_id=?",
+                (run_id, document_id),
+            ).fetchone()
+            if existing is None:
+                connection.execute(
+                    """
+                    INSERT INTO landscape_run_documents(
+                        run_id,document_id,publication_number,status,metadata_json,error_code,error_message
+                    ) VALUES(?,?,?,?,?,?,?)
+                    """,
+                    (run_id, document_id, publication_number, status, encoded, error_code, error_message),
+                )
+            elif existing["publication_number"] != publication_number or existing["metadata_json"] != encoded:
+                raise ValueError(f"landscape document metadata is immutable: {document_id}")
+            else:
+                connection.execute(
+                    """
+                    UPDATE landscape_run_documents SET status=?,error_code=?,error_message=?
+                    WHERE run_id=? AND document_id=?
+                    """,
+                    (status, error_code, error_message, run_id, document_id),
+                )
+
+    def put_evidence(self, run_id: str, document_id: str, items: list[dict[str, Any]]) -> None:
+        assert_no_secrets(items)
+        with self.connect() as connection:
+            for item in items:
+                values = (
+                    item["evidence_id"], run_id, document_id, item["section_type"],
+                    item["section_label"], item["text"], item["start_offset"],
+                    item["end_offset"], item["content_hash"], now_ms(),
+                )
+                existing = connection.execute(
+                    "SELECT * FROM landscape_evidence WHERE evidence_id=?", (item["evidence_id"],)
+                ).fetchone()
+                if existing is None:
+                    connection.execute(
+                        "INSERT INTO landscape_evidence VALUES(?,?,?,?,?,?,?,?,?,?)", values
+                    )
+                elif tuple(existing[key] for key in (
+                    "evidence_id", "run_id", "document_id", "section_type", "section_label",
+                    "quote_text", "start_offset", "end_offset", "content_hash",
+                )) != values[:-1]:
+                    raise ValueError(f"landscape evidence is immutable: {item['evidence_id']}")
+
+    def put_analysis(
+        self,
+        run_id: str,
+        document_id: str,
+        publication_number: str,
+        analysis: dict[str, Any],
+    ) -> str:
+        assert_no_secrets(analysis)
+        encoded = canonical_json(analysis)
+        content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        with self.connect() as connection:
+            existing = connection.execute(
+                "SELECT analysis_json,content_hash FROM landscape_patent_analyses WHERE run_id=? AND document_id=?",
+                (run_id, document_id),
+            ).fetchone()
+            if existing is None:
+                connection.execute(
+                    "INSERT INTO landscape_patent_analyses VALUES(?,?,?,?,?,?)",
+                    (run_id, document_id, publication_number, encoded, content_hash, now_ms()),
+                )
+            elif existing["analysis_json"] != encoded or existing["content_hash"] != content_hash:
+                raise ValueError(f"landscape patent analysis is immutable: {document_id}")
+        return content_hash
+
+    def put_clusters(
+        self,
+        run_id: str,
+        clusters: list[dict[str, Any]],
+        document_ids: dict[str, str],
+    ) -> None:
+        assert_no_secrets(clusters)
+        try:
+            checkpoint = self.get_stage_result(run_id, "CLUSTER_PATENTS")
+        except KeyError:
+            checkpoint = None
+        if checkpoint is not None:
+            if checkpoint["value"] != clusters:
+                raise ValueError("landscape clusters are immutable")
+            return
+        with self.connect() as connection:
+            if connection.execute(
+                "SELECT 1 FROM landscape_clusters WHERE run_id=? LIMIT 1", (run_id,)
+            ).fetchone() is not None:
+                raise ValueError("landscape clusters exist without a completion checkpoint")
+            for cluster in clusters:
+                connection.execute(
+                    "INSERT INTO landscape_clusters VALUES(?,?,?,?,?)",
+                    (
+                        cluster["cluster_id"], run_id, cluster["name"], cluster["summary"],
+                        canonical_json(cluster.get("keywords", [])),
+                    ),
+                )
+                for publication_number in cluster["publication_numbers"]:
+                    connection.execute(
+                        "INSERT INTO landscape_cluster_members VALUES(?,?,?,?)",
+                        (run_id, cluster["cluster_id"], document_ids[publication_number], publication_number),
+                    )
+        self.put_stage_result(run_id, "CLUSTER_PATENTS", clusters)
+
     def table_names(self) -> set[str]:
         with self.connect() as connection:
             rows = connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()

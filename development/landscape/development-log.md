@@ -33,3 +33,15 @@
 - 冻结确认：只读取现有 `idea.providers`/`idea.merge` 公共抽象，未修改任何 IDEA 文件。
 - 涉及文件：`backend/landscape/{planning,search}.py`、`test_landscape_{planning,search}.py` 及本日志。
 - 验证：Fixture 单元测试覆盖窗口边界、日期缺失/非法/越界、无效公开号、友商误匹配、跨查询去重和预算截断；待提交。
+
+## 2026-07-22 — LANDSCAPE-ANALYSIS-004
+
+- 类型：非 RAG 证据包、逐件专利精读和结构化技术聚类。
+- 证据：从当前 `FetchedDocument` 的摘要、权利要求、背景技术和方向术语命中说明书片段直接构建受字符预算保护的证据包；每段记录来源类型、标签、原文 offset 和 SHA-256，不调用 Chunk Retriever、Embedding 或向量库。
+- 精读：新增独立 Landscape 模型输出契约与 Prompt，要求现有技术、问题、核心发明点、解决问题和有益效果均绑定当前文献证据；未知证据 ID、公开号串件和缺少支持的结论 fail closed。
+- 容错：多文献精读使用有界并发，单件失败按公开号记录，不取消其他已完成精读，供工作流最终标注限制。
+- 聚类：只向模型提供标题、摘要、核心发明点和关键词；成员必须恰好覆盖成功精读集合，重复、遗漏、新增公开号和重复簇 ID 全部拒绝；单文献使用稳定确定性簇。
+- 持久化：补充文献元数据、证据、分析和聚类不可变写入；证据原文留存但不在 SQLite 保存整篇专利全文。
+- 冻结确认：复用 `StructuredModelClient` 和 Agent Schema 注册扩展点，未修改 `backend/idea/`，未引入 RAG。
+- 涉及文件：`backend/landscape/{analysis,clustering,database}.py`、对应单元测试及本日志。
+- 验证：证据 offset/hash/类型、未知证据、公开号越界、缺少证据支持、单件簇及重复/遗漏/未知聚类成员测试通过；待全量 Landscape 回归并提交。
