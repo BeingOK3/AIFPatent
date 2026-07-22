@@ -12,7 +12,12 @@ from idea.providers.base import FetchRequest, FetchedDocument, ProviderResult, P
 from .analysis import LandscapeAnalysisService
 from .clustering import LandscapeClusteringError, LandscapeClusteringService
 from .database import LandscapeDatabase
-from .planning import build_deterministic_query_plan
+from .planning import (
+    CompetitorAliasService,
+    build_deterministic_query_plan,
+    fallback_alias_plan,
+    scope_with_alias_plan,
+)
 from .reporting import LandscapeReportService, build_report
 from .schemas import LandscapeQueryPlan, LandscapeScope
 from .search import (
@@ -46,6 +51,7 @@ class LandscapeExecutionService:
             model, database, concurrency=analysis_concurrency
         )
         self.clustering = LandscapeClusteringService(model)
+        self.aliases = CompetitorAliasService(model)
         self.report_service = report_service
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
@@ -72,7 +78,18 @@ class LandscapeExecutionService:
 
     async def plan_search(self, run_id: str) -> dict[str, Any]:
         scope = self.scope(run_id)
-        plan = build_deterministic_query_plan(scope)
+        alias_error = None
+        if scope.competitors:
+            try:
+                alias_plan = await self.aliases.resolve(scope.competitors)
+            except Exception as exc:
+                alias_plan = fallback_alias_plan(scope.competitors)
+                alias_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+            effective_scope = scope_with_alias_plan(scope, alias_plan)
+        else:
+            alias_plan = None
+            effective_scope = scope
+        plan = build_deterministic_query_plan(effective_scope)
         self.database.put_queries(
             run_id,
             [
@@ -85,10 +102,14 @@ class LandscapeExecutionService:
                 for index, query in enumerate(plan.queries, start=1)
             ],
         )
-        return {"plan": plan.model_dump(mode="json")}
+        return {
+            "plan": plan.model_dump(mode="json"),
+            "competitor_aliases": alias_plan.model_dump(mode="json")["competitors"] if alias_plan else [],
+            "alias_resolution_error": alias_error,
+        }
 
     async def search_publications(self, run_id: str) -> dict[str, Any]:
-        scope = self.scope(run_id)
+        scope = self.effective_scope(run_id)
         plan = self.load_plan(run_id)
         results = await execute_provider_queries(
             scope=scope,
@@ -100,7 +121,7 @@ class LandscapeExecutionService:
         return {"results": [result.model_dump(mode="json") for result in results]}
 
     async def filter_and_select(self, run_id: str) -> dict[str, Any]:
-        scope = self.scope(run_id)
+        scope = self.effective_scope(run_id)
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.SEARCH_PUBLICATIONS.value)["value"]
         results = [ProviderResult.model_validate(item) for item in raw["results"]]
         results = await self._enrich_missing_dates(run_id, results)
@@ -219,6 +240,7 @@ class LandscapeExecutionService:
             clusters=clusters,
             failures=analysis_raw["failures"],
             limitations=limitations,
+            searched_competitor_aliases=self.alias_output(run_id),
         )
         self.report_service.save(run_id, report)
         return {"report": report, "manifest": "manifest.json"}
@@ -252,6 +274,12 @@ class LandscapeExecutionService:
             pass
         if run_id in self.cluster_failures:
             limitations.append({"code": "CLUSTER_FAILURE", "message": self.cluster_failures[run_id]})
+        try:
+            plan = self.database.get_stage_result(run_id, LandscapeWorkflowStep.PLAN_SEARCH.value)["value"]
+            if plan.get("alias_resolution_error"):
+                limitations.append({"code": "COMPETITOR_ALIAS_FALLBACK", "message": "友商别名模型解析失败，本次仅使用用户输入的主名称。"})
+        except KeyError:
+            pass
         return limitations
 
     def scope(self, run_id: str) -> LandscapeScope:
@@ -260,6 +288,19 @@ class LandscapeExecutionService:
     def load_plan(self, run_id: str) -> LandscapeQueryPlan:
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.PLAN_SEARCH.value)["value"]
         return LandscapeQueryPlan.model_validate(raw["plan"])
+
+    def alias_output(self, run_id: str) -> list[dict[str, Any]]:
+        raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.PLAN_SEARCH.value)["value"]
+        return list(raw.get("competitor_aliases", []))
+
+    def effective_scope(self, run_id: str) -> LandscapeScope:
+        from .schemas import CompetitorAliasPlan
+
+        scope = self.scope(run_id)
+        aliases = self.alias_output(run_id)
+        if not aliases:
+            return scope
+        return scope_with_alias_plan(scope, CompetitorAliasPlan(competitors=aliases))
 
     def selected_hits(self, run_id: str) -> list[MergedHit]:
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value)["value"]

@@ -66,6 +66,22 @@ class LandscapeDatabaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "immutable"):
             self.db.put_stage_result(run["run_id"], "VALIDATE_SCOPE", {"valid": False})
 
+    def test_combined_mode_is_persisted_and_listed_from_immutable_scope(self) -> None:
+        scope = LandscapeScope(
+            technology_direction="数据中心液冷",
+            competitors=[{"name": "Huawei"}],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 7, 1),
+        )
+        run = self.db.create_run(
+            scope=scope,
+            model="deepseek-v4-flash",
+            workflow_version="1.0.0",
+            prompt_version="1.0.0",
+        )
+        self.assertEqual(run["mode"], AnalysisMode.TECHNOLOGY_COMPETITOR.value)
+        self.assertEqual(self.db.list_runs()[0]["mode"], AnalysisMode.TECHNOLOGY_COMPETITOR.value)
+
     def test_credentials_are_rejected_before_database_write(self) -> None:
         marker = "credential-must-never-persist"
         with self.assertRaisesRegex(ValueError, "sensitive field"):

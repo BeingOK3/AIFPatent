@@ -9,6 +9,33 @@ from landscape.schemas import AnalysisMode, CompetitorInput, LandscapeScope
 
 
 class LandscapeSchemaTests(unittest.TestCase):
+    def test_mode_is_derived_from_supplied_inputs(self) -> None:
+        values = {
+            "publication_start": date(2026, 4, 1),
+            "publication_end": date(2026, 7, 1),
+        }
+        technology = LandscapeScope(technology_direction="液冷", **values)
+        competitor = LandscapeScope(
+            competitors=[CompetitorInput(name="Huawei")], **values
+        )
+        combined = LandscapeScope(
+            technology_direction="液冷",
+            competitors=[CompetitorInput(name="Huawei")],
+            **values,
+        )
+        self.assertEqual(technology.mode, AnalysisMode.TECHNOLOGY)
+        self.assertEqual(competitor.mode, AnalysisMode.COMPETITOR)
+        self.assertEqual(combined.mode, AnalysisMode.TECHNOLOGY_COMPETITOR)
+
+    def test_explicit_mode_must_match_derived_mode(self) -> None:
+        with self.assertRaisesRegex(ValidationError, "mode does not match"):
+            LandscapeScope(
+                mode=AnalysisMode.COMPETITOR,
+                technology_direction="液冷",
+                publication_start=date(2026, 4, 1),
+                publication_end=date(2026, 7, 1),
+            )
+
     def test_technology_mode_requires_direction(self) -> None:
         with self.assertRaises(ValidationError):
             LandscapeScope(

@@ -19,7 +19,7 @@ from idea.providers.base import (
 )
 
 from .planning import validate_query_plan_scope
-from .schemas import LandscapeModel, LandscapeQueryPlan, LandscapeScope
+from .schemas import AnalysisMode, LandscapeModel, LandscapeQueryPlan, LandscapeScope
 
 
 class ExclusionReason(StrEnum):
@@ -103,7 +103,7 @@ def exclusion_reason(hit: SearchHit, scope: LandscapeScope) -> ExclusionReason |
         return ExclusionReason.PUBLICATION_DATE_INVALID
     if not scope.publication_start <= publication_date <= scope.publication_end:
         return ExclusionReason.PUBLICATION_DATE_OUTSIDE_WINDOW
-    if scope.mode.value == "COMPETITOR" and not assignee_matches_confirmed_competitor(
+    if scope.mode in {AnalysisMode.COMPETITOR, AnalysisMode.TECHNOLOGY_COMPETITOR} and not assignee_matches_confirmed_competitor(
         hit.assignee, scope
     ):
         return ExclusionReason.COMPETITOR_NOT_CONFIRMED

@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS landscape_runs (
     run_id TEXT PRIMARY KEY,
     parent_run_id TEXT REFERENCES landscape_runs(run_id) ON DELETE SET NULL,
     status TEXT NOT NULL CHECK(status IN ('QUEUED','RUNNING','COMPLETED','COMPLETED_WITH_LIMITATIONS','FAILED','CANCELLED')),
-    mode TEXT NOT NULL CHECK(mode IN ('TECHNOLOGY','COMPETITOR')),
+    mode TEXT NOT NULL CHECK(mode IN ('TECHNOLOGY','COMPETITOR','TECHNOLOGY_COMPETITOR')),
     publication_start TEXT NOT NULL,
     publication_end TEXT NOT NULL,
     model TEXT NOT NULL,
@@ -262,6 +262,15 @@ class LandscapeDatabase:
                 ).fetchone()
                 if parent is None:
                     raise ValueError("parent landscape run does not exist")
+            storage_mode = scope.mode.value
+            if storage_mode == "TECHNOLOGY_COMPETITOR":
+                schema = connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='landscape_runs'"
+                ).fetchone()["sql"]
+                if "'TECHNOLOGY_COMPETITOR'" not in schema:
+                    # Databases created before this mode existed retain their immutable table.
+                    # scope_json remains authoritative and exposes the derived combined mode.
+                    storage_mode = "COMPETITOR"
             connection.execute(
                 """
                 INSERT INTO landscape_runs(
@@ -274,7 +283,7 @@ class LandscapeDatabase:
                     run_id,
                     parent_run_id,
                     RunStatus.QUEUED.value,
-                    scope.mode.value,
+                    storage_mode,
                     scope.publication_start.isoformat(),
                     scope.publication_end.isoformat(),
                     model,
@@ -298,6 +307,7 @@ class LandscapeDatabase:
         result = dict(row)
         for field in ("scope_json", "config_snapshot", "limitation_json"):
             result[field] = json.loads(result[field])
+        result["mode"] = result["scope_json"]["mode"]
         return result
 
     def list_runs(self, limit: int = 100) -> list[dict[str, Any]]:
@@ -307,7 +317,8 @@ class LandscapeDatabase:
             rows = connection.execute(
                 """
                 SELECT run_id,parent_run_id,status,mode,publication_start,publication_end,
-                       model,input_hash,limitation_json,created_at,started_at,completed_at,error_code
+                       model,input_hash,scope_json,limitation_json,created_at,started_at,
+                       completed_at,error_code
                 FROM landscape_runs ORDER BY created_at DESC,rowid DESC LIMIT ?
                 """,
                 (limit,),
@@ -315,6 +326,8 @@ class LandscapeDatabase:
         result = [dict(row) for row in rows]
         for item in result:
             item["limitation_json"] = json.loads(item["limitation_json"])
+            scope = json.loads(item.pop("scope_json"))
+            item["mode"] = scope["mode"]
         return result
 
     def set_run_status(

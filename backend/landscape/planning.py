@@ -2,10 +2,108 @@ from __future__ import annotations
 
 from .schemas import (
     AnalysisMode,
+    CompetitorAliasPlan,
+    CompetitorAliasResolution,
+    CompetitorInput,
     LandscapePlannedQuery,
     LandscapeQueryPlan,
     LandscapeScope,
 )
+from idea.agent_schemas import register_agent_output_model
+from idea.model_client import StructuredModelClient
+
+
+ALIAS_AGENT_NAME = "patent-landscape-competitor-aliaser"
+ALIAS_PROMPT = """
+For every supplied competitor primary_name, identify patent-assignee search aliases: common Chinese
+and English names, full corporate names, abbreviations, and well-known historical names. Return
+exactly one item per supplied primary_name and copy each primary_name exactly. Do not introduce a
+different corporate group, subsidiary, affiliate, product brand, or guessed legal entity. Use at
+most 12 aliases per competitor. source must be MODEL_INFERRED. This output expands search terms and
+is not a legal entity verification.
+"""
+
+
+class CompetitorAliasError(RuntimeError):
+    pass
+
+
+class CompetitorAliasService:
+    def __init__(self, model: StructuredModelClient):
+        register_agent_output_model(ALIAS_AGENT_NAME, CompetitorAliasPlan)
+        self.model = model
+
+    async def resolve(self, competitors: list[CompetitorInput]) -> CompetitorAliasPlan:
+        if not competitors:
+            raise CompetitorAliasError("at least one competitor is required")
+        result = await self.model.complete(
+            ALIAS_AGENT_NAME,
+            system_prompt=ALIAS_PROMPT,
+            input_payload={"competitors": [{"primary_name": item.name} for item in competitors]},
+        )
+        output = result.output
+        if not isinstance(output, CompetitorAliasPlan):
+            raise CompetitorAliasError("competitor aliaser returned the wrong schema")
+        output = CompetitorAliasPlan(
+            competitors=[
+                item.model_copy(
+                    update={
+                        "aliases": [
+                            alias
+                            for alias in item.aliases
+                            if alias.casefold() != item.primary_name.casefold()
+                        ]
+                    }
+                )
+                for item in output.competitors
+            ]
+        )
+        validate_alias_plan(output, competitors)
+        return output
+
+
+def validate_alias_plan(plan: CompetitorAliasPlan, inputs: list[CompetitorInput]) -> None:
+    expected = {item.name.casefold(): item.name for item in inputs}
+    actual = [item.primary_name.casefold() for item in plan.competitors]
+    if len(actual) != len(set(actual)):
+        raise CompetitorAliasError("competitor alias output contains duplicate primary names")
+    if set(actual) != set(expected):
+        raise CompetitorAliasError("competitor alias output changed the requested entities")
+    primary_names = set(expected)
+    for item in plan.competitors:
+        for alias in item.aliases:
+            if alias.casefold() in primary_names and alias.casefold() != item.primary_name.casefold():
+                raise CompetitorAliasError("an alias collides with another requested competitor")
+
+
+def fallback_alias_plan(competitors: list[CompetitorInput]) -> CompetitorAliasPlan:
+    return CompetitorAliasPlan(
+        competitors=[
+            CompetitorAliasResolution(
+                primary_name=item.name,
+                aliases=[],
+                source="PRIMARY_NAME_FALLBACK",
+            )
+            for item in competitors
+        ]
+    )
+
+
+def scope_with_alias_plan(scope: LandscapeScope, plan: CompetitorAliasPlan) -> LandscapeScope:
+    resolved = {
+        item.primary_name.casefold(): item for item in plan.competitors
+    }
+    return scope.model_copy(
+        update={
+            "competitors": [
+                CompetitorInput(
+                    name=competitor.name,
+                    aliases=resolved[competitor.name.casefold()].aliases,
+                )
+                for competitor in scope.competitors
+            ]
+        }
+    )
 
 
 def build_deterministic_query_plan(scope: LandscapeScope) -> LandscapeQueryPlan:
@@ -64,11 +162,11 @@ def build_deterministic_query_plan(scope: LandscapeScope) -> LandscapeQueryPlan:
 def validate_query_plan_scope(plan: LandscapeQueryPlan, scope: LandscapeScope) -> None:
     """Fail closed if a plan does not retain the user-owned scope anchor."""
     searchable = " ".join(item.query_text for item in plan.queries).casefold()
-    if scope.mode == AnalysisMode.TECHNOLOGY:
+    if scope.mode in {AnalysisMode.TECHNOLOGY, AnalysisMode.TECHNOLOGY_COMPETITOR}:
         direction = (scope.technology_direction or "").casefold()
         if direction not in searchable:
             raise ValueError("query plan does not contain the technology direction")
-    else:
+    if scope.mode in {AnalysisMode.COMPETITOR, AnalysisMode.TECHNOLOGY_COMPETITOR}:
         names = [
             value.casefold()
             for competitor in scope.competitors

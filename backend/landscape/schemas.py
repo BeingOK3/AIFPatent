@@ -14,6 +14,7 @@ class LandscapeModel(BaseModel):
 class AnalysisMode(StrEnum):
     TECHNOLOGY = "TECHNOLOGY"
     COMPETITOR = "COMPETITOR"
+    TECHNOLOGY_COMPETITOR = "TECHNOLOGY_COMPETITOR"
 
 
 class PeriodPreset(StrEnum):
@@ -84,7 +85,7 @@ class AnalysisBudget(LandscapeModel):
 
 
 class LandscapeScope(LandscapeModel):
-    mode: AnalysisMode
+    mode: AnalysisMode | None = None
     technology_direction: str | None = Field(default=None, max_length=500)
     competitors: list[CompetitorInput] = Field(default_factory=list, max_length=20)
     period_preset: PeriodPreset = PeriodPreset.CUSTOM
@@ -103,14 +104,45 @@ class LandscapeScope(LandscapeModel):
             raise ValueError("publication_end must be >= publication_start")
         if (self.publication_end - self.publication_start).days > 366:
             raise ValueError("publication window cannot exceed 12 months")
-        if self.mode == AnalysisMode.TECHNOLOGY and not self.technology_direction:
-            raise ValueError("technology_direction is required in TECHNOLOGY mode")
-        if self.mode == AnalysisMode.COMPETITOR and not self.competitors:
-            raise ValueError("competitors are required in COMPETITOR mode")
+        if not self.technology_direction and not self.competitors:
+            raise ValueError("technology_direction or competitors is required")
+        derived = (
+            AnalysisMode.TECHNOLOGY_COMPETITOR
+            if self.technology_direction and self.competitors
+            else AnalysisMode.TECHNOLOGY
+            if self.technology_direction
+            else AnalysisMode.COMPETITOR
+        )
+        if self.mode is not None and self.mode != derived:
+            raise ValueError(f"mode does not match supplied inputs; expected {derived.value}")
+        self.mode = derived
         competitor_keys = [competitor.name.casefold() for competitor in self.competitors]
         if len(competitor_keys) != len(set(competitor_keys)):
             raise ValueError("competitor names must be unique")
         return self
+
+
+class CompetitorAliasResolution(LandscapeModel):
+    primary_name: str = Field(min_length=1, max_length=200)
+    aliases: list[str] = Field(default_factory=list, max_length=12)
+    source: Literal["MODEL_INFERRED", "PRIMARY_NAME_FALLBACK"]
+
+    @field_validator("aliases")
+    @classmethod
+    def normalize_aliases(cls, values: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            value = raw.strip()
+            key = value.casefold()
+            if value and key not in seen:
+                seen.add(key)
+                result.append(value)
+        return result
+
+
+class CompetitorAliasPlan(LandscapeModel):
+    competitors: list[CompetitorAliasResolution] = Field(min_length=1, max_length=20)
 
 
 class LandscapePlannedQuery(LandscapeModel):

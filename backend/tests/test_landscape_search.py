@@ -111,6 +111,28 @@ class LandscapeSearchTests(unittest.TestCase):
         self.assertEqual(result.coverage.truncated_count, 1)
         self.assertEqual(result.candidates[0].query_ids, ["LQ-1", "LQ-2"])
 
+    def test_combined_mode_enforces_competitor_assignee_filter(self) -> None:
+        scope = LandscapeScope(
+            technology_direction="liquid cooling",
+            competitors=[CompetitorInput(name="Huawei", aliases=["华为"])],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+        )
+        result = strict_filter_and_select(
+            [
+                (
+                    "LQ-1",
+                    [
+                        hit(1, "US-1-A1", "2026-05-01", assignee="Huawei Technologies"),
+                        hit(2, "US-2-A1", "2026-05-02", assignee="Other Corp"),
+                    ],
+                )
+            ],
+            scope=scope,
+        )
+        self.assertEqual([item.publication_number for item in result.candidates], ["US1A1"])
+        self.assertEqual(scope.mode, AnalysisMode.TECHNOLOGY_COMPETITOR)
+
     def test_provider_query_receives_program_owned_publication_window_hints(self) -> None:
         text = scoped_provider_query_text("liquid cooling", self.technology_scope())
         self.assertIn("after=publication:20260331", text)
