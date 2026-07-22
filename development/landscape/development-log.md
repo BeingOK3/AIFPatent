@@ -166,3 +166,13 @@
 - 别名审计：分别输出模型识别别名、实际进入查询的 `searched_aliases` 与受查询长度限制未采用的 `unsearched_aliases`；最终报告只把实际采用部分描述为检索别名。
 - 安全：Provider 调试只读取状态和最多 500 字符错误信息，不返回命中列表、`raw_json`、请求头、模型请求或凭证。
 - 验证：Node 语法、Debug 脱敏/聚合测试、前端契约和全部 44 个 Landscape 测试通过。
+
+## 2026-07-22 — LANDSCAPE-COVERAGE-ACCEPTANCE-018
+
+- 类型：完整检索覆盖容器验收。
+- 镜像：应用镜像按最新代码重建，App、PostgreSQL、Redis、MinIO 四服务均为 healthy；`/landscape` 与 Debug API 可访问。
+- 覆盖实测：容器内使用“数据中心液冷”及中科曙光、华为、英伟达、浪潮四家友商构造计划，得到 8 条查询；每家分别包含一条原始/中文技术词组查询和一条英文技术词组查询，计划校验通过。
+- 查询示例：华为覆盖 `("数据中心液冷" OR "冷板液冷") AND ("华为" OR "Huawei")` 与 `("data center liquid cooling" OR "cold plate cooling") AND ("华为" OR "Huawei")`；其余三家保持相同双语覆盖结构。
+- Debug 实测：旧 Run 可返回 12 条 Provider 调用明细及 `PROVIDER_TIMEOUT` 等真实错误；旧阶段结果不回填技术扩展，新建 Run 才使用并展示双语扩展，保持不可变运行语义。
+- 回归：44 个 Landscape 测试、13 个既有前端/容器/启动脚本测试和 Node 语法检查通过，`git diff --check` 通过。
+- Git：本验收为第 18 个工作单元，将与第 17 个 Debug 提交一起推送远程 `develop`。
