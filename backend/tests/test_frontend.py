@@ -21,6 +21,12 @@ class FrontendContractTests(unittest.TestCase):
         self.assertNotIn('"/api/run"', self.javascript)
         self.assertIn("langgraph_node_started", self.javascript)
 
+    def test_landscape_report_module_has_a_visible_homepage_entry(self) -> None:
+        self.assertIn('href="/landscape"', self.html)
+        self.assertIn("专利态势分析", self.html)
+        self.assertIn("新公开专利调查报告", self.html)
+        self.assertIn("module-entry", self.css)
+
     def test_frontend_calls_durable_idea_history_progress_and_report_apis(self) -> None:
         for fragment in (
             "/api/idea/cases",

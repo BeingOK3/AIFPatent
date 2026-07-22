@@ -46,6 +46,13 @@ h3 { margin-bottom: 0; font-size: 15px; }
 .subtitle { margin-bottom: 0; color: var(--muted); font-size: 13px; }
 .muted { color: var(--muted); }
 
+.topbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.module-entry { display: grid; min-width: 210px; padding: 9px 13px; border: 1px solid #b9d6c9; border-radius: 11px; background: linear-gradient(115deg, #eef8f3, #fff); color: var(--ink); text-decoration: none; box-shadow: 0 5px 16px rgba(11,107,79,.07); }
+.module-entry span { color: var(--accent); font-size: 8px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.module-entry strong { margin-top: 1px; font: 700 13px Georgia, "Noto Serif SC", serif; }
+.module-entry small { margin-top: 2px; color: var(--muted); font-size: 9px; }
+.module-entry:hover, .module-entry:focus-visible { border-color: var(--accent); box-shadow: 0 7px 20px rgba(11,107,79,.13); transform: translateY(-1px); }
+
 .system-state { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.8); font-size: 12px; }
 .health-dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; box-shadow: 0 0 0 4px #ecefed; }
 .health-dot.ok { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
@@ -220,6 +227,8 @@ input[readonly] { border-style: dashed; background: #f2f4f1; color: var(--muted)
 
 @media (max-width: 760px) {
   .topbar { align-items: flex-start; flex-direction: column; padding: 20px 14px 14px; }
+  .topbar-actions { width: 100%; align-items: stretch; flex-direction: column; }
+  .module-entry { min-width: 0; width: 100%; }
   .workspace { display: block; padding: 0 12px 20px; }
   .panel { min-height: auto; margin-bottom: 12px; padding: 16px; border-radius: 12px; }
   .form-grid.two, .form-grid.three, .fact-grid { grid-template-columns: 1fr; }
