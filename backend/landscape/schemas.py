@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+from datetime import date
+from enum import StrEnum
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class LandscapeModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class AnalysisMode(StrEnum):
+    TECHNOLOGY = "TECHNOLOGY"
+    COMPETITOR = "COMPETITOR"
+
+
+class PeriodPreset(StrEnum):
+    ONE_MONTH = "ONE_MONTH"
+    QUARTER = "QUARTER"
+    SIX_MONTHS = "SIX_MONTHS"
+    TWELVE_MONTHS = "TWELVE_MONTHS"
+    CUSTOM = "CUSTOM"
+
+
+class RunStatus(StrEnum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    COMPLETED_WITH_LIMITATIONS = "COMPLETED_WITH_LIMITATIONS"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class DocumentStatus(StrEnum):
+    CANDIDATE = "CANDIDATE"
+    SELECTED = "SELECTED"
+    FETCHED = "FETCHED"
+    ANALYZED = "ANALYZED"
+    FAILED = "FAILED"
+    EXCLUDED = "EXCLUDED"
+
+
+class FamilyDataStatus(StrEnum):
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class CompetitorInput(LandscapeModel):
+    name: str = Field(min_length=1, max_length=200)
+    aliases: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("aliases")
+    @classmethod
+    def normalize_aliases(cls, values: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            value = raw.strip()
+            key = value.casefold()
+            if not value or key in seen:
+                continue
+            seen.add(key)
+            result.append(value)
+        return result
+
+    def confirmed_names(self) -> tuple[str, ...]:
+        values = [self.name, *self.aliases]
+        return tuple(dict.fromkeys(value.casefold() for value in values))
+
+
+class AnalysisBudget(LandscapeModel):
+    candidate_limit: int = Field(default=100, ge=10, le=200)
+    analysis_limit: int = Field(default=20, ge=1, le=50)
+    per_query_limit: int = Field(default=50, ge=5, le=100)
+
+    @model_validator(mode="after")
+    def coherent_limits(self) -> "AnalysisBudget":
+        if self.analysis_limit > self.candidate_limit:
+            raise ValueError("analysis_limit must be <= candidate_limit")
+        return self
+
+
+class LandscapeScope(LandscapeModel):
+    mode: AnalysisMode
+    technology_direction: str | None = Field(default=None, max_length=500)
+    competitors: list[CompetitorInput] = Field(default_factory=list, max_length=20)
+    period_preset: PeriodPreset = PeriodPreset.CUSTOM
+    publication_start: date
+    publication_end: date
+    budget: AnalysisBudget = Field(default_factory=AnalysisBudget)
+
+    @field_validator("technology_direction")
+    @classmethod
+    def blank_direction_is_none(cls, value: str | None) -> str | None:
+        return value or None
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "LandscapeScope":
+        if self.publication_end < self.publication_start:
+            raise ValueError("publication_end must be >= publication_start")
+        if (self.publication_end - self.publication_start).days > 366:
+            raise ValueError("publication window cannot exceed 12 months")
+        if self.mode == AnalysisMode.TECHNOLOGY and not self.technology_direction:
+            raise ValueError("technology_direction is required in TECHNOLOGY mode")
+        if self.mode == AnalysisMode.COMPETITOR and not self.competitors:
+            raise ValueError("competitors are required in COMPETITOR mode")
+        competitor_keys = [competitor.name.casefold() for competitor in self.competitors]
+        if len(competitor_keys) != len(set(competitor_keys)):
+            raise ValueError("competitor names must be unique")
+        return self
+
+
+class LandscapePlannedQuery(LandscapeModel):
+    query_text: str = Field(min_length=2, max_length=500)
+    language: Literal["zh", "en", "mixed"]
+    rationale: str = Field(min_length=1, max_length=500)
+
+
+class LandscapeQueryPlan(LandscapeModel):
+    direction_terms: list[str] = Field(default_factory=list, max_length=30)
+    queries: list[LandscapePlannedQuery] = Field(min_length=2, max_length=6)
+
+
+class EvidenceItem(LandscapeModel):
+    evidence_id: str = Field(pattern=r"^EV-[A-Za-z0-9._-]+$")
+    publication_number: str = Field(min_length=2, max_length=100)
+    section_type: Literal["ABSTRACT", "CLAIM", "BACKGROUND", "DESCRIPTION"]
+    section_label: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1)
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(gt=0)
+    content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def offsets_are_ordered(self) -> "EvidenceItem":
+        if self.end_offset <= self.start_offset:
+            raise ValueError("end_offset must be greater than start_offset")
+        return self
+
+
+class LandscapeEvidenceRef(LandscapeModel):
+    evidence_id: str = Field(pattern=r"^EV-[A-Za-z0-9._-]+$")
+    supports: list[
+        Literal[
+            "prior_art",
+            "prior_art_problem",
+            "core_invention_point",
+            "technical_problem_solved",
+            "beneficial_effect",
+        ]
+    ] = Field(min_length=1)
+
+
+class LandscapePatentAnalysis(LandscapeModel):
+    publication_number: str = Field(min_length=2, max_length=100)
+    prior_art: str = Field(min_length=1)
+    prior_art_problems: list[str] = Field(default_factory=list, max_length=20)
+    core_invention_points: list[str] = Field(min_length=1, max_length=20)
+    technical_problems_solved: list[str] = Field(default_factory=list, max_length=20)
+    beneficial_effects: list[str] = Field(default_factory=list, max_length=20)
+    technical_keywords: list[str] = Field(default_factory=list, max_length=30)
+    evidence_refs: list[LandscapeEvidenceRef] = Field(min_length=1, max_length=100)
+    limitations: list[str] = Field(default_factory=list, max_length=20)
+
+
+class LandscapeCluster(LandscapeModel):
+    cluster_id: str = Field(pattern=r"^CL-[A-Za-z0-9._-]+$")
+    name: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=2000)
+    keywords: list[str] = Field(default_factory=list, max_length=30)
+    publication_numbers: list[str] = Field(min_length=1)
+
+
+class LandscapeClusterPlan(LandscapeModel):
+    clusters: list[LandscapeCluster] = Field(min_length=1, max_length=8)
