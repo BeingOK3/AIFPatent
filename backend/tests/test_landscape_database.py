@@ -98,6 +98,46 @@ class LandscapeDatabaseTests(unittest.TestCase):
             run["run_id"],
             [{"query_id": "LQ-1", "query_text": "液冷", "language": "zh", "rationale": "方向"}],
         )
+        self.db.put_stage_result(
+            run["run_id"],
+            "PLAN_SEARCH",
+            {
+                "plan": {"queries": [{"query_text": "液冷"}]},
+                "competitor_aliases": [],
+                "alias_resolution_error": None,
+                "technical_direction_expansion": {
+                    "original_term": "数据中心液冷",
+                    "chinese_terms": ["数据中心液冷"],
+                    "english_terms": ["data center liquid cooling"],
+                    "source": "MODEL_INFERRED",
+                },
+            },
+        )
+        self.db.put_stage_result(
+            run["run_id"],
+            "SEARCH_PUBLICATIONS",
+            {
+                "results": [
+                    {
+                        "provider": "fixture",
+                        "request_id": "LQ-1",
+                        "status": "ERROR",
+                        "duration_ms": 42,
+                        "hits": [{"raw": "must-not-be-returned"}],
+                        "error_code": "HTTP_429",
+                        "error_message": "rate limited",
+                    }
+                ]
+            },
+        )
+        self.db.put_stage_result(
+            run["run_id"],
+            "FILTER_AND_SELECT",
+            {
+                "result": {"coverage": {"provider_statuses": {"LQ-1:fixture": "ERROR"}}},
+                "enrichment": {"missing_hit_count": 2, "unique_publication_count": 1},
+            },
+        )
         self.db.put_hit(
             run["run_id"],
             hit_id="LH-1",
@@ -116,8 +156,13 @@ class LandscapeDatabaseTests(unittest.TestCase):
         self.assertEqual(snapshot["steps"][0]["duration_ms"], 15)
         self.assertEqual(snapshot["queries"][0]["query_text"], "液冷")
         self.assertEqual(snapshot["hit_stats"][0]["count"], 1)
+        self.assertEqual(snapshot["provider_attempts"][0]["error_code"], "HTTP_429")
+        self.assertEqual(snapshot["provider_attempts"][0]["hit_count"], 1)
+        self.assertEqual(snapshot["enrichment"]["unique_publication_count"], 1)
+        self.assertIn("data center liquid cooling", str(snapshot["technical_direction_expansion"]))
         self.assertNotIn("raw", snapshot["hit_stats"][0])
         self.assertNotIn("large_provider_payload", str(snapshot))
+        self.assertNotIn("must-not-be-returned", str(snapshot))
 
     def test_credentials_are_rejected_before_database_write(self) -> None:
         marker = "credential-must-never-persist"

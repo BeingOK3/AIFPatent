@@ -25,6 +25,8 @@ class LandscapeFrontendContractTests(unittest.TestCase):
         for fragment in (
             "/api/landscape/runs/", "/debug", "searched_competitor_aliases",
             "本次检索到的友商别名", "系统运行调试", "provider_statuses",
+            "provider_attempts", "technical_direction_expansion", "中英文技术词",
+            "实际补全",
         ):
             self.assertIn(fragment, self.javascript if fragment != "系统运行调试" else self.html)
         self.assertIn("debug-view", self.css)

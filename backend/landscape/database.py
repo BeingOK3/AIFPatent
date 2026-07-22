@@ -684,10 +684,49 @@ class LandscapeDatabase:
             pass
         aliases: list[dict[str, Any]] = []
         alias_resolution_error = None
+        direction_expansion = None
+        planned_queries: list[dict[str, Any]] = []
         try:
             plan = self.get_stage_result(run_id, "PLAN_SEARCH")["value"]
             aliases = list(plan.get("competitor_aliases", []))
             alias_resolution_error = plan.get("alias_resolution_error")
+            direction_expansion = plan.get("technical_direction_expansion")
+            planned_queries = plan.get("plan", {}).get("queries", [])
+        except KeyError:
+            pass
+        searchable = " ".join(
+            str(item.get("query_text", "")) for item in planned_queries
+        ).casefold()
+        for item in aliases:
+            recognized = list(item.get("aliases", []))
+            item["searched_aliases"] = [
+                alias for alias in recognized if alias.casefold() in searchable
+            ]
+            item["unsearched_aliases"] = [
+                alias for alias in recognized if alias.casefold() not in searchable
+            ]
+
+        provider_attempts: list[dict[str, Any]] = []
+        try:
+            search = self.get_stage_result(run_id, "SEARCH_PUBLICATIONS")["value"]
+            provider_attempts = [
+                {
+                    "provider": item.get("provider"),
+                    "request_id": item.get("request_id"),
+                    "status": item.get("status"),
+                    "duration_ms": item.get("duration_ms", 0),
+                    "hit_count": len(item.get("hits", [])),
+                    "error_code": item.get("error_code"),
+                    "error_message": str(item.get("error_message") or "")[:500] or None,
+                }
+                for item in search.get("results", [])
+            ]
+        except KeyError:
+            pass
+        enrichment: dict[str, int] = {}
+        try:
+            filtered = self.get_stage_result(run_id, "FILTER_AND_SELECT")["value"]
+            enrichment = filtered.get("enrichment", {})
         except KeyError:
             pass
 
@@ -710,7 +749,10 @@ class LandscapeDatabase:
             "queries": [dict(row) for row in query_rows],
             "competitor_aliases": aliases,
             "alias_resolution_error": alias_resolution_error,
+            "technical_direction_expansion": direction_expansion,
             "provider_statuses": coverage.get("provider_statuses", {}),
+            "provider_attempts": provider_attempts,
+            "enrichment": enrichment,
             "coverage": {
                 key: coverage.get(key, default)
                 for key, default in (

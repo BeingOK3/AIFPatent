@@ -158,3 +158,11 @@
 - 补全：缺失公开日命中先按 `provider + publication_number` 去重，尝试数量受候选预算限制；同一专利跨查询重复命中复用一次详情结果，并持久化补全统计。
 - 验证：44 个 Landscape 测试通过；新增 4 家友商逐家双语覆盖、仅友商逐家覆盖、Provider 串行、Google 超时熔断、Exa 专用日期提示和重复公开号单次补全断言。
 - Git：本实现作为第 16 个工作单元，与第 15 个设计提交一起推送远程 `develop`。
+
+## 2026-07-22 — LANDSCAPE-COVERAGE-DEBUG-017
+
+- 类型：完整检索覆盖的可视化审计与真实 Provider 错误展示。
+- Debug：新增中英文技术扩展词、每次 Provider 调用的 query/provider/status/耗时/命中数/错误码/错误信息，以及缺日期命中、去重后公开号、实际补全、复用和截断统计。
+- 别名审计：分别输出模型识别别名、实际进入查询的 `searched_aliases` 与受查询长度限制未采用的 `unsearched_aliases`；最终报告只把实际采用部分描述为检索别名。
+- 安全：Provider 调试只读取状态和最多 500 字符错误信息，不返回命中列表、`raw_json`、请求头、模型请求或凭证。
+- 验证：Node 语法、Debug 脱敏/聚合测试、前端契约和全部 44 个 Landscape 测试通过。

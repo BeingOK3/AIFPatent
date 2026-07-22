@@ -255,7 +255,8 @@ class LandscapeExecutionService:
             clusters=clusters,
             failures=analysis_raw["failures"],
             limitations=limitations,
-            searched_competitor_aliases=self.alias_output(run_id),
+            searched_competitor_aliases=self.report_alias_output(run_id),
+            technical_direction_expansion=self.direction_output(run_id),
         )
         self.report_service.save(run_id, report)
         return {"report": report, "manifest": "manifest.json"}
@@ -307,6 +308,33 @@ class LandscapeExecutionService:
     def alias_output(self, run_id: str) -> list[dict[str, Any]]:
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.PLAN_SEARCH.value)["value"]
         return list(raw.get("competitor_aliases", []))
+
+    def report_alias_output(self, run_id: str) -> list[dict[str, Any]]:
+        aliases = self.alias_output(run_id)
+        plan = self.load_plan(run_id)
+        searchable = " ".join(item.query_text for item in plan.queries).casefold()
+        return [
+            {
+                **item,
+                "searched_aliases": [
+                    alias
+                    for alias in item.get("aliases", [])
+                    if alias.casefold() in searchable
+                ],
+                "unsearched_aliases": [
+                    alias
+                    for alias in item.get("aliases", [])
+                    if alias.casefold() not in searchable
+                ],
+            }
+            for item in aliases
+        ]
+
+    def direction_output(self, run_id: str) -> dict[str, Any] | None:
+        raw = self.database.get_stage_result(
+            run_id, LandscapeWorkflowStep.PLAN_SEARCH.value
+        )["value"]
+        return raw.get("technical_direction_expansion")
 
     def effective_scope(self, run_id: str) -> LandscapeScope:
         from .schemas import CompetitorAliasPlan

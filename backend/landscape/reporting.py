@@ -24,6 +24,7 @@ def build_report(
     failures: dict[str, str],
     limitations: list[dict[str, Any]],
     searched_competitor_aliases: list[dict[str, Any]] | None = None,
+    technical_direction_expansion: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     filing_trend: Counter[str] = Counter()
     publication_jurisdictions: Counter[str] = Counter()
@@ -58,6 +59,7 @@ def build_report(
         "scope": run["scope_json"],
         "model": run["model"],
         "searched_competitor_aliases": searched_competitor_aliases or [],
+        "technical_direction_expansion": technical_direction_expansion,
         "coverage": coverage,
         "summary": {
             "candidate_count": coverage.get("unique_candidate_count", 0),
