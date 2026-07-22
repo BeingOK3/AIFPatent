@@ -26,6 +26,7 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("专利态势分析", self.html)
         self.assertIn("新公开专利调查报告", self.html)
         self.assertIn("module-entry", self.css)
+        self.assertNotIn("新业务模块", self.html)
 
     def test_frontend_calls_durable_idea_history_progress_and_report_apis(self) -> None:
         for fragment in (

@@ -20,14 +20,10 @@
     <section class="panel input-panel" aria-labelledby="input-title">
       <div class="panel-heading"><div><p class="eyebrow">NEW ANALYSIS</p><h2 id="input-title">创建分析</h2></div><span class="badge">MVP · 非 RAG</span></div>
       <form id="landscape-form">
-        <fieldset>
-          <legend>分析模式</legend>
-          <label class="radio"><input type="radio" name="mode" value="TECHNOLOGY" checked> 技术方向</label>
-          <label class="radio"><input type="radio" name="mode" value="COMPETITOR"> 重点友商</label>
-        </fieldset>
-        <label class="field" id="direction-field"><span>具体技术方向 <b>*</b></span><input id="technology-direction" maxlength="500" placeholder="例如：数据中心液冷散热"></label>
-        <label class="field" id="competitor-field"><span>重点友商 <small>每行一个，别名用 | 分隔</small></span><textarea id="competitors" rows="3" placeholder="华为 | Huawei | Huawei Technologies
-三星 | Samsung"></textarea></label>
+        <div id="derived-mode" class="derived-mode" role="status">当前分析模式：等待输入</div>
+        <label class="field" id="direction-field"><span>具体技术方向 <small>可选；与友商同时填写时执行联合检索</small></span><input id="technology-direction" maxlength="500" placeholder="例如：数据中心液冷散热"></label>
+        <label class="field" id="competitor-field"><span>重点友商 <small>可选；每行一个主名称，系统自动识别专利申请人别名</small></span><textarea id="competitors" rows="3" placeholder="华为
+三星"></textarea></label>
         <div class="two-columns">
           <label class="field"><span>公开时间段</span><select id="period-preset"><option value="ONE_MONTH">近 1 个月</option><option value="QUARTER" selected>近 1 个季度</option><option value="SIX_MONTHS">近 6 个月</option><option value="TWELVE_MONTHS">近 12 个月</option><option value="CUSTOM">自定义</option></select></label>
           <div class="field"><span>公开日窗口</span><div class="date-range"><input id="publication-start" type="date" required><input id="publication-end" type="date" required></div></div>
@@ -53,6 +49,7 @@
     <section id="run-panel" class="panel run-panel hidden" aria-live="polite">
       <div class="run-header"><div><p class="eyebrow">RUN STATUS</p><h2 id="run-title">专利态势分析</h2></div><div class="run-actions"><span id="run-status" class="status">QUEUED</span><button id="cancel-run" class="secondary hidden">取消任务</button></div></div>
       <div id="step-list" class="step-list"></div>
+      <section id="debug-view" class="debug-view"><h3>系统运行调试</h3><div id="debug-content" class="muted">等待任务启动…</div></section>
       <div id="report-view" class="report-view hidden"></div>
     </section>
   </main>
