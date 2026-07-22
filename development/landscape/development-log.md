@@ -176,3 +176,12 @@
 - Debug 实测：旧 Run 可返回 12 条 Provider 调用明细及 `PROVIDER_TIMEOUT` 等真实错误；旧阶段结果不回填技术扩展，新建 Run 才使用并展示双语扩展，保持不可变运行语义。
 - 回归：44 个 Landscape 测试、13 个既有前端/容器/启动脚本测试和 Node 语法检查通过，`git diff --check` 通过。
 - Git：本验收为第 18 个工作单元，将与第 17 个 Debug 提交一起推送远程 `develop`。
+
+## 2026-07-22 — LANDSCAPE-SERPAPI-DESIGN-019
+
+- 类型：SerpAPI Google Patents 第三 Provider 增量设计。
+- 主链路：新增 `SerpApiPatentProvider`，使用 `google_patents` 做结构化专利检索、`google_patents_details` 获取摘要/权利要求/同族基础信息，继续复用统一 Provider 契约、严格公开日与申请人过滤、跨源去重和 Debug。
+- 凭证：页面允许输入单次 Run 的 `serpapi_api_key`；后端使用任务级上下文隔离，终态即清除，不进入 SQLite、Run 文件、配置快照、URL 日志或错误信息；部署级 `SERPAPI_API_KEY` 仅作为可选回退。
+- 三路分工：SerpAPI 定位为结构化主召回与首选详情源，Exa 定位为自然语言语义补召回，Google 直连定位为网络健康时的低成本补充。首版完整 fan-out 便于比较覆盖，后续推荐默认 `BALANCED` 调度。
+- 配额：SerpAPI 精确请求缓存应开启，查询使用官方日期参数并关闭 Scholar；详情只对严格过滤后的精读集合或日期缺失候选执行，避免按所有原始命中消耗额度。
+- Git：本设计为第 19 个工作单元；实现和验收作为第 20 个工作单元，两个提交后推送远程 `develop`。

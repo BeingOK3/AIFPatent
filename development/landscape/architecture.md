@@ -136,7 +136,7 @@ VALIDATE_SCOPE
 
 ### 5.2 搜索和过滤
 
-复用现有 `SearchProvider`、`ProviderRunner`、`GooglePatentsProvider`、`ExaMcpProvider` 和 `merge_hits`，但在新业务服务中建立独立规则：
+复用现有 `SearchProvider`、`ProviderRunner`、`GooglePatentsProvider`、`ExaMcpProvider`、`SerpApiPatentProvider` 和 `merge_hits`，但在新业务服务中建立独立规则：
 
 1. Provider 侧尽量加入公开日/申请人条件；
 2. 返回后再次解析 ISO 公开日并做包含式硬过滤；
@@ -146,6 +146,16 @@ VALIDATE_SCOPE
 6. 每一种排除原因都计数并持久化。
 
 Provider 执行采用每 Provider 有界并发：Exa 避免同一 Run 突发请求触发 429；Google Patents 首次网络超时后在当前 Run 快速熔断。Provider 专用日期提示分别构造，Google 查询语法不得原样传给通用 Web Search。
+
+SerpAPI 使用 `google_patents` 引擎，并把公开日起止作为 `after=publication:YYYYMMDD`、`before=publication:YYYYMMDD` 的独立参数传入；检索结果直接映射公开号、申请日、公开日、申请人和同族法域状态。详情使用 `google_patents_details` 引擎，摘要和权利要求进入 `FetchedDocument`，不得把 API Key 写入 URL 日志、Run 配置、数据库或报告。
+
+三路 Provider 的职责边界为：
+
+- SerpAPI：结构化主召回和首选详情源，承担全部确定性查询；
+- Exa MCP：自然语言/英文技术词的语义补召回，弥补 Google Patents 关键词排序遗漏；
+- Google Patents 直连：零外部 API 计费的补充源，只在网络健康时使用，不作为可部署性的单点依赖。
+
+第一阶段为保证行为可审计，所有已启用且具备运行凭证的 Provider 接收相同完整查询计划，结果统一去重；后续可在不改变查询计划与严格过滤语义的前提下增加 `COMPLETE | BALANCED | ECONOMY` 调度策略。默认建议 `BALANCED`：SerpAPI 执行全部查询，Exa 只执行技术语义查询，Google 仅在健康检查成功时执行。任何节流都必须在 Debug 中标记为 `POLICY_SKIPPED`，不能伪装成已检索。
 
 公开日补全先按 `provider + publication_number` 去重，再受候选预算限制执行；同一专利跨多个查询命中只抓取一次，补全统计须进入调试信息。
 
@@ -248,7 +258,7 @@ GET    /api/landscape/runs/{run_id}/debug
 DELETE /api/landscape/runs/{run_id}
 ```
 
-创建 Run 请求携带当前页面临时 `base_url/model/api_key`。TaskManager 只在进程内持有 `RuntimeModelConfig`，终态、取消、异常和 shutdown 都清除。服务重启时将遗留 `QUEUED/RUNNING` 标记为 `RUNTIME_API_KEY_REQUIRED_AFTER_RESTART`，用户通过 rerun 创建新的不可变 Run。
+创建 Run 请求携带当前页面临时 `base_url/model/api_key` 和可选 `serpapi_api_key`。TaskManager 只在进程内持有模型配置和 SerpAPI Key，终态、取消、异常和 shutdown 都清除；部署环境也可以通过 `SERPAPI_API_KEY` 提供服务级凭证。Run 只记录是否启用了临时 SerpAPI 凭证及凭证来源，不保存其值。服务重启时将遗留 `QUEUED/RUNNING` 标记为 `RUNTIME_API_KEY_REQUIRED_AFTER_RESTART`，用户通过 rerun 创建新的不可变 Run。
 
 ## 8. 页面
 
