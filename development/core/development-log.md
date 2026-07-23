@@ -55,3 +55,13 @@
 - 调度：同一 Provider 在 Run 内串行；SerpAPI 鉴权/额度错误与 Exa 429 首次出现后快速熔断；Tool Call/Debug 继续记录脱敏状态。
 - 边界：不修改 IDEA 固定 11 步、模型 BYOK、证据门禁、Corpus/RAG 或追问行为。
 - 文档：详见 `idea-serpapi-design.md`；实现与容器验收作为下一工作单元。
+
+## 2026-07-23 — AIF-IDEA-SERP-CORE-004
+
+- 类型：IDEA SerpAPI 候选检索、详情回退和运行调度接入。
+- Runtime：默认装配 `serpapi_google_patents` 并使用现有 Cache、本地 JSON Secret 和配置超时；当前默认关闭的 Google/Exa 不再导致 IDEA Provider 列表为空。
+- 调度：每个 Run 内同一 Provider 串行，不同 Provider 保持并行；SerpAPI 凭证/鉴权/额度错误和 Exa 429 首次发生后快速熔断，后续调用记录 `DISABLED`。
+- 详情：同等健康状态下依次尝试 SerpAPI、Google、Exa；既有全文身份、Evidence、Corpus 和报告门禁保持不变。
+- 真实验收：容器 IDEA Runtime 仅装配 SerpAPI；受控搜索返回 10 条，`US10587019B2` 详情成功，摘要 310 字符、权利要求 4,804 字符。
+- 测试：84 项 Runtime/Retrieval/Search Strategy/Provider/Health/Config/Debug 相关测试通过；Python 编译、Node 语法和 Diff 检查通过。既有 `test_execution` 长等待超过 90 秒后终止，不计为通过。
+- Git：本实现作为第 4 个核心工作单元，将与第 3 个设计提交一起推送远程 `develop`。

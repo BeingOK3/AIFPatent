@@ -44,7 +44,7 @@ from .postgres_followup_data import PostgreSQLFollowupDataSource
 from .postgres_embeddings import PostgreSQLEmbeddingCache
 from .postgres_report import PostgreSQLReportScopeRepository
 from .postgres_vector import PgVectorIndex
-from .providers import ExaMcpProvider, GooglePatentsProvider
+from .providers import ExaMcpProvider, GooglePatentsProvider, SerpApiPatentProvider
 from .reporting import ReportService
 from .report_rag import InitialReportRagService
 from .report_retrieval import InitialReportRetriever
@@ -77,6 +77,27 @@ class EmbeddingRuntime:
 
 class RuntimeConfigurationError(RuntimeError):
     """Raised when an enabled runtime feature lacks required infrastructure."""
+
+
+def _build_search_providers(
+    config: AppConfig, cache: CacheStore | None
+) -> tuple[list, dict[str, float]]:
+    providers = []
+    timeouts: dict[str, float] = {}
+    settings = config.search.providers
+    if settings.serpapi_google_patents.enabled:
+        provider = SerpApiPatentProvider(settings.serpapi_google_patents, cache=cache)
+        providers.append(provider)
+        timeouts[provider.name] = settings.serpapi_google_patents.timeout_seconds
+    if settings.google_patents_local.enabled:
+        provider = GooglePatentsProvider(settings.google_patents_local, cache=cache)
+        providers.append(provider)
+        timeouts[provider.name] = settings.google_patents_local.timeout_seconds
+    if settings.exa_mcp.enabled:
+        provider = ExaMcpProvider(settings.exa_mcp, cache=cache)
+        providers.append(provider)
+        timeouts[provider.name] = settings.exa_mcp.timeout_seconds
+    return providers, timeouts
 
 
 def _required_environment(name: str) -> str:
@@ -253,17 +274,7 @@ def build_runtime(config: AppConfig) -> IdeaRuntime:
 
     model = StructuredModelClient(config.model)
     agents = IdeaAgentService(database, model, debug_log=debug_log)
-    providers = []
-    if config.search.providers.google_patents_local.enabled:
-        providers.append(
-            GooglePatentsProvider(config.search.providers.google_patents_local, cache=cache)
-        )
-    if config.search.providers.exa_mcp.enabled:
-        providers.append(ExaMcpProvider(config.search.providers.exa_mcp, cache=cache))
-    timeouts = {
-        "google_patents_local": config.search.providers.google_patents_local.timeout_seconds,
-        "exa_mcp": config.search.providers.exa_mcp.timeout_seconds,
-    }
+    providers, timeouts = _build_search_providers(config, cache)
     retrieval = RetrievalService(
         database,
         providers,

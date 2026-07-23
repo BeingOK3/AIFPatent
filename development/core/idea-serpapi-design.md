@@ -1,6 +1,6 @@
 # IDEA SerpAPI Provider 增量设计
 
-状态：`APPROVED_FOR_IMPLEMENTATION`
+状态：`IMPLEMENTED_AND_VERIFIED`
 
 日期：2026-07-23
 
@@ -53,3 +53,11 @@ SerpAPI Provider 已实现并接入“专利态势分析”，但 IDEA 的 `buil
 4. 全文回退在同等健康状态下优先 SerpAPI，并能回退到其他 Provider。
 5. 既有 Retrieval、Runtime、Config、SerpAPI、Debug 与安全测试通过。
 6. 容器内 IDEA Runtime 可读取本地 Secret，并完成一次受控搜索和详情获取；日志无 Key。
+
+## 验收结果
+
+- 默认 IDEA Runtime Provider 列表为 `serpapi_google_patents`。
+- 容器内真实搜索返回 10 条专利，首件详情成功得到 310 字符摘要和 4,804 字符权利要求。
+- Run 内 Provider 串行、SerpAPI 额度熔断和 SerpAPI 首选全文顺序均有单元测试覆盖。
+- 84 项 Runtime/Retrieval/Search Strategy/Provider/Health/Config/Debug 相关测试通过。
+- `test_execution` 单独运行超过 90 秒无输出并被终止，属于仓库已记录的长等待测试问题；本次改动涉及的定向套件均正常结束并通过。

@@ -39,7 +39,7 @@ WorkflowExecutor
    ┌──────────┼──────────────────────────────┐
    ▼          ▼                              ▼
 领域服务    受限模型 Agent                 Provider
-检索/证据   LangChain ChatOpenAI            Google Patents / EXA MCP
+检索/证据   LangChain ChatOpenAI            SerpAPI / Google Patents / EXA MCP
 判断/审计   Pydantic 结构化输出
    └──────────┼──────────────────────────────┘
               ▼
@@ -84,8 +84,8 @@ START
 
 1. 模型解析 IDEA 为技术领域、问题、效果和 F1..Fn；
 2. Query Planner 生成中英文术语、同义词、上位词和可选 IPC/CPC；
-3. Google Patents 接收文本 `q`；
-4. EXA 接收文本查询并定向 `patents.google.com/patent`；
+3. SerpAPI Google Patents 接收文本 `q`，返回结构化专利字段；
+4. 显式启用时，Google Patents 直连接收文本 `q`，EXA 接收文本查询并定向 `patents.google.com/patent`；
 5. 本地根据标题/摘要中的词项覆盖率初筛；
 6. 入选文献才进入模型全文语义分析。
 
@@ -93,9 +93,11 @@ START
 
 ### 4.2 Provider 调度和限流
 
-检索服务会在每轮异步调度“查询 × Provider”调用：
+检索服务会在每轮异步调度“查询 × Provider”调用。当前默认只启用 SerpAPI；Google Patents 直连和匿名 Exa 在具备网络或额度条件后可由配置重新启用：
 
-- EXA 调用可以并发；
+- 同一个 Run 内同一 Provider 串行，不同 Provider 之间可以并行；
+- SerpAPI 使用本地 JSON Secret、统一 Cache 和稳定错误码，鉴权/额度错误后对当前 Run 快速熔断；
+- EXA 首次出现 429 后对当前 Run 快速熔断；
 - Google Patents 所有 Run 和 Provider 实例共享同源请求门；
 - Google 请求锁覆盖等待、HTTP 请求、响应读取和风控判断；
 - Google 搜索间隔随机 8–12 秒；
@@ -132,7 +134,7 @@ START
 
 ### 4.4 全文 Provider
 
-入选公开号使用有界并发抓取；优先选择本轮健康 Provider，同等条件下 Google Patents 优先，失败后由 EXA 降级。Google 全局请求门仍会把实际 Google 网络请求串行化。
+入选公开号使用有界并发抓取；优先选择本轮健康 Provider，同等条件下依次使用 SerpAPI、Google Patents、EXA，失败后继续回退。SerpAPI 详情引擎提供结构化摘要、权利要求和同族字段；Google 全局请求门仍会把实际 Google 网络请求串行化。
 
 解析后的 `FetchedDocument` 包含元数据、摘要、权利要求、说明书及章节 span。没有可用专利文本或公开号不一致会进入契约错误。
 
@@ -273,8 +275,8 @@ Base URL、API Key 和 Model 每次从网页或 CLI 提交。API Key 只进入�
 
 1. 候选召回不是项目自建向量语义检索；
 2. 标题/摘要初筛主要使用词项覆盖；
-3. 两个全文路径都高度依赖 Google Patents 页面；
-4. Google Patents 自动化访问可能受 VPN 出口和风控影响；
+3. SerpAPI 受账户额度与速率限制，需监控用量并复用缓存；
+4. Google Patents 直连和 EXA 补充路径分别可能受网络出口、风控和匿名额度影响；
 5. 当前业务库不耐久保存完整专利全文；
 6. 没有法律状态、有效权利要求和审查档案的权威联动；
 7. 创造性 D2 只来自首次深读集合，不自动二次检索；

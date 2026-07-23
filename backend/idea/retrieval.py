@@ -14,10 +14,8 @@ from .agent_schemas import QueryPlannerOutput
 from .database import Database, canonical_json, now_ms
 from .merge import MergedHit, merge_hits, normalize_publication_number
 from .providers import (
-    ExaMcpProvider,
     FetchRequest,
     FetchedDocument,
-    GooglePatentsProvider,
     ProviderResult,
     ProviderRunner,
     ProviderStatus,
@@ -55,6 +53,17 @@ class FetchResult(RetrievalModel):
     documents: list[FetchedDocument]
     document_ids: dict[str, str]
     limitations: list[dict[str, Any]]
+
+
+_FETCH_PROVIDER_PRIORITY = {
+    "serpapi_google_patents": 0,
+    "google_patents_local": 1,
+    "exa_mcp": 2,
+}
+
+
+def _fetch_provider_rank(provider: SearchProvider) -> int:
+    return _FETCH_PROVIDER_PRIORITY.get(provider.name, 100)
 
 
 class RetrievalService:
@@ -106,6 +115,56 @@ class RetrievalService:
             for group in plan.term_groups
         ]
         screening_terms = [term for group in term_groups for term in group] or idea_terms
+        provider_gates = {
+            provider.name: asyncio.Semaphore(1) for provider in self.providers
+        }
+        provider_circuits: dict[str, tuple[str, str] | None] = {
+            provider.name: None for provider in self.providers
+        }
+
+        async def search_provider(
+            provider: SearchProvider, query: SearchQuery
+        ) -> ProviderResult:
+            async with provider_gates[provider.name]:
+                circuit = provider_circuits[provider.name]
+                if circuit is not None:
+                    return ProviderResult(
+                        provider=provider.name,
+                        operation="search",
+                        request_id=query.query_id,
+                        status=ProviderStatus.DISABLED,
+                        duration_ms=0,
+                        error_code=circuit[0],
+                        error_message=circuit[1],
+                    )
+                result = await self.runner.search(
+                    provider,
+                    query,
+                    timeout_seconds=self.search_timeout_seconds.get(
+                        provider.name, 45
+                    ),
+                )
+                if provider.name == "serpapi_google_patents" and result.error_code in {
+                    "SERPAPI_API_KEY_REQUIRED",
+                    "SERPAPI_CREDENTIAL_FILE_INVALID",
+                    "SERPAPI_AUTH_ERROR",
+                    "SERPAPI_FORBIDDEN",
+                    "SERPAPI_RATE_LIMITED",
+                }:
+                    provider_circuits[provider.name] = (
+                        result.error_code,
+                        result.error_message or "SerpAPI disabled for this run",
+                    )
+                elif (
+                    provider.name == "exa_mcp"
+                    and result.error_message
+                    and "429 Too Many Requests" in result.error_message
+                ):
+                    provider_circuits[provider.name] = (
+                        "EXA_RATE_LIMITED",
+                        "Exa quota or rate limit reached; remaining queries skipped",
+                    )
+                return result
 
         for round_number in sorted(queries_by_round):
             call_specs = []
@@ -134,11 +193,7 @@ class RetrievalService:
                     )
             results = await asyncio.gather(
                 *[
-                    self.runner.search(
-                        provider,
-                        query,
-                        timeout_seconds=self.search_timeout_seconds.get(provider.name, 45),
-                    )
+                    search_provider(provider, query)
                     for provider, query in call_specs
                 ]
             )
@@ -316,9 +371,7 @@ class RetrievalService:
                     ProviderStatus.EMPTY.value, 0
                 )
                 else 1,
-                0
-                if isinstance(provider, GooglePatentsProvider)
-                else 1 if isinstance(provider, ExaMcpProvider) else 2,
+                _fetch_provider_rank(provider),
             ),
         )
 
@@ -407,11 +460,7 @@ class RetrievalService:
     ) -> tuple[FetchedDocument | None, list[dict[str, str]]]:
         ordered = providers or sorted(
             self.providers,
-            key=lambda provider: (
-                0
-                if isinstance(provider, GooglePatentsProvider)
-                else 1 if isinstance(provider, ExaMcpProvider) else 2
-            ),
+            key=_fetch_provider_rank,
         )
         failures = []
         for provider in ordered:

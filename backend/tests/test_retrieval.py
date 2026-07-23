@@ -27,6 +27,9 @@ class FakeProvider(SearchProvider):
         self.search_calls += 1
         if self.fail_search:
             raise ConnectionError("search offline")
+        return self._search_hits()
+
+    def _search_hits(self):
         return [
             SearchHit(
                 provider=self.name,
@@ -69,6 +72,33 @@ class MissingIdentifierProvider(FakeProvider):
             publication_date="2020-01-01",
         )
         return hits
+
+
+class SerialTrackingProvider(FakeProvider):
+    def __init__(self, name):
+        super().__init__(name)
+        self.active_searches = 0
+        self.max_active_searches = 0
+
+    async def search(self, query):
+        self.search_calls += 1
+        self.active_searches += 1
+        self.max_active_searches = max(
+            self.max_active_searches, self.active_searches
+        )
+        try:
+            await asyncio.sleep(0.01)
+            return self._search_hits()
+        finally:
+            self.active_searches -= 1
+
+
+class SerpRateLimitedProvider(FakeProvider):
+    async def search(self, query):
+        self.search_calls += 1
+        error = RuntimeError("SerpAPI quota reached")
+        error.error_code = "SERPAPI_RATE_LIMITED"
+        raise error
 
 
 def plan():
@@ -147,6 +177,35 @@ class RetrievalServiceTests(unittest.TestCase):
         ])
         self.assertEqual(result.stop_reason, StopReason.PROVIDERS_UNAVAILABLE)
         self.assertEqual(result.merged_hits, [])
+
+    def test_same_provider_queries_are_serialized(self) -> None:
+        provider = SerialTrackingProvider("serpapi_google_patents")
+        _, result = self.retrieve([provider])
+        self.assertEqual(result.stop_reason, StopReason.QUERY_EXHAUSTED)
+        self.assertEqual(provider.search_calls, 2)
+        self.assertEqual(provider.max_active_searches, 1)
+
+    def test_serpapi_rate_limit_opens_run_scoped_circuit(self) -> None:
+        provider = SerpRateLimitedProvider("serpapi_google_patents")
+        _, result = self.retrieve([provider])
+        self.assertEqual(provider.search_calls, 1)
+        self.assertEqual(
+            result.provider_calls[provider.name], {"ERROR": 1, "DISABLED": 1}
+        )
+        self.assertEqual(result.stop_reason, StopReason.PROVIDERS_UNAVAILABLE)
+
+    def test_serpapi_has_first_fetch_priority_when_health_is_equal(self) -> None:
+        serpapi = FakeProvider("serpapi_google_patents")
+        google = FakeProvider("google_patents_local")
+        exa = FakeProvider("exa_mcp")
+        service, result = self.retrieve([exa, google, serpapi])
+        fetched = asyncio.run(
+            service.fetch_selected(run_id=self.run["run_id"], retrieval=result)
+        )
+        self.assertEqual(len(fetched.documents), 10)
+        self.assertEqual(serpapi.fetch_calls, 10)
+        self.assertEqual(google.fetch_calls, 0)
+        self.assertEqual(exa.fetch_calls, 0)
 
     def test_fetch_falls_back_and_persists_documents(self) -> None:
         primary = FakeProvider("google_patents_local", fail_fetch=True)
