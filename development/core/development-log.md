@@ -83,3 +83,11 @@
 - 可观测性：最终报告门禁仍 fail closed，并额外输出公开号、claims Chunk 数和 Chunker 版本；README 明确旧失败 Run 必须新建 Run，不能靠重试改写冻结证据。
 - 验证：claims/抓取/候补/报告/词法/向量/PostgreSQL/SerpAPI 聚焦测试 62 项通过；相关 Corpus、Context、Report、Runtime 和 E2E 组合回归共 129 项通过、3 项按环境跳过。完整 discover 再次停在既有 `test_execution` 长等待路径并已终止，未计为通过。
 - 真实运行态：PostgreSQL 回滚事务验证 v1/v2 共存时仅选 v2；应用镜像重建成功，app/PostgreSQL/Redis/MinIO 全部 healthy；容器内冒烟返回 `claims-paragraphs-v2 True`，HTTP OpenAPI 可访问。
+
+## 2026-07-23 — AIF-ARCHITECTURE-DIAGRAM-007
+
+- 类型：当前全系统架构可视化文档。
+- 图示：新增可编辑 Mermaid 总体架构图和双业务数据流图，覆盖 Web/API、IDEA 固定 11 步、Landscape 固定 8 步、模型与 SerpAPI Provider、首次报告/追问 RAG、SQLite/PostgreSQL/pgvector/MinIO/Redis/RunStore 以及容器边界。
+- 边界：明确模型只执行受 Schema 约束的语义任务，SerpAPI 是当前默认专利源，IDEA 初筛与全文证据门、Landscape 唯一全集统计与精读聚类使用不同集合。
+- 索引：更新 `docs/README.md`，将 follow-up RAG 从“尚未实现”修正为设计、实现与验收历史。
+- 涉及文件：`docs/aifpatent-architecture-diagram.md`、`docs/README.md` 和本日志。
