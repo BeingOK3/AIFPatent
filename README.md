@@ -1,4 +1,4 @@
-# AIFPatent — 可验证 Citation 的专利 IDEA 评估
+# AIFPatent — 专利 IDEA 评审、证据追问与专利态势分析
 
 AIFPatent 当前 `develop` 版本提供可直接运行的首次报告 RAG 闭环：检索专利、深读全文、保存不可变 Corpus Version 与结构化 Chunk，通过首次报告和追问共用的 `HybridRetriever` 按 `Feature × Patent` 检索证据，强制覆盖摘要和全部独立权利要求，最终生成带可回查 Citation 的 JSON/Markdown 报告。默认部署尚未配置 Embedding，因此当前实际召回明确标记为 `LEXICAL_ONLY`。
 
@@ -7,12 +7,13 @@ AIFPatent 当前 `develop` 版本提供可直接运行的首次报告 RAG 闭环
 已完成：
 
 - 固定 11 步 LangGraph Workflow、不可变 Case/Run、重试、取消、审计和 Manifest；
-- Google Patents、EXA MCP 与 SerpAPI Google Patents 检索、全文抓取、候选去重和最少 10 篇深读门禁；
+- 默认通过 SerpAPI Google Patents 检索和抓取全文，保留显式启用的 Google Patents 直连与 Exa MCP 回退，并执行候选去重和最少 10 篇深读门禁；
 - PostgreSQL Corpus Version/Chunk、MinIO 正文对象、Redis 基础设施；
 - PostgreSQL FTS/`pg_trgm` 词法检索，严格限制在源 Run 的冻结 Version；
 - 每个 `F_i × D_j` 检索审计，强制摘要、全部独立权利要求和父权利要求链；
 - 在文档分析前生成的确定性 Context Manifest，DeepSeek 只使用其中的 `C#` 证据；
 - 报告 schema 2.0 Citation 只包含模型对 `DISCLOSED/PARTIAL` 实际输出的 `C#`，并在输出前回查当前 Run 的 READY Version 与真实 Chunk；
+- 独立专利态势分析页面和 8 步 Workflow，支持技术方向、重点友商及组合模式，输出唯一合格专利的公司分布、法域、技术聚类、逐件精读与全族状态；
 - `./start.sh` 和 `./stop.sh` 管理完整 Docker 栈，停止不删除数据卷。
 
 当前 `develop` 已默认启用并通过真实 DeepSeek 运行态验收的报告内证据追问 MVP：可从完成的首次报告选择深读文献建立 Thread，每轮重新检索冻结 Corpus，运行独立七节点 Workflow，输出结构化回答并展开可回查的 Citation 原文；页面提供 SSE 状态与取消，模型 Base URL/Model/API Key 仍为刷新即丢失的瞬时 BYOK。首次报告与追问现在共用相同的 RRF、章节权重、多样性和冻结范围门禁；未配置部署级 Embedding 时均明确降级为 `LEXICAL_ONLY`，不会伪装成向量混合召回。
@@ -51,7 +52,7 @@ chmod 600 config/provider-credentials.local.json
 
 IDEA 与专利态势分析当前共享同一个 SerpAPI 主 Provider、本地 Secret 和请求缓存。匿名 Exa MCP 在无独立额度时容易返回 429，Google Patents 直连在部分国内网络会连接超时，因此两者默认关闭但实现仍保留；部署环境具备 Exa 额度或可访问 Google 时，可在 `config/ai4patent.json` 对应 Provider 中重新设置 `enabled: true`。不要用 `ping` 判断搜索是否可用：不少站点会禁用 ICMP，应以 `/api/system/health` 和实际 HTTPS 请求为准。
 
-浏览器访问 `http://localhost:8001`。停止服务并保留数据：
+浏览器访问 `http://localhost:8001` 使用 IDEA 评审；从首页进入专利态势分析，或直接访问 `http://localhost:8001/landscape`。停止服务并保留数据：
 
 ```bash
 ./stop.sh
@@ -157,12 +158,14 @@ tools/e2e_lexical_rag.py \
 backend/idea/                 Workflow、Corpus、检索、Context、Citation、报告
 backend/tests/                单元、合约与可选真实集成测试
 frontend/                     IDEA 单页工作区（BYOK 不持久化）
+backend/landscape/            专利态势独立 Workflow、检索、精读、聚类与报告
 config/ai4patent.json         系统设置（不含模型或检索密钥）
 config/provider-credentials.example.json  检索凭证模板（可提交）
 deploy/rag/                   Docker Compose 与幂等 PostgreSQL 迁移
 tools/idea_workflow.py        确定性 HTTP CLI
 tools/e2e_lexical_rag.py      真实首次报告验收与 Citation 校验
-development/followup-rag/     本开发域设计、日志和未完成项
+development/followup-rag/     Corpus、首次报告/追问 RAG 的设计、实现日志和后续项
+development/landscape/        专利态势设计、实现、验收和追加式开发日志
 ```
 
 ## License

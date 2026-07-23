@@ -2,15 +2,15 @@
 
 > 状态：当前实现说明
 >
-> 更新日期：2026-07-20
+> 更新日期：2026-07-23
 >
-> 适用范围：当前已上线的 IDEA 评审功能
+> 适用范围：当前已上线的 IDEA 评审、首次报告/追问 RAG、专利态势分析和单机容器部署
 >
-> 不包含：`development/` 中尚未实现的后续设计
+> 配套图：`aifpatent-architecture-diagram.md`
 
 ## 1. 系统定位
 
-AIFPatent 是固定流程、证据约束的专利 IDEA 评审系统，不是让大模型自由决定是否检索、分析或结束的聊天 Agent。
+AIFPatent 是固定流程、证据约束的专利分析系统，当前包含 IDEA 评审与报告内追问、专利态势分析两条独立业务链，不是让大模型自由决定是否检索、分析或结束的聊天 Agent。
 
 职责边界：
 
@@ -19,22 +19,23 @@ LangGraph       决定固定步骤、顺序、重试、超时和恢复边界
 领域服务        执行检索、归一化、证据、判断、审计和报告
 受限模型 Agent  执行 IDEA 解析、查询规划和有 Schema 的语义分析
 确定性程序      执行日期、编号、去重、矩阵、哈希和完成门禁
-SQLite/RunStore 保存权威业务事实、不可变输入和报告
+SQLite/RunStore 保存 Run、审计、不可变输入和报告
+PostgreSQL/MinIO 保存 Corpus、Chunk、Context、Citation 与耐久正文
+Redis           提供任务队列、租约和跨进程协调
 ```
 
 ## 2. 运行时分层
 
 ```text
-浏览器 / tools/idea_workflow.py
+IDEA 页面 / Landscape 页面 / tools/idea_workflow.py
               │
               ▼
-FastAPI + Case/Run API + SSE
+FastAPI + Case/Run/Thread API + SSE
               │
-              ▼
-LangGraphWorkflow（固定 11 节点）
-              │
-              ▼
-WorkflowExecutor
+   ┌──────────┴──────────┐
+   ▼                     ▼
+IDEA LangGraph       Landscape Workflow
+固定 11 节点          固定 8 节点
               │
    ┌──────────┼──────────────────────────────┐
    ▼          ▼                              ▼
@@ -44,11 +45,11 @@ WorkflowExecutor
    └──────────┼──────────────────────────────┘
               ▼
 业务 SQLite + RunStore + FIFO Cache
-              │
-              └── LangGraph SQLite（只保存执行游标）
+PostgreSQL/pgvector + MinIO + Redis
+LangGraph SQLite（只保存执行游标）
 ```
 
-`backend/idea/runtime.py` 是运行时装配入口。业务 SQLite 和 RunStore 是产品事实来源；LangGraph SQLite 只保存轻量执行状态，不能替代业务记录。
+`backend/idea/runtime.py` 和 `backend/landscape/runtime.py` 分别装配两条业务链。IDEA SQLite 保存 Run 与评审事实，Landscape 使用独立 SQLite；PostgreSQL/MinIO 保存耐久 Corpus 与 RAG 事实；LangGraph SQLite 只保存轻量执行状态，不能替代业务记录。
 
 ## 3. 固定 11 步 Workflow
 
@@ -80,16 +81,16 @@ START
 
 ### 4.1 当前检索性质
 
-当前召回属于“大模型辅助生成检索式的文本检索”，不是向量语义检索：
+外部专利候选召回属于“大模型辅助生成检索式的文本检索”，不是使用本地向量库替代 Google Patents：
 
 1. 模型解析 IDEA 为技术领域、问题、效果和 F1..Fn；
 2. Query Planner 生成中英文术语、同义词、上位词和可选 IPC/CPC；
 3. SerpAPI Google Patents 接收文本 `q`，返回结构化专利字段；
 4. 显式启用时，Google Patents 直连接收文本 `q`，EXA 接收文本查询并定向 `patents.google.com/patent`；
-5. 本地根据标题/摘要中的词项覆盖率初筛；
+5. 本地根据标题和搜索摘要中的概念组覆盖率初筛；
 6. 入选文献才进入模型全文语义分析。
 
-当前代码没有 embedding、向量数据库或 KNN 召回。
+外部召回后的深读全文会写入版本化 Corpus。首次报告与追问共用 PostgreSQL 词法检索、可选 pgvector、RRF、章节权重和多样性规则；默认未配置 Embedding 时明确运行在 `LEXICAL_ONLY`，不会伪装为向量混合召回。
 
 ### 4.2 Provider 调度和限流
 
@@ -136,7 +137,7 @@ START
 
 入选公开号使用有界并发抓取；优先选择本轮健康 Provider，同等条件下依次使用 SerpAPI、Google Patents、EXA，失败后继续回退。SerpAPI 详情引擎提供结构化摘要、权利要求和同族字段；Google 全局请求门仍会把实际 Google 网络请求串行化。
 
-解析后的 `FetchedDocument` 包含元数据、摘要、权利要求、说明书及章节 span。没有可用专利文本或公开号不一致会进入契约错误。
+解析后的 `FetchedDocument` 包含元数据、摘要、权利要求、说明书及章节 span。IDEA 还要求摘要和可识别的独立权利要求；不完整响应会触发 Provider 回退和同轮候选补位，不能冻结为合格深读证据。
 
 ## 5. 专利信息处理和结论
 
@@ -208,7 +209,7 @@ Run 历史不自动删除；重新运行创建带 `parent_run_id` 的新 Run。
 
 `data/langgraph/checkpoints.db` 只保存图执行游标和轻量 State。业务步骤是否完成以业务 SQLite 和完成门禁为准。
 
-### 6.4 FIFO Cache 和当前全文限制
+### 6.4 FIFO Cache
 
 `workspace/cache/` 是最多 1 GiB 的可重建 FIFO Cache：
 
@@ -217,9 +218,21 @@ Run 历史不自动删除；重新运行创建带 `parent_run_id` 的新 Run。
 - Provider 搜索和全文响应可以复用；
 - 它不是耐久专利数据库。
 
-文献分析成功后，业务库会释放摘要、权利要求和说明书全文，只长期保留元数据、全文哈希、Evidence 和分析结果。完整正文可能随 FIFO 淘汰而丢失，需要重新抓取。
+FIFO Cache 只负责 Provider 搜索和详情响应复用，不是耐久语料事实来源。
 
-耐久全文、版本化语料和 RAG 仍是待实现能力，设计位于 `../development/followup-rag/architecture.md`。
+### 6.5 PostgreSQL Corpus、MinIO 与 RAG
+
+启用默认特性时，深读文献先创建不可变 Corpus Version、结构化 Chunk 和 Run—Version 冻结关系，再进行首次报告分析：
+
+- PostgreSQL 保存专利身份、Version、Chunk、词法/向量索引、Retrieval Hit、Context Manifest、Thread/Turn 和 Citation；
+- MinIO/S3 保存按内容寻址的规范化全文 Blob；
+- 首次报告与追问都必须传入明确的 Version allowlist 和 `corpus_snapshot_hash`；
+- Context 与 Citation 可回查到真实 Chunk，模型不能扩大文献范围；
+- Embedding 配置独立于网页聊天 BYOK，关闭时合法降级为词法召回。
+
+### 6.6 Landscape 独立存储
+
+`data/aifpatent/landscape.db`、`data/langgraph/landscape-checkpoints.db` 和 `workspace/landscape-runs/` 保存专利态势的输入、查询、候选、排序审计、精读、聚类和报告，不写入 IDEA 业务表。
 
 ## 7. 重试、取消和重启
 
@@ -266,6 +279,9 @@ Base URL、API Key 和 Model 每次从网页或 CLI 提交。API Key 只进入�
 - `/api/idea/runs/{run_id}`：产品状态和 11 步进度；
 - `/api/idea/runs/{run_id}/debug`：attempt、Tool Call 和脱敏事件；
 - `/api/idea/runs/{run_id}/events`：SSE 产品进度；
+- `/api/idea/runs/{run_id}/followups/*`：报告内 Thread、Turn、SSE 和 Citation；
+- `/api/landscape/runs/{run_id}`：专利态势状态和 8 步进度；
+- `/api/landscape/runs/{run_id}/debug`：双语检索式、友商别名、Provider、过滤和候选排序审计；
 - `/api/system/health`：数据库、Checkpointer、缓存、模型配置、Provider 和恢复器状态；
 - `/api/system/cache`：FIFO 容量和清理状态。
 
@@ -273,19 +289,22 @@ Base URL、API Key 和 Model 每次从网页或 CLI 提交。API Key 只进入�
 
 ## 11. 当前明确限制
 
-1. 候选召回不是项目自建向量语义检索；
-2. 标题/摘要初筛主要使用词项覆盖；
+1. 外部候选召回不是项目自建向量语义检索；
+2. IDEA 候选初筛主要使用标题与搜索摘要的词项覆盖，只有入选后才核验权利要求全文；
 3. SerpAPI 受账户额度与速率限制，需监控用量并复用缓存；
 4. Google Patents 直连和 EXA 补充路径分别可能受网络出口、风控和匿名额度影响；
-5. 当前业务库不耐久保存完整专利全文；
-6. 没有法律状态、有效权利要求和审查档案的权威联动；
+5. 默认 Embedding 关闭，当前首次报告与追问实际为 `LEXICAL_ONLY`；
+6. 当前没有法律状态、有效权利要求和审查档案的权威联动；
 7. 创造性 D2 只来自首次深读集合，不自动二次检索；
-8. 当前评估是技术与现有技术初步分析，不是正式法律意见。
+8. Landscape 全族状态只反映 Provider 返回的已确认成员，不能证明全球同族完整；
+9. 当前评估是技术与现有技术初步分析，不是正式法律意见；
+10. 当前是公开共享、单实例部署，不包含账号、租户、ACL 或公网生产安全基线。
 
 ## 12. 文档边界
 
 - 本文件描述当前已经实现的系统；
 - 根 `README.md` 描述安装、使用和运行接口；
 - `development/core/` 保存核心系统历史记录，不作为当前行为规范；
-- `development/followup-rag/` 保存尚未实现的追问/RAG 开发设计；
+- `development/followup-rag/` 保存 Corpus、首次报告/追问 RAG 的设计、实现历史和后续方向；
+- `development/landscape/` 保存专利态势的设计、验收和追加开发记录；
 - 代码、配置 Schema 和测试在发生冲突时是当前实现的最终依据。
