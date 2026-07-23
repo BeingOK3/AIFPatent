@@ -13,8 +13,8 @@
 
 输出同时包含确定性统计和逐件模型精读：
 
-- 筛选后专利的申请日趋势；
-- 公开号法域分布和已确认同族法域分布；
+- 唯一合格专利的公司数量分布；
+- 公开号法域分布和已确认同族/全族状态；
 - 技术聚类；
 - 每件专利的申请号、名称、申请日、当前权利人、同族布局；
 - 现有技术、现有技术问题、核心技术发明点、解决的技术问题和有益效果；
@@ -40,7 +40,7 @@
 publication_start <= publication_date <= publication_end
 ```
 
-预设支持 1 个月、1 个季度、6 个月、12 个月和自定义日期，MVP 最长 12 个月。报告中的“申请日趋势”只统计已经通过公开日过滤的文献之 `filing_date`，不得把申请日当作检索窗口。
+预设支持 1 个月、1 个季度、6 个月、12 个月和自定义日期，MVP 最长 12 个月。申请日继续作为逐件与聚类成员元数据展示，但不再生成申请日趋势图，也不得把申请日当作检索窗口。
 
 ### 2.3 友商别名
 
@@ -145,6 +145,8 @@ VALIDATE_SCOPE
 5. 公开号、申请号和确认同族可合并；标题/日期/申请人相似只保留“疑似同族”提示；
 6. 每一种排除原因都计数并持久化。
 
+公司数量分布使用严格过滤、跨查询去重后的全部唯一合格专利计算，不使用会重复的原始命中，也不使用已经受 `candidate_limit` 截断的候选子集。候选和精读的评分、公司覆盖及补位规则见 `selection-report-v2-design.md`。
+
 Provider 执行采用每 Provider 有界并发：Exa 避免同一 Run 突发请求触发 429；Google Patents 首次网络超时后在当前 Run 快速熔断。Provider 专用日期提示分别构造，Google 查询语法不得原样传给通用 Web Search。
 
 SerpAPI 使用 `google_patents` 引擎，并把公开日起止作为 `after=publication:YYYYMMDD`、`before=publication:YYYYMMDD` 的独立参数传入；检索结果直接映射公开号、申请日、公开日、申请人和同族法域状态。详情使用 `google_patents_details` 引擎，摘要和权利要求进入 `FetchedDocument`，不得把 API Key 写入 URL 日志、Run 配置、数据库或报告。
@@ -168,9 +170,11 @@ SerpAPI 使用 `google_patents` 引擎，并把公开日起止作为 `after=publ
 - `family_id`；
 - 确认同族成员列表；
 - 每个成员的公开号、申请号、法域和日期；
-- `family_data_status = COMPLETE | PARTIAL | UNAVAILABLE`。
+- `family_data_status = PARTIAL | UNAVAILABLE`；
+- 结构化全族成员的法域、申请号、申请日、法律状态类别、法律状态文本和是否当前申请；
+- 由结构化成员状态确定性归纳的 `ACTIVE | INACTIVE | MIXED | UNKNOWN`。
 
-来源无法证明时必须显示 `UNAVAILABLE/PARTIAL`，不得将 `possible_family_keys` 当作确认同族。
+来源无法证明时必须显示 `UNAVAILABLE/PARTIAL`，不得将 `possible_family_keys` 当作确认同族，也不得宣称 Provider 返回的部分成员构成全球完整同族。
 
 ### 5.4 直接证据包（非 RAG）
 
@@ -208,6 +212,8 @@ MVP 不使用向量。Clusterer 只接收公开号、标题、摘要、核心发
 - 不重复、不遗漏、不产生新公开号；
 - 只有一件文献时生成一个稳定的单文献簇；
 - 聚类失败时保留逐件分析并以限制状态完成，不伪造聚类。
+
+报告层按公开号把 Provider 事实连接到聚类成员，每个成员显示确认友商（可匹配时）、当前权利人和申请日；Clusterer 无权生成或修改这些字段。
 
 ## 6. 数据和文件
 
@@ -266,7 +272,7 @@ DELETE /api/landscape/runs/{run_id}
 
 1. 历史分析 Run；
 2. 输入、预算和实时步骤；
-3. 概览、趋势、法域、聚类、逐件精读和限制；
+3. 概览、公司专利数量柱状图、法域、聚类、逐件精读和限制；
 4. 运行调试：当前节点、尝试、查询、Provider 状态、命中/排除计数和错误。
 
 第一版图表使用原生 HTML/CSS/SVG，不引入 npm、CDN 或新的镜像构建链。所有外部文本使用 `textContent`，不得把专利标题、模型内容或来源 HTML 注入 `innerHTML`。

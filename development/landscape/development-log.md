@@ -215,3 +215,12 @@
 - 安全：关闭 `httpx`/`httpcore` 完整 URL INFO 日志；启动时定向脱敏旧日志 query-string Key。6 个历史值已替换为 `[REDACTED]`，持久化日志和新容器 stdout 的真实 Key 命中均为 0。
 - 验证：49 项 Landscape 测试、74 项 Provider/健康/配置/容器测试、Python 编译、Node 语法和 Diff 检查通过；App、PostgreSQL、Redis、MinIO 均 healthy。
 - Git：本实现作为第 22 个工作单元，将与第 21 个事故分析提交一起推送远程 `develop`。
+
+## 2026-07-23 — LANDSCAPE-SELECTION-REPORT-DESIGN-023
+
+- 类型：大结果集选样、公司分布、聚类成员和全族状态 V2 设计。
+- 统计口径：公司柱状图使用公开日/模式硬过滤并跨查询去重后的全部唯一合格专利；原始命中存在重复，候选集受预算截断，二者均不作为公司数量口径。
+- 选样：候选以 RRF、Query/Provider 覆盖和技术文本匹配生成可审计分；友商模式采用 40% 均衡基线与 60% 实际数量比例的混合配额，精读再保证公司覆盖、同族代表和失败补位。
+- 报告：取消申请日趋势图；聚类成员补充确认友商/当前权利人和申请日；精读新增结构化全族成员、法域和法律状态汇总。
+- 边界：聚类继续明确限定为成功精读集合；全族来源不足只输出 `PARTIAL/UNAVAILABLE`，不宣称全球完整；历史 Run 不回填。
+- 文档：详见 `selection-report-v2-design.md`；实现、回归和容器验收作为第 24 个工作单元。
