@@ -237,3 +237,12 @@
 - 验证：53 项 Landscape 测试、45 项 SerpAPI/配置/容器契约/启动脚本/前端/健康/日志安全测试、Python 编译、Node 语法和 `git diff --check` 通过；完整仓库发现式测试停在既有 `test_api.IdeaApiTests.test_attachment_names_are_scoped_to_upload_directory`，未作为本功能通过结论。
 - 容器：最新代码镜像重建成功，App、PostgreSQL、Redis、MinIO 均 healthy；`/api/health` 返回 `ok`，`/landscape` 和新版静态资源可访问。
 - Git：本实现作为第 24 个工作单元，与第 23 个设计提交组成一对，提交后推送远程 `develop`。
+
+## 2026-07-23 — LANDSCAPE-QUERY-SELECTION-DESIGN-025
+
+- 类型：中英文合并检索式与精读加权 V3 设计。
+- 查询：技术方向只生成一条中英文 `OR` 查询；友商/联合模式每家公司生成一条完整查询，四家公司由 8 条降为 4 条，同时避免全局 Top-N 让单一公司挤占其他公司召回。
+- 去重：合并查询只减少跨语言重复，不替代公开号、申请号和确认 Family ID 的确定性去重。
+- 精读：名额足够时每家公司先保留一件，剩余名额按唯一合格专利数量使用 D'Hondt 方法分配；公司内部优先结构化同族法域覆盖更广的专利。
+- 证据边界：精读前只使用 Provider `country_status` 计算 `family_footprint`，不把它冒充完整同族成员数；精读后全族状态仍来自结构化详情。
+- 文档：详见 `query-selection-v3-design.md`；实现、测试和运行验收作为第 26 个工作单元。
