@@ -65,3 +65,11 @@
 - 真实验收：容器 IDEA Runtime 仅装配 SerpAPI；受控搜索返回 10 条，`US10587019B2` 详情成功，摘要 310 字符、权利要求 4,804 字符。
 - 测试：84 项 Runtime/Retrieval/Search Strategy/Provider/Health/Config/Debug 相关测试通过；Python 编译、Node 语法和 Diff 检查通过。既有 `test_execution` 长等待超过 90 秒后终止，不计为通过。
 - Git：本实现作为第 4 个核心工作单元，将与第 3 个设计提交一起推送远程 `develop`。
+
+## 2026-07-23 — AIF-CLAIM-EVIDENCE-DESIGN-005
+
+- 类型：IDEA 首次报告缺失独立权利要求证据的跨机器故障设计。
+- 根因：全文抓取把“存在任一正文”视为成功，Chunker 只识别 claims 正文行首编号且忽略结构化 claim spans；失败直到 Corpus 冻结后的报告门禁才暴露，因此同一 Version 重试得到相同结果。
+- 决策：保留强制独立权利要求门禁；把证据完整性检查前移到 Provider fallback，失败专利使用同轮合格候补补位；Chunker 升级并按 Version 选择最新完整批次。
+- 可观测性：新增稳定缺失证据错误码；最终兜底错误补充公开号、claims Chunk 数和 Chunker 版本，不记录 claims 全文或凭据。
+- 文档：详见 `independent-claim-evidence-repair.md`；实现、回归和容器验收作为下一工作单元。
