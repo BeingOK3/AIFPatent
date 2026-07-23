@@ -53,7 +53,12 @@ class PostgreSQLLexicalSearchRepository:
             async with connection.cursor() as cursor:
                 await cursor.execute(
                     """
-                    WITH query_input AS (
+                    WITH active_chunkers AS (
+                        SELECT DISTINCT ON (version_id) version_id, chunker_version
+                        FROM patent_chunks
+                        WHERE version_id = ANY(%s)
+                        ORDER BY version_id, created_at DESC, chunker_version DESC
+                    ), query_input AS (
                         SELECT plainto_tsquery('simple'::regconfig, %s) AS tsq,
                                %s::text AS needle
                     )
@@ -67,9 +72,10 @@ class PostgreSQLLexicalSearchRepository:
                            CASE WHEN position(q.needle in c.search_text) > 0
                                 THEN 'exact' WHEN c.search_tsv @@ q.tsq
                                 THEN 'fts' ELSE 'trigram' END AS match_kind
-                    FROM patent_chunks AS c CROSS JOIN query_input AS q
-                    WHERE c.version_id = ANY(%s)
-                      AND (%s::text[] IS NULL OR c.section_type = ANY(%s))
+                    FROM patent_chunks AS c
+                    JOIN active_chunkers USING (version_id, chunker_version)
+                    CROSS JOIN query_input AS q
+                    WHERE (%s::text[] IS NULL OR c.section_type = ANY(%s))
                       AND c.metadata_json->>'lexical_tokenizer_version' = %s
                       AND (c.search_tsv @@ q.tsq OR c.search_text %%> q.needle)
                     ORDER BY (position(q.needle in c.search_text) > 0) DESC,
@@ -77,9 +83,9 @@ class PostgreSQLLexicalSearchRepository:
                     LIMIT %s
                     """,
                     (
+                        list(request.allowed_version_ids),
                         terms.value,
                         normalized,
-                        list(request.allowed_version_ids),
                         sections,
                         sections,
                         LEXICAL_TOKENIZER_VERSION,

@@ -73,3 +73,13 @@
 - 决策：保留强制独立权利要求门禁；把证据完整性检查前移到 Provider fallback，失败专利使用同轮合格候补补位；Chunker 升级并按 Version 选择最新完整批次。
 - 可观测性：新增稳定缺失证据错误码；最终兜底错误补充公开号、claims Chunk 数和 Chunker 版本，不记录 claims 全文或凭据。
 - 文档：详见 `independent-claim-evidence-repair.md`；实现、回归和容器验收作为下一工作单元。
+
+## 2026-07-23 — AIF-CLAIM-EVIDENCE-CORE-006
+
+- 类型：IDEA 独立权利要求证据完整性、回退和 Chunk 版本修复。
+- 抓取门禁：IDEA 在接受 Provider 详情前验证摘要和可识别独立权利要求；缺失时记录 `ABSTRACT_MISSING`/`INDEPENDENT_CLAIM_MISSING` 合同错误并继续 Provider fallback，不再把不完整文档冻结进新 Run。
+- 候补：首选深读文档不合格时，从同轮已筛选、日期合格、相关性达标且公开号有效的剩余候选中确定性补位；不新增搜索、不降低阈值，并记录 `DEEP_REVIEW_BACKFILLED` limitation。
+- Chunk：`claims-paragraphs-v2` 在正文编号之外验证并使用 Provider claim spans；非法边界不生成独立权利要求。PostgreSQL Chunk、词法和向量读取按每个 Version 最近完整写入的 Chunker 批次选择，v1 保留审计但不与 v2 混入上下文。
+- 可观测性：最终报告门禁仍 fail closed，并额外输出公开号、claims Chunk 数和 Chunker 版本；README 明确旧失败 Run 必须新建 Run，不能靠重试改写冻结证据。
+- 验证：claims/抓取/候补/报告/词法/向量/PostgreSQL/SerpAPI 聚焦测试 62 项通过；相关 Corpus、Context、Report、Runtime 和 E2E 组合回归共 129 项通过、3 项按环境跳过。完整 discover 再次停在既有 `test_execution` 长等待路径并已终止，未计为通过。
+- 真实运行态：PostgreSQL 回滚事务验证 v1/v2 共存时仅选 v2；应用镜像重建成功，app/PostgreSQL/Redis/MinIO 全部 healthy；容器内冒烟返回 `claims-paragraphs-v2 True`，HTTP OpenAPI 可访问。

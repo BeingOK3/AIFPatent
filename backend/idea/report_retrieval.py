@@ -387,8 +387,12 @@ class InitialReportRetriever:
                 f"mandatory abstract evidence is missing for {scope.version_id}"
             )
         if not independent:
+            claim_chunks = tuple(item for item in chunks if item.section_type == "claims")
+            chunkers = ",".join(sorted({item.chunker_version for item in claim_chunks})) or "none"
             raise ReportRetrievalError(
-                f"mandatory independent-claim evidence is missing for {scope.version_id}"
+                "mandatory independent-claim evidence is missing for "
+                f"{scope.version_id}; publication={scope.publication_number}; "
+                f"claims_chunks={len(claim_chunks)}; chunkers={chunkers}"
             )
 
         existing = {

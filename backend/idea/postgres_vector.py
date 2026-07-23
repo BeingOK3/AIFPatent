@@ -59,7 +59,12 @@ class PgVectorIndex:
                 await cursor.execute("SET LOCAL enable_bitmapscan = off")
                 await cursor.execute(
                     """
-                    WITH scoped AS MATERIALIZED (
+                    WITH active_chunkers AS (
+                        SELECT DISTINCT ON (version_id) version_id, chunker_version
+                        FROM patent_chunks
+                        WHERE version_id = ANY(%s)
+                        ORDER BY version_id, created_at DESC, chunker_version DESC
+                    ), scoped AS MATERIALIZED (
                         SELECT
                             c.chunk_id, c.version_id, c.publication_number,
                             c.section_type, c.section_label, c.claim_number,
@@ -67,11 +72,11 @@ class PgVectorIndex:
                             c.end_offset, c.text, c.text_hash, c.token_count,
                             c.chunker_version, ev.embedding
                         FROM patent_chunks c
+                        JOIN active_chunkers USING (version_id, chunker_version)
                         JOIN chunk_embeddings ce ON ce.chunk_id = c.chunk_id
                         JOIN embedding_vectors ev ON ev.embedding_id = ce.embedding_id
                         JOIN embedding_profiles ep ON ep.profile_id = ev.profile_id
-                        WHERE c.version_id = ANY(%s)
-                          AND ev.profile_id = %s
+                        WHERE ev.profile_id = %s
                           AND ep.state = 'ACTIVE'
                           AND ep.dimensions = %s
                           AND vector_dims(ev.embedding) = %s

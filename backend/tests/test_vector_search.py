@@ -80,8 +80,9 @@ class PgVectorIndexTests(unittest.TestCase):
         self.assertEqual(len(connection.cursor_instance.executions), 3)
         self.assertIn("enable_indexscan = off", connection.cursor_instance.executions[0][0])
         sql, parameters = connection.cursor_instance.executions[2]
-        self.assertIn("WITH scoped AS MATERIALIZED", sql)
-        self.assertIn("c.version_id = ANY(%s)", sql)
+        self.assertIn("scoped AS MATERIALIZED", sql)
+        self.assertIn("active_chunkers", sql)
+        self.assertIn("version_id = ANY(%s)", sql)
         self.assertIn("ep.state = 'ACTIVE'", sql)
         self.assertIn("embedding <=> %s::vector", sql)
         self.assertNotIn("[0.599", sql)

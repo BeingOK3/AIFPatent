@@ -4,7 +4,12 @@ import asyncio
 import unittest
 from datetime import datetime, timezone
 
-from idea.chunks import PatentChunkPersistenceService, PatentChunker
+from idea.chunks import (
+    DEFAULT_CHUNKER_VERSION,
+    PatentChunkPersistenceService,
+    PatentChunker,
+    has_independent_claim_evidence,
+)
 from idea.corpus import CorpusVersion
 from idea.providers import FetchedDocument
 
@@ -40,6 +45,70 @@ class PatentChunkerTests(unittest.TestCase):
         self.assertEqual(chunks[2].parent_claim_numbers, (1,))
         self.assertEqual(chunks[3].section_label, "paragraph-1")
         self.assertEqual(chunks[3].text, "First paragraph.")
+        self.assertEqual(chunks[1].chunker_version, DEFAULT_CHUNKER_VERSION)
+
+    def test_claim_spans_recover_structure_when_text_has_no_number_prefix(self) -> None:
+        claims = "A cooling system comprising a cold plate.\n\nThe system of claim 1 with a pump."
+        first_end = claims.index("\n\n")
+        document = self.document.model_copy(
+            update={
+                "claims_text": claims,
+                "section_spans": {
+                    "claims": [
+                        {
+                            "label": "claim 1",
+                            "start": 0,
+                            "end": first_end,
+                            "text": claims[:first_end],
+                        },
+                        {
+                            "label": "claim 2",
+                            "start": first_end + 2,
+                            "end": len(claims),
+                            "text": claims[first_end + 2 :],
+                        },
+                    ]
+                },
+            }
+        )
+
+        chunks = [
+            item
+            for item in PatentChunker().chunk(self.version, document)
+            if item.section_type == "claims"
+        ]
+
+        self.assertEqual([item.claim_number for item in chunks], [1, 2])
+        self.assertEqual([item.claim_kind for item in chunks], ["independent", "dependent"])
+        self.assertEqual(chunks[1].parent_claim_numbers, (1,))
+        self.assertTrue(has_independent_claim_evidence(document))
+
+    def test_malformed_claim_spans_do_not_invent_independent_evidence(self) -> None:
+        document = self.document.model_copy(
+            update={
+                "claims_text": "Unnumbered patent claim text.",
+                "section_spans": {
+                    "claims": [
+                        {
+                            "label": "claim 1",
+                            "start": 0,
+                            "end": 999,
+                            "text": "Unnumbered patent claim text.",
+                        }
+                    ]
+                },
+            }
+        )
+
+        chunks = [
+            item
+            for item in PatentChunker().chunk(self.version, document)
+            if item.section_type == "claims"
+        ]
+
+        self.assertEqual(len(chunks), 1)
+        self.assertIsNone(chunks[0].claim_number)
+        self.assertFalse(has_independent_claim_evidence(document))
 
     def test_chunk_ids_are_deterministic_and_version_scoped(self) -> None:
         chunker = PatentChunker()

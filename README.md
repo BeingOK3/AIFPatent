@@ -123,6 +123,8 @@ curl http://127.0.0.1:8001/api/system/cache
 curl http://127.0.0.1:8001/api/idea/runs/RUN_ID/debug
 ```
 
+若旧版本 Run 报 `mandatory independent-claim evidence is missing for cv-...`，先更新 `develop` 并执行 `./start.sh` 重建应用，然后在页面新建 Run。失败 Run 的 Corpus Version 与抓取 checkpoint 按审计要求保持冻结，原 Run 的“重试”不会改写旧证据；新 Run 会在全文阶段拒绝缺少摘要/独立权利要求的详情响应，尝试其他 Provider，并从同轮合格候选中补位。新版兜底错误会同时给出公开号、claims Chunk 数和 Chunker 版本，便于通过上述 debug 接口定位。
+
 ## 开发与测试
 
 纯 SQLite 兼容开发模式仍可使用：

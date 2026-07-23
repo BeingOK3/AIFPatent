@@ -9,7 +9,81 @@ from .corpus import CorpusVersion
 from .providers import FetchedDocument
 
 
-_CLAIM_START = re.compile(r"(?m)^\s*(\d{1,4})\s*[.、)]\s*")
+DEFAULT_CHUNKER_VERSION = "claims-paragraphs-v2"
+_CLAIM_START = re.compile(r"(?m)^\s*(\d{1,4})\s*[.．、:：)）]\s*")
+_CLAIM_LABEL = re.compile(r"(?:claim|权利要求)[\s_-]*(\d{1,4})", re.I)
+
+
+@dataclass(frozen=True)
+class _ClaimPart:
+    number: int
+    start: int
+    end: int
+    text: str
+
+
+def _claim_parts(text: str, spans: Sequence[dict[str, Any]] = ()) -> tuple[_ClaimPart, ...]:
+    source = text.strip()
+    if not source:
+        return ()
+    matches = list(_CLAIM_START.finditer(source))
+    if matches:
+        return tuple(
+            _ClaimPart(
+                number=int(match.group(1)),
+                start=match.start(),
+                end=(matches[index + 1].start() if index + 1 < len(matches) else len(source)),
+                text=source[
+                    match.start() : (
+                        matches[index + 1].start() if index + 1 < len(matches) else len(source)
+                    )
+                ].strip(),
+            )
+            for index, match in enumerate(matches)
+        )
+
+    structured: list[_ClaimPart] = []
+    seen_numbers: set[int] = set()
+    previous_end = 0
+    for span in spans:
+        if not isinstance(span, dict):
+            return ()
+        label_match = _CLAIM_LABEL.search(str(span.get("label") or ""))
+        start = span.get("start")
+        end = span.get("end")
+        if (
+            label_match is None
+            or not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or start < previous_end
+            or start < 0
+            or end <= start
+            or end > len(source)
+        ):
+            return ()
+        number = int(label_match.group(1))
+        value = source[start:end].strip()
+        expected = str(span.get("text") or "").strip()
+        if not value or (expected and expected != value) or number in seen_numbers:
+            return ()
+        structured.append(_ClaimPart(number, start, end, value))
+        seen_numbers.add(number)
+        previous_end = end
+    return tuple(structured)
+
+
+def has_independent_claim_evidence(document: FetchedDocument) -> bool:
+    """Return true only when source claims contain a recognizable independent claim."""
+    parts = _claim_parts(
+        document.claims_text,
+        document.section_spans.get("claims", ()),
+    )
+    return any(
+        part.number == 1 or not PatentChunker._parent_claims(part.text, part.number)
+        for part in parts
+    )
 
 
 @dataclass(frozen=True)
@@ -49,7 +123,7 @@ class ChunkPersistenceError(RuntimeError):
 class PatentChunker:
     """Produce stable, structure-aware chunks without changing source text."""
 
-    def __init__(self, *, chunker_version: str = "claims-paragraphs-v1") -> None:
+    def __init__(self, *, chunker_version: str = DEFAULT_CHUNKER_VERSION) -> None:
         if not chunker_version.strip():
             raise ValueError("chunker_version must not be empty")
         self.chunker_version = chunker_version
@@ -59,7 +133,13 @@ class PatentChunker:
             raise ValueError("document does not belong to corpus version")
         chunks: list[PatentChunk] = []
         chunks.extend(self._single_section(version, "abstract", document.abstract_text))
-        chunks.extend(self._claims(version, document.claims_text))
+        chunks.extend(
+            self._claims(
+                version,
+                document.claims_text,
+                document.section_spans.get("claims", ()),
+            )
+        )
         chunks.extend(self._paragraphs(version, "description", document.description_text))
         return tuple(chunks)
 
@@ -69,19 +149,22 @@ class PatentChunker:
             return []
         return [self._make(version, section, section, None, None, (), 0, len(normalized), normalized)]
 
-    def _claims(self, version: CorpusVersion, text: str) -> list[PatentChunk]:
+    def _claims(
+        self,
+        version: CorpusVersion,
+        text: str,
+        spans: Sequence[dict[str, Any]] = (),
+    ) -> list[PatentChunk]:
         source = text.strip()
         if not source:
             return []
-        matches = list(_CLAIM_START.finditer(source))
-        if not matches:
+        parts = _claim_parts(source, spans)
+        if not parts:
             return [self._make(version, "claims", "claims", None, None, (), 0, len(source), source)]
         chunks: list[PatentChunk] = []
-        for index, match in enumerate(matches):
-            start = match.start()
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
-            claim_number = int(match.group(1))
-            claim_text = source[start:end].strip()
+        for part in parts:
+            claim_number = part.number
+            claim_text = part.text
             parent = self._parent_claims(claim_text, claim_number)
             kind = "independent" if not parent else "dependent"
             chunks.append(
@@ -92,8 +175,8 @@ class PatentChunker:
                     claim_number,
                     kind,
                     parent,
-                    start,
-                    end,
+                    part.start,
+                    part.end,
                     claim_text,
                 )
             )
@@ -101,7 +184,10 @@ class PatentChunker:
 
     @staticmethod
     def _parent_claims(text: str, claim_number: int) -> tuple[int, ...]:
-        matches = [int(value) for value in re.findall(r"(?:claim|权利要求)\s*(\d{1,4})", text, re.I)]
+        matches = [
+            int(value)
+            for value in re.findall(r"(?:claims?|权利要求)\s*(\d{1,4})", text, re.I)
+        ]
         return tuple(sorted(set(value for value in matches if value != claim_number)))
 
     def _paragraphs(self, version: CorpusVersion, section: str, text: str) -> list[PatentChunk]:
@@ -186,10 +272,12 @@ class PatentChunkPersistenceService:
 
 
 __all__ = [
+    "DEFAULT_CHUNKER_VERSION",
     "ChunkPersistenceError",
     "ChunkEmbeddingIndexer",
     "PatentChunk",
     "PatentChunker",
     "PatentChunkPersistenceService",
     "PatentChunkRepository",
+    "has_independent_claim_evidence",
 ]

@@ -793,13 +793,19 @@ class PostgreSQLPatentChunkRepository:
             async with connection.cursor() as cursor:
                 await cursor.execute(
                     """
+                    WITH active_chunkers AS (
+                        SELECT DISTINCT ON (version_id) version_id, chunker_version
+                        FROM patent_chunks
+                        WHERE version_id = ANY(%s)
+                        ORDER BY version_id, created_at DESC, chunker_version DESC
+                    )
                     SELECT chunk_id, version_id, publication_number, section_type,
                            section_label, claim_number, claim_kind, parent_claims_json,
                            start_offset, end_offset, text, text_hash, token_count,
                            chunker_version
-                    FROM patent_chunks
-                    WHERE version_id = ANY(%s)
-                    ORDER BY version_id, section_type, section_label,
+                    FROM patent_chunks AS chunks
+                    JOIN active_chunkers USING (version_id, chunker_version)
+                    ORDER BY chunks.version_id, section_type, section_label,
                              start_offset, end_offset, chunk_id
                     """,
                     (list(version_ids),),

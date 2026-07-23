@@ -394,6 +394,26 @@ class InitialReportRetrieverTests(unittest.TestCase):
                     ).retrieve(run_id="run-1", features=self.features[:1])
                 )
 
+    def test_missing_claim_error_identifies_publication_and_chunker(self) -> None:
+        abstract = structured_chunk(
+            "cv-1", "CN1A", section_type="abstract", label="abstract"
+        )
+        unknown_claim = structured_chunk(
+            "cv-1", "CN1A", section_type="claims", label="claims"
+        )
+
+        with self.assertRaisesRegex(
+            ReportRetrievalError,
+            r"publication=CN1A; claims_chunks=1; chunkers=claims-paragraphs-v1",
+        ):
+            asyncio.run(
+                InitialReportRetriever(
+                    FakeScopeRepository(self.scopes[:1]),
+                    FakeLexicalSearch(),
+                    chunk_repository=FakeChunkRepository((abstract, unknown_claim)),
+                ).retrieve(run_id="run-1", features=self.features[:1])
+            )
+
     def test_merged_claim_one_is_independent_despite_later_reference_noise(self) -> None:
         abstract = structured_chunk(
             "cv-1", "CN1A", section_type="abstract", label="abstract"

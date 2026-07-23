@@ -138,10 +138,11 @@ class PostgreSQLLexicalSearchTests(unittest.TestCase):
         sql, parameters = connection.cursor_instance.executions[0]
         self.assertNotIn(request.text, sql)
         self.assertIn("version_id = ANY(%s)", sql)
+        self.assertIn("active_chunkers", sql)
         self.assertIn("lexical_tokenizer_version", sql)
         self.assertIn("search_text %%> q.needle", sql)
         self.assertNotIn("similarity(c.search_text", sql)
-        self.assertEqual(parameters[2], ["cv-1", "cv-2"])
+        self.assertEqual(parameters[0], ["cv-1", "cv-2"])
         self.assertEqual(parameters[3], ["claims"])
         self.assertEqual(hits[0].rank, 1)
         self.assertEqual(hits[0].query_id, "q1")

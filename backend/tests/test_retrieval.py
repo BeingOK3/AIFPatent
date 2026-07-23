@@ -101,6 +101,20 @@ class SerpRateLimitedProvider(FakeProvider):
         raise error
 
 
+class MissingClaimsProvider(FakeProvider):
+    def __init__(self, name, *, missing_publications=None, **kwargs):
+        super().__init__(name, **kwargs)
+        self.missing_publications = set(missing_publications or ())
+
+    async def fetch(self, request: FetchRequest):
+        document = await super().fetch(request)
+        if not self.missing_publications or request.publication_number in self.missing_publications:
+            return document.model_copy(
+                update={"claims_text": "", "section_spans": {"claims": []}}
+            )
+        return document
+
+
 def plan():
     return QueryPlannerOutput.model_validate({
         "term_groups": [
@@ -221,6 +235,47 @@ class RetrievalServiceTests(unittest.TestCase):
             run_documents = connection.execute("SELECT COUNT(*) FROM run_documents").fetchone()[0]
         self.assertEqual(documents, 10)
         self.assertEqual(run_documents, 10)
+
+    def test_fetch_falls_back_when_primary_has_no_independent_claim(self) -> None:
+        primary = MissingClaimsProvider("serpapi_google_patents")
+        fallback = FakeProvider("google_patents_local")
+        service, result = self.retrieve([primary, fallback])
+
+        fetched = asyncio.run(
+            service.fetch_selected(run_id=self.run["run_id"], retrieval=result)
+        )
+
+        self.assertEqual(len(fetched.documents), 10)
+        self.assertEqual(primary.fetch_calls, 10)
+        self.assertEqual(fallback.fetch_calls, 10)
+        with self.db.connect() as connection:
+            rejected = connection.execute(
+                """SELECT COUNT(*) FROM tool_calls
+                WHERE error_code = 'INDEPENDENT_CLAIM_MISSING'"""
+            ).fetchone()[0]
+        self.assertEqual(rejected, 10)
+
+    def test_fetch_backfills_incomplete_selected_patent_from_screened_reserve(self) -> None:
+        provider = MissingClaimsProvider(
+            "serpapi_google_patents",
+            missing_publications={"US1A1"},
+            hit_count=11,
+        )
+        service, result = self.retrieve([provider])
+
+        fetched = asyncio.run(
+            service.fetch_selected(run_id=self.run["run_id"], retrieval=result)
+        )
+
+        self.assertEqual(len(fetched.documents), 10)
+        self.assertNotIn("US1A1", fetched.document_ids)
+        self.assertIn("US9A1", fetched.document_ids)
+        self.assertEqual(provider.fetch_calls, 11)
+        backfill = next(
+            item for item in fetched.limitations
+            if item["code"] == "DEEP_REVIEW_BACKFILLED"
+        )
+        self.assertEqual(backfill["publication_numbers"], ["US9A1"])
 
     def test_fetch_below_minimum_has_user_facing_limitation_message(self) -> None:
         service, result = self.retrieve([FakeProvider("exa_mcp")])

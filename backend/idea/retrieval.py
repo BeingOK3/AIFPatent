@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from .agent_schemas import QueryPlannerOutput
+from .chunks import has_independent_claim_evidence
 from .database import Database, canonical_json, now_ms
 from .merge import MergedHit, merge_hits, normalize_publication_number
 from .providers import (
@@ -334,6 +335,20 @@ class RetrievalService:
                 continue
             selected_publications.append(publication)
 
+        reserve_publications = []
+        reserved = set(selected_publications)
+        for candidate in retrieval.screened:
+            publication = normalize_publication_number(candidate.hit.publication_number)
+            if (
+                publication
+                and publication in by_publication
+                and publication not in reserved
+                and candidate.date_status != "AFTER_EVALUATION_DATE"
+                and candidate.relevance_score >= DEFAULT_RELEVANCE_THRESHOLD
+            ):
+                reserve_publications.append(publication)
+                reserved.add(publication)
+
         limitations = []
         if invalid_count:
             limitations.append(
@@ -410,6 +425,36 @@ class RetrievalService:
             document_id = self._persist_document(run_id, document, by_publication[publication])
             documents.append(document)
             document_ids[publication] = document_id
+        backfilled = []
+        target_count = len(selected_publications)
+        for publication in reserve_publications:
+            if len(documents) >= target_count:
+                break
+            document, failures = await fetch_one(publication)
+            if document is None:
+                limitations.append(
+                    {
+                        "code": "DOCUMENT_FETCH_FAILED",
+                        "publication_number": publication,
+                        "providers": failures,
+                    }
+                )
+                continue
+            document_id = self._persist_document(
+                run_id, document, by_publication[publication]
+            )
+            documents.append(document)
+            document_ids[publication] = document_id
+            backfilled.append(publication)
+        if backfilled:
+            limitations.append(
+                {
+                    "code": "DEEP_REVIEW_BACKFILLED",
+                    "count": len(backfilled),
+                    "publication_numbers": backfilled,
+                    "message": "部分首选专利全文证据不完整，已使用同轮合格候补补位。",
+                }
+            )
         if len(documents) < minimum_documents:
             limitations.append(
                 {
@@ -491,6 +536,18 @@ class RetrievalService:
                 request,
                 timeout_seconds=self.search_timeout_seconds.get(provider.name, 45),
             )
+            if result.status == ProviderStatus.SUCCESS and result.document is not None:
+                evidence_error = self._required_evidence_error(result.document)
+                if evidence_error is not None:
+                    code, message = evidence_error
+                    result = result.model_copy(
+                        update={
+                            "status": ProviderStatus.CONTRACT_ERROR,
+                            "document": None,
+                            "error_code": code,
+                            "error_message": message,
+                        }
+                    )
             self._record_provider_result(run_id, "NORMALIZE_AND_FETCH", result)
             if result.status == ProviderStatus.SUCCESS and result.document is not None:
                 return result.document, failures
@@ -502,6 +559,22 @@ class RetrievalService:
                 }
             )
         return None, failures
+
+    @staticmethod
+    def _required_evidence_error(
+        document: FetchedDocument,
+    ) -> tuple[str, str] | None:
+        if not document.abstract_text.strip():
+            return (
+                "ABSTRACT_MISSING",
+                "Patent detail response has no abstract required by IDEA report evidence",
+            )
+        if not has_independent_claim_evidence(document):
+            return (
+                "INDEPENDENT_CLAIM_MISSING",
+                "Patent detail response has no recognizable independent claim",
+            )
+        return None
 
     def _record_provider_result(
         self, run_id: str, step_name: str, result: ProviderResult
