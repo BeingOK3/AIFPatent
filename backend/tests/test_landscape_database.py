@@ -159,6 +159,20 @@ class LandscapeDatabaseTests(unittest.TestCase):
                 "enrichment": {"missing_hit_count": 2, "unique_publication_count": 1},
             },
         )
+        self.db.put_stage_result(
+            run["run_id"],
+            "FETCH_DETAILS",
+            {
+                "target_count": 1,
+                "selected_publications": ["CN1A"],
+                "attempted_publications": ["CN1A", "CN2A"],
+                "fetched_publications": ["CN2A"],
+                "backfilled_count": 1,
+                "company_coverage_complete": True,
+                "company_count": 1,
+                "failures": {"CN1A": "must-not-be-returned"},
+            },
+        )
         self.db.put_hit(
             run["run_id"],
             hit_id="LH-1",
@@ -182,6 +196,8 @@ class LandscapeDatabaseTests(unittest.TestCase):
         self.assertEqual(snapshot["enrichment"]["unique_publication_count"], 1)
         self.assertEqual(snapshot["coverage"]["company_patent_counts"][0]["patent_count"], 1)
         self.assertEqual(snapshot["candidate_ranking"][0]["publication_number"], "CN1A")
+        self.assertEqual(snapshot["analysis_selection"]["backfilled_count"], 1)
+        self.assertNotIn("failures", snapshot["analysis_selection"])
         self.assertIn("data center liquid cooling", str(snapshot["technical_direction_expansion"]))
         self.assertNotIn("raw", snapshot["hit_stats"][0])
         self.assertNotIn("large_provider_payload", str(snapshot))

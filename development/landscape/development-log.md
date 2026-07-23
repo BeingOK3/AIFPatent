@@ -246,3 +246,16 @@
 - 精读：名额足够时每家公司先保留一件，剩余名额按唯一合格专利数量使用 D'Hondt 方法分配；公司内部优先结构化同族法域覆盖更广的专利。
 - 证据边界：精读前只使用 Provider `country_status` 计算 `family_footprint`，不把它冒充完整同族成员数；精读后全族状态仍来自结构化详情。
 - 文档：详见 `query-selection-v3-design.md`；实现、测试和运行验收作为第 26 个工作单元。
+
+## 2026-07-23 — LANDSCAPE-QUERY-SELECTION-CORE-026
+
+- 类型：中英文合并检索式、公司数量加权和同族覆盖优先实现。
+- 查询规划：`LandscapeQueryPlan` 最少允许一条查询；技术方向模式生成一条 `mixed` 中英文 `OR` 查询，友商/联合模式每家公司生成一条查询。两友商本地冒烟得到 2 条混合查询，并逐条包含中文方向、英文扩展词和对应友商。
+- 去重：原 `merge_hits` 公开号、申请号和确认 Family ID 去重保持不变；合并检索式只减少跨语言重复调用，不把它描述为绝对无重复。
+- 精读：新 `weighted_analysis_selection` 在预算足够时先为每个规范化公司分配一件，再按唯一合格专利数使用确定性 D'Hondt 权重分配剩余名额；同公司队列按 `family_footprint`、原候选相关性顺序和公开号排序。
+- 同族口径：`family_footprint` 只统计检索结果 `country_status` 中不同法域，Family ID 无法域明细时最低记 1；该值进入候选 Debug 和前端，不替代详情阶段的结构化全族成员。
+- 补位与调试：抓取失败优先选择同公司下一件，再使用全局加权余序；Debug 新增精读目标、公司数、公司覆盖是否受上限限制、首选/实际尝试公开号和补位数，不返回正文或失败详情。
+- 兼容：历史 Run 保持不可变，旧双查询计划仍可读取；报告 Schema 继续为 `landscape-report/1.1.0`，IDEA/RAG/追问未修改。
+- 验证：Landscape 54 项测试和 Provider/配置/容器契约/前端/健康/日志安全/合并相关 51 项测试通过；Python 编译、Node 语法和 `git diff --check` 通过。
+- 容器：应用镜像使用本次源码重建，App、PostgreSQL、Redis、MinIO 全部 healthy；`/api/health` 与 `/landscape` 可访问，容器静态资源已包含 `analysis_selection` 和“同族法域”。
+- Git：本实现作为第 26 个工作单元，与第 25 个设计提交组成一对，推送 `origin/develop`。

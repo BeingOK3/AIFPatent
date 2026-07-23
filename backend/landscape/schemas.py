@@ -196,7 +196,7 @@ class LandscapePlannedQuery(LandscapeModel):
 class LandscapeQueryPlan(LandscapeModel):
     direction_terms: list[str] = Field(default_factory=list, max_length=30)
     direction_english_terms: list[str] = Field(default_factory=list, max_length=8)
-    queries: list[LandscapePlannedQuery] = Field(min_length=2, max_length=40)
+    queries: list[LandscapePlannedQuery] = Field(min_length=1, max_length=40)
 
 
 class EvidenceItem(LandscapeModel):

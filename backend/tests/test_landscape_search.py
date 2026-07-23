@@ -15,11 +15,12 @@ from landscape.schemas import (
 )
 from landscape.search import (
     assignee_matches_confirmed_competitor,
-    balanced_analysis_selection,
     execute_provider_queries,
+    family_footprint,
     matched_competitor_name,
     scoped_provider_query_text,
     strict_filter_and_select,
+    weighted_analysis_selection,
 )
 
 
@@ -64,6 +65,7 @@ def hit(
     *,
     assignee: str | None = "Example Corp",
     query_title: str = "Liquid cooling system",
+    family_jurisdictions: list[str] | None = None,
 ) -> SearchHit:
     return SearchHit(
         provider="fixture",
@@ -73,6 +75,12 @@ def hit(
         publication_number=publication,
         publication_date=published,
         assignee=assignee,
+        raw={
+            "country_status": {
+                jurisdiction: "ACTIVE"
+                for jurisdiction in (family_jurisdictions or [])
+            }
+        },
     )
 
 
@@ -191,11 +199,69 @@ class LandscapeSearchTests(unittest.TestCase):
         }
         self.assertEqual(counts, {"Huawei": 3, "Vertiv": 2})
         self.assertEqual(matched_competitor_name("华为技术有限公司", scope), "Huawei")
-        ordered = balanced_analysis_selection(result.candidates, scope=scope)
+        ordered = weighted_analysis_selection(
+            result.candidates,
+            scope=scope,
+            company_patent_counts=result.coverage.company_patent_counts,
+        )
         self.assertEqual(
             [matched_competitor_name(item.assignee, scope) for item in ordered[:4]],
-            ["Huawei", "Vertiv", "Huawei", "Vertiv"],
+            ["Huawei", "Vertiv", "Huawei", "Huawei"],
         )
+
+    def test_deep_review_guarantees_company_then_weights_count_and_family_footprint(self) -> None:
+        scope = LandscapeScope(
+            mode=AnalysisMode.COMPETITOR,
+            competitors=[
+                CompetitorInput(name="LargeCo"),
+                CompetitorInput(name="SmallCo"),
+            ],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+            budget=AnalysisBudget(candidate_limit=10, analysis_limit=4),
+        )
+        batches = [
+            (
+                "LQ-1",
+                [
+                    hit(
+                        index,
+                        f"US-L{index}-A1",
+                        "2026-05-01",
+                        assignee="LargeCo",
+                        family_jurisdictions=(
+                            ["US", "EP", "CN"] if index == 2 else ["US"]
+                        ),
+                    )
+                    for index in range(1, 7)
+                ]
+                + [
+                    hit(
+                        10 + index,
+                        f"US-S{index}-A1",
+                        "2026-05-01",
+                        assignee="SmallCo",
+                        family_jurisdictions=["US"],
+                    )
+                    for index in range(1, 3)
+                ],
+            )
+        ]
+        result = strict_filter_and_select(batches, scope=scope)
+        ordered = weighted_analysis_selection(
+            result.candidates,
+            scope=scope,
+            company_patent_counts=result.coverage.company_patent_counts,
+        )
+        companies = [matched_competitor_name(item.assignee, scope) for item in ordered[:4]]
+        self.assertEqual(companies, ["LargeCo", "SmallCo", "LargeCo", "LargeCo"])
+        self.assertEqual(ordered[0].publication_number, "USL2A1")
+        self.assertEqual(family_footprint(ordered[0]), 3)
+        large_rank = next(
+            item for item in result.ranking if item.publication_number == "USL2A1"
+        )
+        self.assertEqual(large_rank.family_footprint, 3)
+        self.assertIn("可核验同族法域 3 个", large_rank.reasons)
 
     def test_combined_mode_enforces_competitor_assignee_filter(self) -> None:
         scope = LandscapeScope(

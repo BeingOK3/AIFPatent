@@ -731,6 +731,23 @@ class LandscapeDatabase:
             enrichment = filtered.get("enrichment", {})
         except KeyError:
             pass
+        analysis_selection: dict[str, Any] = {}
+        try:
+            fetched = self.get_stage_result(run_id, "FETCH_DETAILS")["value"]
+            analysis_selection = {
+                key: fetched.get(key, default)
+                for key, default in (
+                    ("target_count", 0),
+                    ("selected_publications", []),
+                    ("attempted_publications", []),
+                    ("fetched_publications", []),
+                    ("backfilled_count", 0),
+                    ("company_coverage_complete", True),
+                    ("company_count", 0),
+                )
+            }
+        except KeyError:
+            pass
 
         steps = []
         for row in step_rows:
@@ -755,6 +772,7 @@ class LandscapeDatabase:
             "provider_statuses": coverage.get("provider_statuses", {}),
             "provider_attempts": provider_attempts,
             "enrichment": enrichment,
+            "analysis_selection": analysis_selection,
             "coverage": {
                 key: coverage.get(key, default)
                 for key, default in (

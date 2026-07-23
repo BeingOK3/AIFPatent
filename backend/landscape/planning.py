@@ -152,51 +152,46 @@ def build_deterministic_query_plan(
     direction = scope.technology_direction or ""
     if direction and direction_expansion is None:
         raise ValueError("technical direction expansion is required")
-    direction_groups: list[tuple[str, str]] = []
+    direction_group = ""
     direction_terms: list[str] = []
     english_terms: list[str] = []
     if direction_expansion is not None:
         chinese = _unique([direction, *direction_expansion.chinese_terms])
         english_terms = _unique(direction_expansion.english_terms)
         direction_terms = _unique([*chinese, *english_terms])
-        direction_groups = [
-            (_bounded_or(chinese, max_names=5, max_chars=200), "原始/中文技术词组"),
-            (_bounded_or(english_terms, max_names=6, max_chars=200), "英文技术词组"),
-        ]
+        direction_group = _bounded_or(
+            [*chinese, *english_terms], max_names=11, max_chars=300
+        )
 
     candidates: list[tuple[str, str, str]] = []
     if scope.competitors:
         for competitor in scope.competitors:
             names = _unique([competitor.name, *competitor.aliases])
             name_group = _bounded_or(
-                names, max_names=8, max_chars=200 if direction_groups else 440
+                names, max_names=8, max_chars=180 if direction_group else 440
             )
-            if direction_groups:
-                for direction_group, direction_label in direction_groups:
-                    text = f"({direction_group}) AND ({name_group})"
-                    candidates.append(
-                        (
-                            text,
-                            _language(text),
-                            f"{direction_label} × 友商：{competitor.name}",
-                        )
+            if direction_group:
+                text = f"({direction_group}) AND ({name_group})"
+                candidates.append(
+                    (
+                        text,
+                        _language(text),
+                        f"中英文技术词组 × 友商：{competitor.name}",
                     )
+                )
             else:
-                candidates.extend(
-                    [
-                        (name_group, _language(name_group), f"友商名称组：{competitor.name}"),
-                        (
-                            _bounded_or(
-                                names, prefix="assignee:", max_names=8, max_chars=440
-                            ),
-                            _language(name_group),
-                            f"友商申请人字段组：{competitor.name}",
+                candidates.append(
+                    (
+                        _bounded_or(
+                            names, prefix="assignee:", max_names=8, max_chars=440
                         ),
-                    ]
+                        _language(name_group),
+                        f"友商申请人名称组：{competitor.name}",
+                    )
                 )
     else:
-        candidates.extend(
-            (group, _language(group), label) for group, label in direction_groups
+        candidates.append(
+            (direction_group, _language(direction_group), "中英文技术词组")
         )
     unique: list[LandscapePlannedQuery] = []
     seen: set[str] = set()
@@ -243,11 +238,16 @@ def validate_query_plan_scope(plan: LandscapeQueryPlan, scope: LandscapeScope) -
                     f"query plan does not contain competitor: {competitor.name}"
                 )
             if scope.mode == AnalysisMode.TECHNOLOGY_COMPETITOR and not any(
-                any(term.casefold() in query for term in plan.direction_terms)
+                direction in query
+                and any(
+                    term.casefold() in query
+                    for term in plan.direction_english_terms
+                )
                 for query in matching
             ):
                 raise ValueError(
-                    f"combined query does not retain direction for competitor: {competitor.name}"
+                    "combined query does not retain bilingual direction for "
+                    f"competitor: {competitor.name}"
                 )
 
 

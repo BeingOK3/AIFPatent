@@ -42,12 +42,13 @@ class LandscapePlanningTests(unittest.TestCase):
             publication_end=date(2026, 7, 1),
         )
         plan = build_deterministic_query_plan(scope, direction_expansion())
-        self.assertGreaterEqual(len(plan.queries), 2)
-        self.assertLessEqual(len(plan.queries), 40)
-        self.assertIn("data center liquid cooling", " ".join(item.query_text for item in plan.queries))
+        self.assertEqual(len(plan.queries), 1)
+        self.assertEqual(plan.queries[0].language, "mixed")
+        self.assertIn("data center liquid cooling", plan.queries[0].query_text)
+        self.assertIn("数据中心液冷", plan.queries[0].query_text)
         validate_query_plan_scope(plan, scope)
 
-    def test_every_competitor_receives_bilingual_combined_queries(self) -> None:
+    def test_every_competitor_receives_one_bilingual_combined_query(self) -> None:
         competitors = [
             CompetitorInput(name="中科曙光", aliases=["Sugon"]),
             CompetitorInput(name="华为", aliases=["Huawei"]),
@@ -61,16 +62,16 @@ class LandscapePlanningTests(unittest.TestCase):
             publication_end=date(2026, 7, 1),
         )
         plan = build_deterministic_query_plan(scope, direction_expansion())
-        self.assertEqual(len(plan.queries), 8)
+        self.assertEqual(len(plan.queries), 4)
         for competitor in competitors:
             queries = [
                 item for item in plan.queries if competitor.name in item.rationale
             ]
-            self.assertEqual(len(queries), 2, competitor.name)
-            joined = " ".join(item.query_text for item in queries)
-            self.assertIn(competitor.name, joined)
-            self.assertIn("data center liquid cooling", joined)
-            self.assertIn("数据中心液冷", joined)
+            self.assertEqual(len(queries), 1, competitor.name)
+            self.assertEqual(queries[0].language, "mixed")
+            self.assertIn(competitor.name, queries[0].query_text)
+            self.assertIn("data center liquid cooling", queries[0].query_text)
+            self.assertIn("数据中心液冷", queries[0].query_text)
         validate_query_plan_scope(plan, scope)
 
     def test_competitor_only_plan_covers_every_competitor(self) -> None:
@@ -85,10 +86,10 @@ class LandscapePlanningTests(unittest.TestCase):
             publication_end=date(2026, 7, 1),
         )
         plan = build_deterministic_query_plan(scope)
-        self.assertEqual(len(plan.queries), 8)
+        self.assertEqual(len(plan.queries), 4)
         for competitor in scope.competitors:
             self.assertEqual(
-                sum(competitor.name in item.query_text for item in plan.queries), 2
+                sum(competitor.name in item.query_text for item in plan.queries), 1
             )
         validate_query_plan_scope(plan, scope)
 

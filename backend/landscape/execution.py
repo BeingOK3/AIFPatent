@@ -22,10 +22,12 @@ from .planning import (
 from .reporting import LandscapeReportService, build_report
 from .schemas import LandscapeQueryPlan, LandscapeScope
 from .search import (
-    balanced_analysis_selection,
+    CompanyPatentCount,
+    candidate_company,
     execute_provider_queries,
     exclusion_reason,
     strict_filter_and_select,
+    weighted_analysis_selection,
 )
 from .store import LandscapeRunStore
 from .workflow import LandscapeWorkflowStep
@@ -172,20 +174,55 @@ class LandscapeExecutionService:
 
     async def fetch_details(self, run_id: str) -> dict[str, Any]:
         scope = self.effective_scope(run_id)
-        ordered = balanced_analysis_selection(self.selected_hits(run_id), scope=scope)
+        filtered = self.database.get_stage_result(
+            run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value
+        )["value"]["result"]
+        company_counts = [
+            CompanyPatentCount.model_validate(item)
+            for item in filtered.get("coverage", {}).get("company_patent_counts", [])
+        ]
+        candidates = self.selected_hits(run_id)
+        ordered = weighted_analysis_selection(
+            candidates,
+            scope=scope,
+            company_patent_counts=company_counts,
+        )
         target = min(scope.budget.analysis_limit, len(ordered))
+        companies = {
+            candidate_company(candidate, scope) for candidate in candidates
+        }
         docs: dict[str, FetchedDocument] = {}
         failures: dict[str, str] = {}
         attempted: list[MergedHit] = []
-        cursor = 0
-        while len(docs) < target and cursor < len(ordered):
-            needed = target - len(docs)
-            batch = ordered[cursor : cursor + needed]
-            cursor += len(batch)
+        batch = ordered[:target]
+        remaining = ordered[target:]
+        while len(docs) < target and batch:
             attempted.extend(batch)
             fetched, batch_failures = await self._fetch_documents(run_id, batch)
             docs.update(fetched)
             failures.update(batch_failures)
+            needed = target - len(docs)
+            failed_companies = [
+                candidate_company(hit, scope)
+                for hit in batch
+                if (hit.publication_number or hit.title) in batch_failures
+            ]
+            next_batch: list[MergedHit] = []
+            for company in failed_companies:
+                replacement = next(
+                    (
+                        hit
+                        for hit in remaining
+                        if candidate_company(hit, scope) == company
+                    ),
+                    None,
+                )
+                if replacement is not None:
+                    remaining.remove(replacement)
+                    next_batch.append(replacement)
+            while len(next_batch) < needed and remaining:
+                next_batch.append(remaining.pop(0))
+            batch = next_batch[:needed]
         self.documents[run_id] = docs
         for publication, document in docs.items():
             self.database.put_document(
@@ -215,6 +252,8 @@ class LandscapeExecutionService:
             ],
             "fetched_publications": sorted(docs),
             "backfilled_count": max(0, len(attempted) - target),
+            "company_coverage_complete": target >= len(companies),
+            "company_count": len(companies),
             "failures": failures,
         }
 

@@ -156,7 +156,7 @@ class LandscapeEnrichmentTests(unittest.TestCase):
                     url=f"https://example.test/{index}",
                     publication_number=f"US{index}A1",
                     publication_date="2026-05-01",
-                    assignee="Example",
+                    assignee="Company A" if index in {1, 3, 5} else "Company B",
                 )
                 for index in range(1, 6)
             ]
@@ -195,6 +195,7 @@ class LandscapeEnrichmentTests(unittest.TestCase):
             self.assertEqual(result["target_count"], 3)
             self.assertEqual(len(result["fetched_publications"]), 3)
             self.assertEqual(len(result["attempted_publications"]), 4)
+            self.assertEqual(result["attempted_publications"][-1], "US5A1")
             self.assertEqual(result["backfilled_count"], 1)
             self.assertEqual(result["failures"], {"US1A1": "fixture failure"})
 

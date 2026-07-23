@@ -56,6 +56,9 @@ class LandscapeFrontendContractTests(unittest.TestCase):
             "member.competitor",
             "member.filing_date",
             "patent.family_status",
+            "item.family_footprint",
+            "analysis_selection",
+            "公司覆盖",
             "全族状态",
             "overall_legal_status",
         ):

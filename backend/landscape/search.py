@@ -58,6 +58,7 @@ class LandscapeCandidateRank(LandscapeModel):
     query_coverage: int = Field(ge=1)
     provider_coverage: int = Field(ge=1)
     technical_relevance: float = Field(ge=0.0, le=1.0)
+    family_footprint: int = Field(ge=0)
     selected: bool
     reasons: list[str]
 
@@ -126,6 +127,7 @@ def strict_filter_and_select(
                 query_coverage=len(item.query_ids),
                 provider_coverage=len(item.found_by),
                 technical_relevance=round(metrics["technical_relevance"], 6),
+                family_footprint=int(metrics["family_footprint"]),
                 selected=item.merge_key in selected_keys,
                 reasons=_ranking_reasons(item, metrics),
             )
@@ -144,25 +146,92 @@ def strict_filter_and_select(
     )
 
 
-def balanced_analysis_selection(
+def weighted_analysis_selection(
     candidates: list[MergedHit],
     *,
     scope: LandscapeScope,
+    company_patent_counts: list[CompanyPatentCount] | None = None,
 ) -> list[MergedHit]:
-    """Return a deterministic company-round-robin order for deep review and backfill."""
+    """Guarantee company coverage, then allocate deep-review slots by company weight."""
+    if not candidates:
+        return []
+    original_order = {
+        candidate.merge_key: index
+        for index, candidate in enumerate(candidates)
+    }
     queues: dict[str, list[MergedHit]] = defaultdict(list)
-    company_order: list[str] = []
     for candidate in candidates:
-        company, _ = _company_for_hit(candidate, scope)
-        if company not in queues:
-            company_order.append(company)
-        queues[company].append(candidate)
+        queues[candidate_company(candidate, scope)].append(candidate)
+    for items in queues.values():
+        items.sort(
+            key=lambda item: (
+                -family_footprint(item),
+                original_order[item.merge_key],
+                item.publication_number or item.title,
+            )
+        )
+
+    weights = {company: len(items) for company, items in queues.items()}
+    for item in company_patent_counts or []:
+        company = _normalize_text(item.company) or "unknown"
+        if company in queues:
+            weights[company] = item.patent_count
+    company_order = sorted(
+        queues,
+        key=lambda company: (
+            -weights[company],
+            -family_footprint(queues[company][0]),
+            company.casefold(),
+        ),
+    )
+    target = min(scope.budget.analysis_limit, len(candidates))
     ordered: list[MergedHit] = []
-    while any(queues.values()):
-        for company in company_order:
-            if queues[company]:
-                ordered.append(queues[company].pop(0))
+    assigned: Counter[str] = Counter()
+
+    # A prefix can cover every company only when the user supplied enough analysis slots.
+    for company in company_order[:target]:
+        ordered.append(queues[company].pop(0))
+        assigned[company] += 1
+
+    def append_weighted() -> bool:
+        available = [company for company in company_order if queues[company]]
+        if not available:
+            return False
+        company = min(
+            available,
+            key=lambda name: (
+                -(weights[name] / (assigned[name] + 1)),
+                -family_footprint(queues[name][0]),
+                name.casefold(),
+            ),
+        )
+        ordered.append(queues[company].pop(0))
+        assigned[company] += 1
+        return True
+
+    while len(ordered) < target and append_weighted():
+        pass
+    while append_weighted():
+        pass
     return ordered
+
+
+def candidate_company(hit: MergedHit, scope: LandscapeScope) -> str:
+    return _normalize_text(_company_for_hit(hit, scope)[0]) or "unknown"
+
+
+def family_footprint(hit: MergedHit) -> int:
+    """Count confirmed family jurisdictions exposed by search metadata."""
+    jurisdictions: set[str] = set()
+    for source in hit.sources:
+        status = source.raw.get("country_status")
+        if isinstance(status, dict):
+            jurisdictions.update(str(value).upper() for value in status if value)
+        elif isinstance(status, list):
+            jurisdictions.update(str(value).upper() for value in status if value)
+    if jurisdictions:
+        return len(jurisdictions)
+    return 1 if hit.family_id else 0
 
 
 def matched_competitor_name(
@@ -401,6 +470,7 @@ def _rank_candidates(
             "query_normalized": len(hit.query_ids) / max_queries,
             "provider_normalized": len(hit.found_by) / max_providers,
             "technical_relevance": technical,
+            "family_footprint": float(family_footprint(hit)),
         }
         score = (
             0.5 * metrics["rrf_normalized"]
@@ -505,4 +575,5 @@ def _ranking_reasons(
         reasons.append(
             f"技术文本匹配 {metrics['technical_relevance']:.2f}"
         )
+    reasons.append(f"可核验同族法域 {int(metrics['family_footprint'])} 个")
     return reasons
