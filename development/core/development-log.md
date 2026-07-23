@@ -46,3 +46,12 @@
 - 连接/传输错误、普通 5xx、429 和 Google `Sorry` 页面采用不同重试/冷却策略；
 - `provider_circuit_breakers` 作为 SQLite Schema v3 的持久熔断状态；
 - 目标 Provider、数据库、配置和合同回归通过；完整套件仍存在与本修改无关的既有 TestClient/取消等待卡住路径。
+
+## 2026-07-23 — AIF-IDEA-SERP-DESIGN-003
+
+- 类型：IDEA SerpAPI 候选检索与全文回退增量设计。
+- 根因：当前默认关闭 Google 直连和匿名 Exa，但 IDEA Runtime 尚未装配已经存在的 SerpAPI Provider，导致 Provider 列表为空并停止为 `PROVIDERS_UNAVAILABLE`。
+- 决策：SerpAPI 成为 IDEA 默认主检索与首选详情源；Google/Exa 保留为显式启用的补充源。
+- 调度：同一 Provider 在 Run 内串行；SerpAPI 鉴权/额度错误与 Exa 429 首次出现后快速熔断；Tool Call/Debug 继续记录脱敏状态。
+- 边界：不修改 IDEA 固定 11 步、模型 BYOK、证据门禁、Corpus/RAG 或追问行为。
+- 文档：详见 `idea-serpapi-design.md`；实现与容器验收作为下一工作单元。
