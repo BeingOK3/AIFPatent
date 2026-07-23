@@ -1,10 +1,10 @@
 # 专利全文语料、IDEA 评审与追问 RAG 架构设计
 
-> 文档状态：待实现设计基线
+> 文档状态：`PARTIALLY_IMPLEMENTED_TARGET_ARCHITECTURE`
 >
-> 版本：1.2
+> 版本：1.3
 >
-> 日期：2026-07-21
+> 更新日期：2026-07-23
 >
 > 适用范围：AIFPatent 专利全文语料、首次 IDEA 评审、评审后追问、混合 RAG、方案变体与二次研究
 >
@@ -30,16 +30,16 @@
 - 不修改原 Run、原报告和原结论；
 - 不把技术相似自动表述为法律侵权结论。
 
-本设计是目标架构，不代表当前运行时代码已经完成迁移。当前实现仍以 SQLite 和一次性 Evidence Packet 为主；在完成本文档 Phase 1～2 前，不能对外宣称已经持久保存全文，在完成 Phase 4 前不能宣称首次报告与追问已经统一使用完整混合 RAG。
+本文同时保留目标架构和实施前问题基线。当前 `develop` 已完成 Phase 0～3，以及 Phase 4 中的 Embedding 抽象、pgvector、RRF HybridRetriever、追问数据库/七节点 Workflow/API/UI/Citation 和离线评测契约；首次报告与追问共用冻结 Version/Chunk、Context Manifest 和引用验证。默认部署未配置 Embedding，因此实际模式为 `LEXICAL_ONLY`。尚未完成的是跨语言 Embedding 质量验收、reranker、Variant/Child Run、二次研究、权利要求对照和权威法律状态数据。第 2 节描述的是设计启动时的历史问题，不能再作为当前运行状态引用。
 
-## 2. 当前基线与必须解决的问题
+## 2. 设计启动时的基线与问题（历史）
 
 ### 2.1 已有能力
 
-当前项目已经具备：
+设计启动时项目已经具备：
 
 - 不可变 Case/Run 和固定 11 步 LangGraph Workflow；
-- Google Patents 与 EXA 的候选检索和全文获取；
+- Google Patents 与 EXA 的候选检索和全文获取（当前默认主源已改为 SerpAPI）；
 - 公开号、申请号和已知同族号去重；
 - IDEA 的 F1..Fn 必要技术特征；
 - 文献级技术特征映射；
@@ -50,26 +50,26 @@
 
 这些数据已经为追问提供了良好起点，但还不是完整的问答语料库。
 
-### 2.2 当前全文生命周期不支持稳定追问
+### 2.2 设计启动时全文生命周期不支持稳定追问
 
-`DocumentAnalysisService` 在单篇文献分析成功后会释放 `patent_documents` 中的摘要、权利要求和说明书全文，只保留元数据、全文哈希、Evidence 和特征映射。Provider 原始响应位于 1 GiB FIFO 缓存中，可能被自动淘汰。
+设计启动时，`DocumentAnalysisService` 在单篇文献分析成功后会释放 `patent_documents` 中的摘要、权利要求和说明书全文，只保留元数据、全文哈希、Evidence 和特征映射。该问题已经通过不可变 Corpus Version 和 MinIO/S3 Blob 解决；FIFO 现在只作为可重建 Provider Cache。
 
-因此，当前系统无法保证评审结束一段时间后仍能读取专利原文。追问功能实现前，必须建立不受 FIFO 清理影响的耐久专利语料库。
+当时系统因此无法保证评审结束一段时间后仍能读取专利原文，这也是建立耐久专利语料库的直接原因。
 
-### 2.3 当前 `patent_documents` 是可更新行，不是内容版本
+### 2.3 设计启动时 `patent_documents` 是可更新行，不是内容版本
 
-当前一条 `patent_documents` 记录由“公开号 + 语言”唯一标识，并可能在再次抓取时原地更新。这适合工作缓存，但不适合回答历史问题：
+设计启动时，一条 `patent_documents` 记录由“公开号 + 语言”唯一标识并可能原地更新。当前已通过专利身份、不可变 Version、Blob 和 Run—Version 冻结关系解决历史引用问题。原问题包括：
 
 - 网页解析器升级后结构可能变化；
 - 数据源可能补充或修改字段；
 - 同一公开号不同时间抓到的文本可能不同；
 - 历史 Run 必须明确引用当时分析过的内容版本。
 
-因此必须把“专利身份”和“专利内容版本”分离，并让 Run 冻结引用具体版本。
+对应决策是把“专利身份”和“专利内容版本”分离，并让 Run 冻结引用具体版本；该决策现已落地。
 
-### 2.4 当前没有可复用的检索索引
+### 2.4 设计启动时没有可复用的检索索引
 
-已有 Evidence 只覆盖模型在首次评审时使用过的片段，无法回答所有后续问题。例如用户询问实施例、从属权利要求或未进入原证据包的段落时，只查询 `evidence` 表会漏掉答案。
+设计启动时的 Evidence 只覆盖首次评审片段。当前 PostgreSQL FTS/`pg_trgm`、可选 pgvector、RRF 和 Version allowlist 已为首次报告与追问提供共享检索；仍需真实人工标注集验证质量。
 
 首次报告和追问都需要对深读专利的完整结构化文本建立：
 
@@ -79,11 +79,11 @@
 - 元数据过滤；
 - 可复现的排序和上下文装配。
 
-### 2.5 当前首次报告不是真正的 RAG
+### 2.5 设计启动时首次报告不是真正的 RAG
 
-当前首次报告会抓取少量深读专利全文，再按关键词从权利要求、摘要和说明书中选择文本，拼装受字符预算限制的 Evidence Packet。它没有持久 Chunk、向量索引、混合召回、重排和可跨问题复用的 Citation 定位，因此属于临时证据压缩，而不是完整 RAG。
+设计启动时，首次报告只使用一次性 Evidence Packet。当前已建立持久 Chunk、共享 HybridRetriever、Context Manifest 和可回查 Citation；Embedding 关闭时明确以词法模式运行，reranker 仍未实现。
 
-目标实现不得改变外部专利检索的职责：Google Patents/EXA 仍负责从开放语料中召回候选；RAG 从“选中深读文献已经抓取全文”之后开始，负责全文入库、结构化分块、特征级证据召回和后续问答。
+现有实现没有改变外部专利检索的职责：SerpAPI 以及显式启用的 Google Patents/Exa 负责从开放语料中召回候选；RAG 从“选中深读文献已经抓取全文”之后开始，负责全文入库、结构化分块、特征级证据召回和后续问答。
 
 ### 2.6 模型凭证生命周期
 
@@ -213,7 +213,7 @@
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-目标生产部署以 PostgreSQL 为业务事实来源，pgvector 与业务过滤在同一事务边界内工作；S3 兼容对象存储保存大正文；Redis 负责实时协调。现有 SQLite 是迁移前的运行基线，不再作为新 RAG 子系统的生产目标。单机开发可以使用容器化 PostgreSQL/pgvector，并通过 `ObjectStore` 的本地文件实现替代 MinIO；不得为方便开发重新引入另一套 SQLite Schema。
+当前部署采用混合事实层：IDEA Case/Run/评审结果继续由 SQLite 保存；PostgreSQL 是 Corpus、Chunk、检索、Context、Thread/Turn 和 Citation 的事实来源，pgvector 与业务过滤在同一数据库内工作；S3/MinIO 保存正文对象；Redis 负责任务与协调。RAG 子系统不得退回另一套 SQLite Schema。
 
 ### 5.1 组件责任
 
@@ -237,7 +237,7 @@
 
 负责首次报告中的共享 RAG 使用：
 
-- 接收既有查询规划器输出和合并后的候选集，不取代 Google Patents/EXA 外部召回；
+- 接收既有查询规划器输出和合并后的候选集，不取代 SerpAPI 及可选 Google Patents/Exa 外部召回；
 - 只对选入深度分析的专利抓取、冻结和索引全文；
 - 对每个 `F_i × D_j` 独立检索权利要求和说明书证据；
 - 强制覆盖所有独立权利要求，并为命中的从属权利要求补齐父权利要求链；
@@ -650,9 +650,9 @@ chunk_id = SHA256(
 
 首次报告和追问都先按 Run/Version 过滤。一次分析通常只涉及几十篇深读专利，即使全站 Corpus 持续增长，单次进入最终排序的集合仍然可控。
 
-目标实现使用：
+当前实现使用：
 
-- PostgreSQL 保存业务事实、版本、Chunk、检索命中、报告和对话；
+- PostgreSQL 保存 Corpus/RAG 事实、Version、Chunk、检索命中、Context、Citation 和追问对话；IDEA Run 与报告仍在业务 SQLite；
 - PostgreSQL `tsvector`/GIN 与 `pg_trgm` 负责词法、术语和编号召回；
 - pgvector 负责跨语言语义向量召回；
 - SQL 在召回阶段同时执行 Version、章节、语言、时间等元数据过滤；
@@ -802,7 +802,7 @@ RAG 不替代现有的查询式生成和外部搜索。新 Run 的完整数据�
 ```text
 IDEA 解析为 F1..Fn
 → 查询规划器生成中英文术语、同义词、上位词、分类号和多轮查询
-→ Google Patents/EXA 返回候选元数据和摘要片段
+→ SerpAPI/可选 Google Patents/Exa 返回候选元数据和摘要片段
 → 公开号/申请号/同族/URL 归一化去重
 → 元数据与摘要初筛，选择深度分析文献
 → 只为深度分析文献抓取并校验全文
@@ -1639,9 +1639,9 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 - 每 Turn 输入 token 和费用；
 - 人工判断回答是否区分事实、推理和建议。
 
-## 20. 分阶段实施计划
+## 20. 历史分阶段实施计划与当前状态
 
-### Phase 0：目标基础设施与迁移基线
+### Phase 0：目标基础设施与迁移基线（已完成）
 
 - 固定本文档；
 - 建立 PostgreSQL/pgvector、Redis、MinIO 的开发部署模板和健康检查；
@@ -1654,7 +1654,7 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 
 完成门槛：本地可一键启动目标依赖，迁移演练不会修改原 SQLite，且 PostgreSQL 导入后的 Case/Run/报告与源数据哈希核对通过。
 
-### Phase 1：PostgreSQL、对象存储与分布式协调
+### Phase 1：PostgreSQL、对象存储与分布式协调（已完成当前单机基线）
 
 建议 Work Unit：
 
@@ -1666,7 +1666,7 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 
 完成门槛：两个 Worker 并发运行时业务写入一致，Google 网络请求全局串行，服务重启后任务与熔断语义正确，任何访客可读取全部业务内容但看不到凭证和运维操作。
 
-### Phase 2：耐久 Corpus
+### Phase 2：耐久 Corpus（已完成）
 
 建议 Work Unit：
 
@@ -1678,7 +1678,7 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 
 完成门槛：新 Run 深读文献全部有 READY Version，且 FIFO 清理后仍能读取全文。
 
-### Phase 3：共享词法 RAG 与首次报告改造
+### Phase 3：共享词法 RAG 与首次报告改造（已完成）
 
 1. `IDEA-RAG-PGFTS-001`：PostgreSQL FTS/`pg_trgm`、中英 tokenization 和 repair；
 2. `IDEA-REPORT-RETRIEVAL-001`：`F_i × D_j` 检索命中与审计表；
@@ -1689,7 +1689,7 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 
 完成门槛：新 Run 的首次报告不再依赖旧式说明书片段 Top-K 作为唯一输入；所有独立权利要求均被评估，报告 Evidence 能定位到耐久原文，并明确标记 `LEXICAL_RAG`。
 
-### Phase 4：pgvector 混合检索与追问 MVP
+### Phase 4：pgvector 混合检索与追问 MVP（MVP 已完成，质量验收与 reranker 待完成）
 
 1. `IDEA-EMBED-001`：EmbeddingProvider 和缓存；
 2. `IDEA-VECTOR-001`：`PgVectorIndex` 精确检索与索引基准；
@@ -1705,7 +1705,7 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 
 完成门槛：首次报告和追问都使用同一混合 Retriever；相较纯词法检索提升相关证据召回率，且不增加范围越界；FIFO 清空后仍能对指定深读文献稳定追问。
 
-### Phase 5：Variant 和新研究
+### Phase 5：Variant 和新研究（未实现）
 
 1. `IDEA-VARIANT-001`：变体草稿和差异集；
 2. `IDEA-VARIANT-RUN-001`：用户确认后创建 child Run；
@@ -1728,7 +1728,7 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 9. 全文使用内容寻址压缩对象并保存到 S3/MinIO 兼容 ObjectStore，不位于 FIFO Cache；
 10. Run 冻结绑定具体文档版本；
 11. Chunk 保留权利要求和说明书结构，不只按固定 token 切分；
-12. PostgreSQL 是目标业务事实来源，PostgreSQL FTS/`pg_trgm` 是词法索引；
+12. PostgreSQL 是 Corpus/RAG/追问事实来源，IDEA 与 Landscape Run 事实仍分别保存在业务 SQLite；PostgreSQL FTS/`pg_trgm` 是词法索引；
 13. pgvector 是首个生产向量实现，小范围优先精确检索；
 14. Redis 负责 Job、分布式锁和跨进程实时限流，持久熔断事实进入 PostgreSQL；
 15. 当前访问模式为 `public_shared`，不建设用户、组织、分组、租户隔离或内容 ACL；
@@ -1747,9 +1747,9 @@ Pydantic Config、JSON Schema 和部署模板必须同步更新。数据库/Redi
 28. LangChain Agent Memory、自动裁剪和自动摘要不作为权威上下文或历史存储，任何裁剪、摘要和预算降级必须服从领域规则并可审计；
 29. 原始 Turn 不可变，派生摘要不能替代原始消息或本轮专利证据。
 
-## 22. 推荐的首个开发切片
+## 22. 历史首个开发切片（已完成）
 
-第一批代码不要直接从聊天 UI 开始。推荐最小垂直顺序：
+以下是实施时采用的最小垂直顺序，保留用于解释提交历史；当前不再是待执行计划：
 
 ```text
 PostgreSQL/pgvector + Redis + ObjectStore

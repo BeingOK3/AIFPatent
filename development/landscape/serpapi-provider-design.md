@@ -1,6 +1,6 @@
 # SerpAPI Google Patents Provider 设计
 
-状态：`IMPLEMENTED_WITH_LIVE_PROBE_PENDING`
+状态：`IMPLEMENTED_AND_LIVE_VERIFIED`
 
 日期：2026-07-22
 
@@ -52,7 +52,7 @@ dups=language
 | BALANCED | 全部查询 | 技术语义查询 | 健康时补充/抽查 | 推荐生产默认 |
 | ECONOMY | 全部查询 | 仅覆盖不足时 | 关闭或仅故障回退 | SerpAPI 额度紧张 |
 
-首个实现采用 `COMPLETE` 的可观测 fan-out 语义，但无凭证 Provider 必须明确报错/跳过；不在本次直接加入自动策略选择，以免未经真实命中对比就固化错误分配。完成至少三组中英文、友商和组合模式对比后再落地 `BALANCED`。
+当前实现采用 `COMPLETE` 的可观测 fan-out 语义，但仓库默认只启用 SerpAPI；无凭证或未启用 Provider 必须明确跳过，不得伪装为成功。`BALANCED` 和 `ECONOMY` 仍是后续调度选项，尚未进入运行时。
 
 ## 验收
 
@@ -60,4 +60,4 @@ dups=language
 2. Landscape 前端和 Run 请求不包含 SerpAPI Key；本地私密 JSON 和仓库模板字段一致。
 3. Run 配置快照、Debug、数据库和报告均不包含密钥。
 4. 三个 Provider 调用状态在 Debug 中独立显示并参与统一去重。
-5. 使用用户测试 Key 完成一次受控检索，确认至少返回结构化字段；不得在命令、日志或提交中暴露 Key。当前沙箱外部请求授权受限，本项保留为部署环境联调，不影响本地契约、容器 Secret 与三 Provider 调度验收。
+5. 已使用本地私密配置完成受控真实检索，验证搜索结果和详情字段可映射；凭证未进入命令、日志、报告或提交。

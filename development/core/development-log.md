@@ -91,3 +91,13 @@
 - 边界：明确模型只执行受 Schema 约束的语义任务，SerpAPI 是当前默认专利源，IDEA 初筛与全文证据门、Landscape 唯一全集统计与精读聚类使用不同集合。
 - 索引：更新 `docs/README.md`，将 follow-up RAG 从“尚未实现”修正为设计、实现与验收历史。
 - 涉及文件：`docs/aifpatent-architecture-diagram.md`、`docs/README.md` 和本日志。
+
+## 2026-07-23 — AIF-DOCS-CURRENT-008
+
+- 类型：全仓文档现状审计与过时状态修复。
+- 范围：逐一清点仓库内 Markdown；对照 `develop` 当前配置、Provider 装配、API 路由、报告 Schema、RAG/Landscape 代码和近期实现记录。
+- 当前产品：根 README、产品架构和应用镜像说明补齐专利态势入口、默认 SerpAPI、首次报告/追问 RAG、混合持久化与单 Worker 边界。
+- 开发域：将已经落地的独立权利要求修复、Lexical RAG MVP、SerpAPI Provider、Landscape 架构和选样报告 V2 从“待实现/待验证”改为已实现或归档状态；RAG 目标架构明确已完成阶段和剩余 reranker/Variant 等范围。
+- 历史纪律：不改写 `development/*/development-log.md` 的旧条目和最初验收 Run；通过状态头、历史标识及追加补充说明当前事实。
+- 验证：`git diff --check` 通过；敏感 Key 模式扫描无命中；部署/配置/前端相关 33 项测试通过；Landscape 53 项测试通过。
+- Git：当前产品与部署文档提交 `ab51bc1`；开发域状态与本审计记录在下一提交归档，并按两次提交节奏推送 `origin/develop`。

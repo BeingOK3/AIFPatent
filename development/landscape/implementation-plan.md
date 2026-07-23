@@ -4,6 +4,8 @@
 
 状态：`COMPLETED`（提交 1～7 已实现并验收，提交 8 归档验收证据）
 
+说明：本文保留最初 MVP 的提交切片。MVP 之后已继续落地 SerpAPI、完整多友商查询、唯一全集公司统计、可审计选样与报告 Schema `1.1.0`；当前行为以 `architecture.md`、`selection-report-v2-design.md` 和实际配置为准。
+
 ## 提交 1：技术基线
 
 - 新增开发域 README、架构和实施计划；

@@ -1,5 +1,9 @@
 # LEXICAL_RAG 首次报告 MVP 实施计划
 
+**状态：** `COMPLETED_AND_ARCHIVED`
+
+> 本计划记录当时的实施切片，现已完成。后续 pgvector、混合检索和追问能力不回写到历史任务正文；当前状态见 `development/followup-rag/`。
+
 > **执行约束：** 严格按测试驱动方式逐项实施。每个任务完成相关测试、更新 `development/followup-rag/development-log.md`、提交并推送 `origin/develop` 后，才能开始下一任务。任何模型密钥只允许存在于前端请求和运行进程内存中。
 
 **目标：** 让一台新机器克隆 `develop` 后通过 `./start.sh` 启动完整运行栈，并生成包含可验证 Chunk Citation 的首次评审 JSON/Markdown 报告。

@@ -1,8 +1,8 @@
 # 专利态势分析 MVP 架构
 
-状态：`APPROVED_FOR_IMPLEMENTATION`
+状态：`IMPLEMENTED_CURRENT_BASELINE`
 
-日期：2026-07-22
+更新日期：2026-07-23
 
 ## 1. 目标
 
@@ -157,7 +157,7 @@ SerpAPI 使用 `google_patents` 引擎，并把公开日起止作为 `after=publ
 - Exa MCP：自然语言/英文技术词的语义补召回，弥补 Google Patents 关键词排序遗漏；
 - Google Patents 直连：零外部 API 计费的补充源，只在网络健康时使用，不作为可部署性的单点依赖。
 
-第一阶段为保证行为可审计，所有已启用且具备运行凭证的 Provider 接收相同完整查询计划，结果统一去重；后续可在不改变查询计划与严格过滤语义的前提下增加 `COMPLETE | BALANCED | ECONOMY` 调度策略。默认建议 `BALANCED`：SerpAPI 执行全部查询，Exa 只执行技术语义查询，Google 仅在健康检查成功时执行。任何节流都必须在 Debug 中标记为 `POLICY_SKIPPED`，不能伪装成已检索。
+当前调度采用可观测的完整 fan-out：所有已启用且具备运行凭证的 Provider 接收相同完整查询计划，结果统一去重。仓库默认配置只启用 SerpAPI，因此默认运行不会调用 Exa 或 Google 直连；用户显式启用补充 Provider 后才执行多路 fan-out。系统尚未实现 `COMPLETE | BALANCED | ECONOMY` 自动策略选择，不能把设计建议描述成现有行为。Provider 跳过、熔断和错误都必须在 Debug 中显式呈现，不能伪装成已检索。
 
 公开日补全先按 `provider + publication_number` 去重，再受候选预算限制执行；同一专利跨多个查询命中只抓取一次，补全统计须进入调试信息。
 
@@ -316,7 +316,7 @@ Run：`QUEUED | RUNNING | COMPLETED | COMPLETED_WITH_LIMITATIONS | FAILED | CANC
 
 - 定时监控和自动周报；
 - 实际执行 `NEW_RESEARCH` 的 IDEA Child Run；
-- Embedding、pgvector、RRF 或 reranker；
+- 用于聚类或证据检索的 Embedding、pgvector 或 reranker（候选相关性已经使用检索排名 RRF 融合）；
 - 法律状态、权利要求有效性和侵权判断；
 - 保证完整的全球同族数据；
 - 用户、组织、权限和多租户；

@@ -2,7 +2,9 @@
 
 日期：2026-07-23
 
-状态：`APPROVED_FOR_IMPLEMENTATION`
+状态：`IMPLEMENTED_AND_VERIFIED`
+
+实现：报告 Schema `1.1.0`，对应选样、统计、聚类成员和全族状态契约均已进入代码与回归测试。
 
 ## 1. 目标
 

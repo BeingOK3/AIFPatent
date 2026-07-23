@@ -2,7 +2,9 @@
 
 **日期：** 2026-07-22
 **目标分支：** `develop`
-**状态：** 已获用户设计批准，待实施
+**状态：** `ARCHIVED_IMPLEMENTED`
+
+> 本文是词法 RAG 报告 MVP 的历史设计基线。该切片已经实现；项目随后又完成了 pgvector 语料基础设施、可选混合检索和追问 RAG。当前运行状态以 `development/followup-rag/README.md` 与 `development/followup-rag/architecture.md` 为准。
 
 ## 1. 目标
 

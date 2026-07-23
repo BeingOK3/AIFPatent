@@ -1,5 +1,9 @@
 # IDEA 独立权利要求证据修复设计
 
+状态：`IMPLEMENTED_AND_VERIFIED`
+
+日期：2026-07-23
+
 ## 1. 现象
 
 另一台机器上的 IDEA Run 连续失败于：
