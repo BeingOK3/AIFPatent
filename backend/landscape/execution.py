@@ -22,6 +22,7 @@ from .planning import (
 from .reporting import LandscapeReportService, build_report
 from .schemas import LandscapeQueryPlan, LandscapeScope
 from .search import (
+    balanced_analysis_selection,
     execute_provider_queries,
     exclusion_reason,
     strict_filter_and_select,
@@ -139,7 +140,12 @@ class LandscapeExecutionService:
         results = await self._enrich_missing_dates(run_id, results)
         batches = [(result.request_id, result.hits) for result in results if result.succeeded]
         statuses = {f"{result.request_id}:{result.provider}": result.status.value for result in results}
-        result = strict_filter_and_select(batches, scope=scope, provider_statuses=statuses)
+        result = strict_filter_and_select(
+            batches,
+            scope=scope,
+            provider_statuses=statuses,
+            direction_terms=self.load_plan(run_id).direction_terms,
+        )
         for provider_result in results:
             for hit in provider_result.hits:
                 reason = exclusion_reason(hit, scope)
@@ -165,10 +171,21 @@ class LandscapeExecutionService:
         }
 
     async def fetch_details(self, run_id: str) -> dict[str, Any]:
-        scope = self.scope(run_id)
-        selected = self.selected_hits(run_id)
-        selected = selected[: scope.budget.analysis_limit]
-        docs, failures = await self._fetch_documents(run_id, selected)
+        scope = self.effective_scope(run_id)
+        ordered = balanced_analysis_selection(self.selected_hits(run_id), scope=scope)
+        target = min(scope.budget.analysis_limit, len(ordered))
+        docs: dict[str, FetchedDocument] = {}
+        failures: dict[str, str] = {}
+        attempted: list[MergedHit] = []
+        cursor = 0
+        while len(docs) < target and cursor < len(ordered):
+            needed = target - len(docs)
+            batch = ordered[cursor : cursor + needed]
+            cursor += len(batch)
+            attempted.extend(batch)
+            fetched, batch_failures = await self._fetch_documents(run_id, batch)
+            docs.update(fetched)
+            failures.update(batch_failures)
         self.documents[run_id] = docs
         for publication, document in docs.items():
             self.database.put_document(
@@ -189,8 +206,15 @@ class LandscapeExecutionService:
                 error_message=error,
             )
         return {
-            "selected_publications": [hit.publication_number for hit in selected if hit.publication_number],
+            "target_count": target,
+            "selected_publications": [
+                hit.publication_number for hit in ordered[:target] if hit.publication_number
+            ],
+            "attempted_publications": [
+                hit.publication_number for hit in attempted if hit.publication_number
+            ],
             "fetched_publications": sorted(docs),
+            "backfilled_count": max(0, len(attempted) - target),
             "failures": failures,
         }
 
@@ -198,7 +222,15 @@ class LandscapeExecutionService:
         scope = self.scope(run_id)
         docs = self.documents.get(run_id)
         if docs is None:
-            selected = self.selected_hits(run_id)[: scope.budget.analysis_limit]
+            fetch_result = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.FETCH_DETAILS.value
+            )["value"]
+            fetched_publications = set(fetch_result.get("fetched_publications", []))
+            selected = [
+                hit
+                for hit in self.selected_hits(run_id)
+                if hit.publication_number in fetched_publications
+            ][: scope.budget.analysis_limit]
             docs, _ = await self._fetch_documents(run_id, selected)
             self.documents[run_id] = docs
         plan = self.load_plan(run_id)

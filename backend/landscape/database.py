@@ -677,9 +677,11 @@ class LandscapeDatabase:
             ).fetchall()
 
         coverage: dict[str, Any] = {}
+        candidate_ranking: list[dict[str, Any]] = []
         try:
             filtered = self.get_stage_result(run_id, "FILTER_AND_SELECT")["value"]
             coverage = filtered.get("result", {}).get("coverage", {})
+            candidate_ranking = filtered.get("result", {}).get("ranking", [])[:200]
         except KeyError:
             pass
         aliases: list[dict[str, Any]] = []
@@ -762,8 +764,10 @@ class LandscapeDatabase:
                     ("selected_count", 0),
                     ("truncated_count", 0),
                     ("excluded_counts", {}),
+                    ("company_patent_counts", []),
                 )
             },
+            "candidate_ranking": candidate_ranking,
             "hit_stats": [dict(row) for row in hit_rows],
         }
 

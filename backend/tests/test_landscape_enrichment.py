@@ -7,12 +7,13 @@ from datetime import date
 from pathlib import Path
 
 from idea.config import load_config
+from idea.merge import merge_hits
 from idea.model_client import StructuredModelClient
 from idea.providers.base import FetchRequest, FetchedDocument, ProviderResult, SearchHit, SearchProvider
 from landscape.database import LandscapeDatabase
 from landscape.execution import LandscapeExecutionService
 from landscape.reporting import LandscapeReportService
-from landscape.schemas import AnalysisMode, LandscapeScope
+from landscape.schemas import AnalysisBudget, AnalysisMode, LandscapeScope
 from landscape.store import LandscapeRunStore
 
 
@@ -90,6 +91,112 @@ class LandscapeEnrichmentTests(unittest.TestCase):
             self.assertIn("US1A1", service.prefetched_documents["run-1"])
             self.assertEqual(provider.fetch_calls, 1)
             self.assertEqual(service.enrichment_stats["run-1"]["reused_hit_count"], 1)
+
+    def test_fetch_details_backfills_failed_primary_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = LandscapeDatabase(root / "landscape.db")
+            database.initialize()
+            store = LandscapeRunStore(root / "runs")
+            provider = EnrichmentProvider()
+            service = LandscapeExecutionService(
+                database=database,
+                store=store,
+                model=StructuredModelClient(load_config().model),
+                providers=[provider],
+                provider_timeout_seconds={"fixture_enrichment": 1},
+                analysis_concurrency=1,
+                report_service=LandscapeReportService(database, store),
+            )
+            scope = LandscapeScope(
+                mode=AnalysisMode.TECHNOLOGY,
+                technology_direction="液冷",
+                publication_start=date(2026, 4, 1),
+                publication_end=date(2026, 6, 30),
+                budget=AnalysisBudget(
+                    candidate_limit=10,
+                    analysis_limit=3,
+                    per_query_limit=10,
+                ),
+            )
+            run = database.create_run(
+                scope=scope,
+                model="fixture",
+                workflow_version="1.0.0",
+                prompt_version="1.0.0",
+            )
+            database.put_stage_result(
+                run["run_id"],
+                "PLAN_SEARCH",
+                {
+                    "plan": {
+                        "direction_terms": ["液冷"],
+                        "direction_english_terms": ["liquid cooling"],
+                        "queries": [
+                            {
+                                "query_text": "液冷专利",
+                                "language": "zh",
+                                "rationale": "中文检索",
+                            },
+                            {
+                                "query_text": "liquid cooling patent",
+                                "language": "en",
+                                "rationale": "英文检索",
+                            },
+                        ],
+                    },
+                    "competitor_aliases": [],
+                },
+            )
+            hits = [
+                SearchHit(
+                    provider="fixture_enrichment",
+                    provider_rank=index,
+                    title=f"液冷专利 {index}",
+                    url=f"https://example.test/{index}",
+                    publication_number=f"US{index}A1",
+                    publication_date="2026-05-01",
+                    assignee="Example",
+                )
+                for index in range(1, 6)
+            ]
+            candidates = merge_hits([("LQ-1", hits)])
+            database.put_stage_result(
+                run["run_id"],
+                "FILTER_AND_SELECT",
+                {
+                    "result": {
+                        "candidates": [
+                            candidate.model_dump(mode="json")
+                            for candidate in candidates
+                        ]
+                    }
+                },
+            )
+
+            async def fetch_batch(_run_id, batch):
+                documents = {}
+                failures = {}
+                for candidate in batch:
+                    publication = candidate.publication_number
+                    if publication == "US1A1":
+                        failures[publication] = "fixture failure"
+                    else:
+                        documents[publication] = FetchedDocument(
+                            provider="fixture_enrichment",
+                            publication_number=publication,
+                            title=candidate.title,
+                            url=candidate.urls[0],
+                        )
+                return documents, failures
+
+            service._fetch_documents = fetch_batch
+            result = asyncio.run(service.fetch_details(run["run_id"]))
+            self.assertEqual(result["target_count"], 3)
+            self.assertEqual(len(result["fetched_publications"]), 3)
+            self.assertEqual(len(result["attempted_publications"]), 4)
+            self.assertEqual(result["backfilled_count"], 1)
+            self.assertEqual(result["failures"], {"US1A1": "fixture failure"})
 
 
 if __name__ == "__main__":

@@ -47,6 +47,21 @@ class LandscapeFrontendContractTests(unittest.TestCase):
         self.assertIn("getUTCFullYear", self.javascript)
         self.assertIn("getUTCDate", self.javascript)
 
+    def test_v2_report_renders_company_counts_cluster_metadata_and_family_status(self) -> None:
+        for fragment in (
+            "company_patent_counts",
+            "各公司专利数量",
+            "统计口径：时间与友商条件过滤后",
+            "cluster.members",
+            "member.competitor",
+            "member.filing_date",
+            "patent.family_status",
+            "全族状态",
+            "overall_legal_status",
+        ):
+            self.assertIn(fragment, self.javascript)
+        self.assertNotIn("申请日趋势", self.javascript)
+
 
 if __name__ == "__main__":
     unittest.main()

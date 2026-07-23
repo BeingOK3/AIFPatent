@@ -15,7 +15,9 @@ from landscape.schemas import (
 )
 from landscape.search import (
     assignee_matches_confirmed_competitor,
+    balanced_analysis_selection,
     execute_provider_queries,
+    matched_competitor_name,
     scoped_provider_query_text,
     strict_filter_and_select,
 )
@@ -153,6 +155,47 @@ class LandscapeSearchTests(unittest.TestCase):
         self.assertEqual(result.coverage.selected_count, 10)
         self.assertEqual(result.coverage.truncated_count, 1)
         self.assertEqual(result.candidates[0].query_ids, ["LQ-1", "LQ-2"])
+        self.assertEqual(result.coverage.company_patent_counts[0].patent_count, 11)
+        self.assertEqual(result.coverage.company_patent_counts[0].company, "Example Corp")
+        self.assertEqual(len(result.ranking), 11)
+        self.assertTrue(result.ranking[0].selected)
+        self.assertGreater(result.ranking[0].query_coverage, result.ranking[1].query_coverage)
+
+    def test_company_counts_use_competitor_primary_name_and_deep_order_is_balanced(self) -> None:
+        scope = LandscapeScope(
+            mode=AnalysisMode.COMPETITOR,
+            competitors=[
+                CompetitorInput(name="Huawei", aliases=["华为"]),
+                CompetitorInput(name="Vertiv", aliases=["维谛"]),
+            ],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+            budget=AnalysisBudget(candidate_limit=10, analysis_limit=4),
+        )
+        batches = [
+            (
+                "LQ-1",
+                [
+                    hit(1, "CN-1-A", "2026-05-01", assignee="华为技术有限公司"),
+                    hit(2, "CN-2-A", "2026-05-02", assignee="华为技术有限公司"),
+                    hit(3, "CN-3-A", "2026-05-03", assignee="华为技术有限公司"),
+                    hit(4, "US-4-A1", "2026-05-04", assignee="Vertiv Corporation"),
+                    hit(5, "US-5-A1", "2026-05-05", assignee="Vertiv Corporation"),
+                ],
+            )
+        ]
+        result = strict_filter_and_select(batches, scope=scope)
+        counts = {
+            item.company: item.patent_count
+            for item in result.coverage.company_patent_counts
+        }
+        self.assertEqual(counts, {"Huawei": 3, "Vertiv": 2})
+        self.assertEqual(matched_competitor_name("华为技术有限公司", scope), "Huawei")
+        ordered = balanced_analysis_selection(result.candidates, scope=scope)
+        self.assertEqual(
+            [matched_competitor_name(item.assignee, scope) for item in ordered[:4]],
+            ["Huawei", "Vertiv", "Huawei", "Vertiv"],
+        )
 
     def test_combined_mode_enforces_competitor_assignee_filter(self) -> None:
         scope = LandscapeScope(

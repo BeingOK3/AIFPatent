@@ -134,7 +134,28 @@ class LandscapeDatabaseTests(unittest.TestCase):
             run["run_id"],
             "FILTER_AND_SELECT",
             {
-                "result": {"coverage": {"provider_statuses": {"LQ-1:fixture": "ERROR"}}},
+                "result": {
+                    "coverage": {
+                        "provider_statuses": {"LQ-1:fixture": "ERROR"},
+                        "company_patent_counts": [
+                            {
+                                "company": "Example",
+                                "patent_count": 1,
+                                "share": 1.0,
+                                "source": "PROVIDER_ASSIGNEE",
+                            }
+                        ],
+                    },
+                    "ranking": [
+                        {
+                            "publication_number": "CN1A",
+                            "company": "Example",
+                            "score": 0.9,
+                            "selected": True,
+                            "reasons": ["命中 2 个检索式"],
+                        }
+                    ],
+                },
                 "enrichment": {"missing_hit_count": 2, "unique_publication_count": 1},
             },
         )
@@ -159,6 +180,8 @@ class LandscapeDatabaseTests(unittest.TestCase):
         self.assertEqual(snapshot["provider_attempts"][0]["error_code"], "HTTP_429")
         self.assertEqual(snapshot["provider_attempts"][0]["hit_count"], 1)
         self.assertEqual(snapshot["enrichment"]["unique_publication_count"], 1)
+        self.assertEqual(snapshot["coverage"]["company_patent_counts"][0]["patent_count"], 1)
+        self.assertEqual(snapshot["candidate_ranking"][0]["publication_number"], "CN1A")
         self.assertIn("data center liquid cooling", str(snapshot["technical_direction_expansion"]))
         self.assertNotIn("raw", snapshot["hit_stats"][0])
         self.assertNotIn("large_provider_payload", str(snapshot))

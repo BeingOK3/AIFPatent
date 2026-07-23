@@ -4,7 +4,6 @@ import csv
 import io
 import re
 from collections import Counter
-from datetime import date
 from typing import Any
 
 from idea.providers.base import FetchedDocument
@@ -26,17 +25,14 @@ def build_report(
     searched_competitor_aliases: list[dict[str, Any]] | None = None,
     technical_direction_expansion: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    filing_trend: Counter[str] = Counter()
     publication_jurisdictions: Counter[str] = Counter()
     patents = []
     for publication, analysis in analyses.items():
         document = documents[publication]
-        filing_month = _month(document.filing_date)
-        if filing_month:
-            filing_trend[filing_month] += 1
         jurisdiction = _jurisdiction(publication)
         if jurisdiction:
             publication_jurisdictions[jurisdiction] += 1
+        family_status = _family_status(document)
         patents.append(
             {
                 "publication_number": publication,
@@ -47,14 +43,31 @@ def build_report(
                 "current_assignee": document.assignee,
                 "current_assignee_source": document.provider if document.assignee else None,
                 "family_id": document.family_id,
-                "family_data_status": "PARTIAL" if document.family_id else "UNAVAILABLE",
-                "confirmed_family_jurisdictions": [jurisdiction] if jurisdiction else [],
+                "family_status": family_status,
+                "family_data_status": family_status["data_status"],
+                "confirmed_family_jurisdictions": family_status["jurisdictions"],
                 "analysis": analysis.model_dump(mode="json"),
             }
         )
     patents.sort(key=lambda item: (item["publication_date"] or "", item["publication_number"]), reverse=True)
+    patent_by_publication = {
+        patent["publication_number"]: patent for patent in patents
+    }
+    aliases = searched_competitor_aliases or []
+    enriched_clusters = []
+    for cluster in clusters.clusters if clusters else []:
+        cluster_dict = cluster.model_dump(mode="json")
+        cluster_dict["members"] = [
+            _cluster_member(
+                publication,
+                patent_by_publication.get(publication),
+                aliases,
+            )
+            for publication in cluster.publication_numbers
+        ]
+        enriched_clusters.append(cluster_dict)
     return {
-        "schema_version": "landscape-report/1.0.0",
+        "schema_version": "landscape-report/1.1.0",
         "run_id": run["run_id"],
         "scope": run["scope_json"],
         "model": run["model"],
@@ -65,11 +78,11 @@ def build_report(
             "candidate_count": coverage.get("unique_candidate_count", 0),
             "analyzed_count": len(analyses),
             "failed_analysis_count": len(failures),
-            "filing_date_trend": dict(sorted(filing_trend.items())),
+            "company_patent_counts": coverage.get("company_patent_counts", []),
             "publication_jurisdictions": dict(sorted(publication_jurisdictions.items())),
             "cluster_count": len(clusters.clusters) if clusters else 0,
         },
-        "clusters": clusters.model_dump(mode="json")["clusters"] if clusters else [],
+        "clusters": enriched_clusters,
         "patents": patents,
         "failures": failures,
         "limitations": limitations,
@@ -86,13 +99,16 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- 成功精读：{summary['analyzed_count']}",
         f"- 技术聚类：{summary['cluster_count']}",
         "",
-        "## 申请日趋势",
+        "## 公司专利数量",
         "",
     ]
-    trend = summary["filing_date_trend"]
-    lines.extend(f"- {month}：{count}" for month, count in trend.items())
-    if not trend:
-        lines.append("- 无可用申请日数据")
+    company_counts = summary.get("company_patent_counts", [])
+    lines.extend(
+        f"- {item['company']}：{item['patent_count']}"
+        for item in company_counts
+    )
+    if not company_counts:
+        lines.append("- 无可用权利人数据")
     lines.extend(["", "## 国家/地区布局", ""])
     jurisdictions = summary["publication_jurisdictions"]
     lines.extend(f"- {country}：{count}" for country, count in jurisdictions.items())
@@ -106,15 +122,25 @@ def render_markdown(report: dict[str, Any]) -> str:
                 "",
                 cluster["summary"],
                 "",
-                "、".join(cluster["publication_numbers"]),
-                "",
             ]
         )
+        for member in cluster.get("members", []):
+            lines.append(
+                "- {publication_number}｜{company}｜申请日 {filing_date}".format(
+                    publication_number=member["publication_number"],
+                    company=member.get("competitor")
+                    or member.get("current_assignee")
+                    or "未知权利人",
+                    filing_date=member.get("filing_date") or "未知",
+                )
+            )
+        lines.append("")
     if not report["clusters"]:
         lines.extend(["- 未形成聚类", ""])
     lines.extend(["## 逐件精读", ""])
     for patent in report["patents"]:
         analysis = patent["analysis"]
+        family = patent.get("family_status", {})
         lines.extend(
             [
                 f"### {patent['publication_number']} {patent['title']}",
@@ -123,7 +149,9 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"- 申请日：{patent['filing_date'] or '未知'}",
                 f"- 公开日：{patent['publication_date'] or '未知'}",
                 f"- 当前权利人：{patent['current_assignee'] or '未知'}",
-                f"- 同族数据：{patent['family_data_status']}",
+                f"- 全族数据：{family.get('data_status', patent['family_data_status'])}",
+                f"- 全族总体状态：{family.get('overall_legal_status', 'UNKNOWN')}",
+                f"- 全族法域：{'、'.join(family.get('jurisdictions', [])) or '未知'}",
                 "",
                 f"**现有技术：** {analysis['prior_art']}",
                 "",
@@ -137,6 +165,19 @@ def render_markdown(report: dict[str, Any]) -> str:
                 "",
             ]
         )
+        for member in family.get("members", []):
+            lines.append(
+                "- 同族成员：{application}｜{jurisdiction}｜{status}｜申请日 {filing_date}".format(
+                    application=member.get("application_number")
+                    or member.get("publication_number")
+                    or "未知编号",
+                    jurisdiction=member.get("jurisdiction") or "未知法域",
+                    status=_member_status(member),
+                    filing_date=member.get("filing_date") or "未知",
+                )
+            )
+        if family.get("members"):
+            lines.append("")
     lines.extend(["## 限制与失败", ""])
     for limitation in report["limitations"]:
         lines.append(f"- {limitation.get('code', 'LIMITATION')}：{limitation.get('message', '')}")
@@ -154,6 +195,7 @@ def render_patents_csv(report: dict[str, Any]) -> str:
         [
             "publication_number", "application_number", "title", "filing_date",
             "publication_date", "current_assignee", "family_data_status",
+            "family_overall_legal_status", "family_jurisdictions", "family_members",
             "core_invention_points", "beneficial_effects",
         ]
     )
@@ -163,6 +205,18 @@ def render_patents_csv(report: dict[str, Any]) -> str:
                 patent["publication_number"], patent["application_number"] or "",
                 patent["title"], patent["filing_date"] or "", patent["publication_date"] or "",
                 patent["current_assignee"] or "", patent["family_data_status"],
+                patent.get("family_status", {}).get("overall_legal_status", "UNKNOWN"),
+                "；".join(patent.get("family_status", {}).get("jurisdictions", [])),
+                "；".join(
+                    "{application_number}|{jurisdiction}|{legal_status}".format(
+                        application_number=item.get("application_number")
+                        or item.get("publication_number")
+                        or "",
+                        jurisdiction=item.get("jurisdiction") or "",
+                        legal_status=_member_status(item),
+                    )
+                    for item in patent.get("family_status", {}).get("members", [])
+                ),
                 "；".join(patent["analysis"]["core_invention_points"]),
                 "；".join(patent["analysis"]["beneficial_effects"]),
             ]
@@ -199,15 +253,170 @@ class LandscapeReportService:
         return manifest
 
 
-def _month(value: str | None) -> str | None:
-    if not value:
-        return None
-    try:
-        return date.fromisoformat(value[:10]).strftime("%Y-%m")
-    except ValueError:
-        return None
-
-
 def _jurisdiction(publication_number: str) -> str | None:
     match = re.match(r"^([A-Z]{2})", publication_number.upper())
     return match.group(1) if match else None
+
+
+def _cluster_member(
+    publication: str,
+    patent: dict[str, Any] | None,
+    aliases: list[dict[str, Any]],
+) -> dict[str, Any]:
+    patent = patent or {}
+    assignee = patent.get("current_assignee")
+    return {
+        "publication_number": publication,
+        "competitor": _matched_competitor(assignee, aliases),
+        "current_assignee": assignee,
+        "filing_date": patent.get("filing_date"),
+    }
+
+
+def _matched_competitor(
+    assignee: str | None, aliases: list[dict[str, Any]]
+) -> str | None:
+    normalized_assignee = _normalized_company(assignee)
+    if not normalized_assignee:
+        return None
+    for item in aliases:
+        names = [
+            item.get("primary_name"),
+            *item.get("aliases", []),
+            *item.get("searched_aliases", []),
+        ]
+        for name in names:
+            normalized_name = _normalized_company(name)
+            if not normalized_name:
+                continue
+            if any("\u3400" <= char <= "\u9fff" for char in normalized_name):
+                matched = normalized_name in normalized_assignee
+            else:
+                matched = re.search(
+                    rf"(?<![a-z0-9]){re.escape(normalized_name)}(?![a-z0-9])",
+                    normalized_assignee,
+                )
+            if matched:
+                return str(item.get("primary_name") or name)
+    return None
+
+
+def _normalized_company(value: str | None) -> str:
+    return " ".join((value or "").casefold().split())
+
+
+def _family_status(document: FetchedDocument) -> dict[str, Any]:
+    raw_applications = document.raw_metadata.get("worldwide_applications") or {}
+    members: list[dict[str, Any]] = []
+    if isinstance(raw_applications, dict):
+        for year, applications in raw_applications.items():
+            if not isinstance(applications, list):
+                continue
+            for application in applications:
+                if not isinstance(application, dict):
+                    continue
+                jurisdiction = (
+                    application.get("country_code")
+                    or application.get("jurisdiction")
+                    or application.get("country")
+                )
+                legal_status_category = (
+                    application.get("legal_status_category")
+                    or application.get("legal_status_cat")
+                )
+                legal_status = (
+                    application.get("legal_status")
+                    or application.get("status")
+                    or legal_status_category
+                )
+                members.append(
+                    {
+                        "jurisdiction": str(jurisdiction) if jurisdiction else None,
+                        "application_number": application.get("application_number"),
+                        "publication_number": application.get("publication_number"),
+                        "filing_date": application.get("filing_date"),
+                        "year": str(year),
+                        "legal_status_category": str(legal_status_category).upper()
+                        if legal_status_category
+                        else "UNKNOWN",
+                        "legal_status": str(legal_status).upper()
+                        if legal_status
+                        else "UNKNOWN",
+                        "is_current_application": _same_identifier(
+                            application.get("application_number"),
+                            document.application_number,
+                        ),
+                    }
+                )
+    fallback_jurisdiction = _jurisdiction(document.publication_number)
+    jurisdictions = sorted(
+        {
+            member["jurisdiction"]
+            for member in members
+            if member.get("jurisdiction")
+        }
+        | ({fallback_jurisdiction} if fallback_jurisdiction else set())
+    )
+    statuses = {
+        " ".join(
+            (
+                member["legal_status_category"],
+                member["legal_status"],
+            )
+        )
+        for member in members
+        if member["legal_status"] != "UNKNOWN"
+        or member["legal_status_category"] != "UNKNOWN"
+    }
+    active = any(
+        marker in status
+        for status in statuses
+        for marker in ("ACTIVE", "PENDING", "GRANTED")
+    )
+    inactive = any(
+        marker in status
+        for status in statuses
+        for marker in ("INACTIVE", "EXPIRED", "ABANDONED", "REVOKED", "LAPSED", "DEAD")
+    )
+    if active and inactive:
+        overall = "MIXED"
+    elif active:
+        overall = "ACTIVE"
+    elif inactive:
+        overall = "INACTIVE"
+    else:
+        overall = "UNKNOWN"
+    has_family_data = bool(members)
+    return {
+        "data_status": "PARTIAL" if has_family_data else "UNAVAILABLE",
+        "coverage_note": (
+            "仅展示当前数据源返回的已确认同族成员，不能据此认定全球同族完整。"
+            if has_family_data
+            else "当前数据源未返回可核验的同族信息。"
+        ),
+        "family_id": document.family_id,
+        "overall_legal_status": overall,
+        "jurisdictions": jurisdictions,
+        "members": sorted(
+            members,
+            key=lambda item: (
+                item.get("jurisdiction") or "",
+                item.get("application_number") or "",
+            ),
+        ),
+    }
+
+
+def _same_identifier(left: Any, right: Any) -> bool:
+    normalize = lambda value: "".join(
+        character for character in str(value or "").upper() if character.isalnum()
+    )
+    normalized_left = normalize(left)
+    return bool(normalized_left and normalized_left == normalize(right))
+
+
+def _member_status(member: dict[str, Any]) -> str:
+    category = member.get("legal_status_category")
+    if category and category != "UNKNOWN":
+        return str(category)
+    return str(member.get("legal_status") or "UNKNOWN")
