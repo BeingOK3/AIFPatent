@@ -268,3 +268,15 @@
 - 实测：相同 2026-04-27 至 2026-07-27 窗口下，多别名申请人参数返回 0 条，单一 `assignee:"NVIDIA"` 和普通 `NVIDIA` 查询均返回 50 条。
 - 决策：仅友商模式使用普通名称 OR 组召回，之后继续按返回的申请人字段严格别名过滤；同时区分 `SEARCH_EMPTY` 与“有命中但无合格结果”。
 - 文档：详见 `competitor-alias-empty-result-repair.md`；代码、回归、真实 Run 和容器验收作为第 28 个工作单元。
+
+## 2026-07-27 — LANDSCAPE-COMPETITOR-EMPTY-CORE-028
+
+- 类型：友商别名 OR 召回和空结果语义修复。
+- 查询：仅友商模式从多个 `assignee:` 值改为一条普通名称 OR 组；联合模式、技术方向模式和一家公司一条检索式的 V3 规则保持不变。
+- 严格范围：普通名称查询只扩大 Provider 召回，正式候选仍必须通过当前申请人与主名称/确认别名匹配、公开日窗口和公开号门禁。
+- 报告：新增 `SEARCH_EMPTY`，明确所有已执行 Provider 均为空；新增 `NO_ELIGIBLE_PATENTS`，区分“有原始命中但全部被范围过滤”。Provider 网络、额度或鉴权问题继续单独输出 `PROVIDER_FAILURE`。
+- 回归：Landscape 55 项测试和 SerpAPI/配置/容器契约/前端/健康/日志安全/合并相关 51 项测试通过；Python 编译、Node 语法和 `git diff --check` 通过。
+- 容器：最新源码镜像重建成功，App、PostgreSQL、Redis、MinIO 全部 healthy。
+- 真实检索：修复后同一英伟达别名组、同一 2026-04-27 至 2026-07-27 窗口返回 `SUCCESS`，原始命中 50、严格合格 26、唯一候选 26、公司归并为“英伟达”；样例当前权利人均为 `Nvidia Corporation`。
+- 不可变性：旧 Run `71b23172-67b7-4905-b9e8-cd0d7a6bd41d` 保留原始空结果证据，不回填或改写；用户需从页面新建或重跑以使用新查询。
+- Git：本实现作为第 28 个工作单元，与第 27 个设计提交组成一对，推送 `origin/develop`。

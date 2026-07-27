@@ -11,7 +11,7 @@ from idea.merge import merge_hits
 from idea.model_client import StructuredModelClient
 from idea.providers.base import FetchRequest, FetchedDocument, ProviderResult, SearchHit, SearchProvider
 from landscape.database import LandscapeDatabase
-from landscape.execution import LandscapeExecutionService
+from landscape.execution import LandscapeExecutionService, coverage_limitations
 from landscape.reporting import LandscapeReportService
 from landscape.schemas import AnalysisBudget, AnalysisMode, LandscapeScope
 from landscape.store import LandscapeRunStore
@@ -48,6 +48,29 @@ class EnrichmentProvider(SearchProvider):
 
 
 class LandscapeEnrichmentTests(unittest.TestCase):
+    def test_empty_search_and_filtered_empty_have_distinct_limitations(self) -> None:
+        empty = coverage_limitations(
+            {
+                "raw_hit_count": 0,
+                "unique_candidate_count": 0,
+                "truncated_count": 0,
+                "excluded_counts": {},
+                "provider_statuses": {"LQ-1:serpapi_google_patents": "EMPTY"},
+            }
+        )
+        self.assertEqual(empty[0]["code"], "SEARCH_EMPTY")
+        filtered = coverage_limitations(
+            {
+                "raw_hit_count": 5,
+                "unique_candidate_count": 0,
+                "truncated_count": 0,
+                "excluded_counts": {"COMPETITOR_NOT_CONFIRMED": 5},
+                "provider_statuses": {"LQ-1:serpapi_google_patents": "SUCCESS"},
+            }
+        )
+        self.assertEqual(filtered[0]["code"], "NO_ELIGIBLE_PATENTS")
+        self.assertEqual(filtered[1]["code"], "COMPETITOR_NOT_CONFIRMED")
+
     def test_missing_search_date_is_recovered_only_from_detail(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

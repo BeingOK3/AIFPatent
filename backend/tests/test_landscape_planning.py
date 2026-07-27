@@ -91,6 +91,14 @@ class LandscapePlanningTests(unittest.TestCase):
             self.assertEqual(
                 sum(competitor.name in item.query_text for item in plan.queries), 1
             )
+            matching = [
+                item.query_text
+                for item in plan.queries
+                if competitor.name in item.query_text
+            ]
+            self.assertNotIn("assignee:", matching[0])
+            for name in [competitor.name, *competitor.aliases]:
+                self.assertIn(f'"{name}"', matching[0])
         validate_query_plan_scope(plan, scope)
 
     def test_combined_mode_plan_must_retain_both_anchors(self) -> None:

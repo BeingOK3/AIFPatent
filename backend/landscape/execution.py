@@ -337,14 +337,7 @@ class LandscapeExecutionService:
         try:
             filtered = self.database.get_stage_result(run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value)["value"]["result"]
             coverage = filtered["coverage"]
-            if coverage["truncated_count"]:
-                limitations.append({"code": "CANDIDATE_LIMIT", "message": f"候选集合超出预算，截断 {coverage['truncated_count']} 件。"})
-            for key, count in coverage.get("excluded_counts", {}).items():
-                if count:
-                    limitations.append({"code": key, "message": f"严格范围过滤排除 {count} 条命中。"})
-            failed_providers = [key for key, status in coverage.get("provider_statuses", {}).items() if status not in {"SUCCESS", "EMPTY"}]
-            if failed_providers:
-                limitations.append({"code": "PROVIDER_FAILURE", "message": "部分 Provider 不可用：" + ", ".join(failed_providers)})
+            limitations.extend(coverage_limitations(coverage))
         except KeyError:
             pass
         try:
@@ -552,6 +545,52 @@ class LandscapeExecutionService:
     @staticmethod
     def query_key(run_id: str, index: int) -> str:
         return f"{run_id}:LQ-{index}"
+
+
+def coverage_limitations(coverage: dict[str, Any]) -> list[dict[str, str]]:
+    limitations: list[dict[str, str]] = []
+    raw_hit_count = int(coverage.get("raw_hit_count", 0))
+    unique_candidate_count = int(coverage.get("unique_candidate_count", 0))
+    statuses = list(coverage.get("provider_statuses", {}).values())
+    if statuses and all(status == "EMPTY" for status in statuses):
+        limitations.append(
+            {
+                "code": "SEARCH_EMPTY",
+                "message": "已启用的检索 Provider 未返回任何原始专利命中。",
+            }
+        )
+    elif raw_hit_count > 0 and unique_candidate_count == 0:
+        limitations.append(
+            {
+                "code": "NO_ELIGIBLE_PATENTS",
+                "message": "检索有返回，但没有专利同时满足公开日和友商范围。",
+            }
+        )
+    if coverage.get("truncated_count"):
+        limitations.append(
+            {
+                "code": "CANDIDATE_LIMIT",
+                "message": f"候选集合超出预算，截断 {coverage['truncated_count']} 件。",
+            }
+        )
+    for key, count in coverage.get("excluded_counts", {}).items():
+        if count:
+            limitations.append(
+                {"code": key, "message": f"严格范围过滤排除 {count} 条命中。"}
+            )
+    failed_providers = [
+        key
+        for key, status in coverage.get("provider_statuses", {}).items()
+        if status not in {"SUCCESS", "EMPTY"}
+    ]
+    if failed_providers:
+        limitations.append(
+            {
+                "code": "PROVIDER_FAILURE",
+                "message": "部分 Provider 不可用：" + ", ".join(failed_providers),
+            }
+        )
+    return limitations
 
 
 def document_id(publication: str) -> str:

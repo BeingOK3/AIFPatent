@@ -182,11 +182,9 @@ def build_deterministic_query_plan(
             else:
                 candidates.append(
                     (
-                        _bounded_or(
-                            names, prefix="assignee:", max_names=8, max_chars=440
-                        ),
+                        name_group,
                         _language(name_group),
-                        f"友商申请人名称组：{competitor.name}",
+                        f"友商中英文别名组：{competitor.name}",
                     )
                 )
     else:
