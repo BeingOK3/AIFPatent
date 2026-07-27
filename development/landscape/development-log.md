@@ -259,3 +259,12 @@
 - 验证：Landscape 54 项测试和 Provider/配置/容器契约/前端/健康/日志安全/合并相关 51 项测试通过；Python 编译、Node 语法和 `git diff --check` 通过。
 - 容器：应用镜像使用本次源码重建，App、PostgreSQL、Redis、MinIO 全部 healthy；`/api/health` 与 `/landscape` 可访问，容器静态资源已包含 `analysis_selection` 和“同族法域”。
 - Git：本实现作为第 26 个工作单元，与第 25 个设计提交组成一对，推送 `origin/develop`。
+
+## 2026-07-27 — LANDSCAPE-COMPETITOR-EMPTY-DESIGN-027
+
+- 类型：友商多别名导致 SerpAPI 空结果的运行事故与修复设计。
+- 现场：最新英伟达 Run `71b23172-67b7-4905-b9e8-cd0d7a6bd41d` 在 15 秒内完成 8 步，但 SerpAPI 唯一调用为 `EMPTY`，原始命中、候选和精读均为 0。
+- 根因：仅友商计划把同一主体的中文名、英文名、公司全称和简称全部转换为多个 SerpAPI `assignee` 参数值，真实语义过度收窄，并非别名 OR。
+- 实测：相同 2026-04-27 至 2026-07-27 窗口下，多别名申请人参数返回 0 条，单一 `assignee:"NVIDIA"` 和普通 `NVIDIA` 查询均返回 50 条。
+- 决策：仅友商模式使用普通名称 OR 组召回，之后继续按返回的申请人字段严格别名过滤；同时区分 `SEARCH_EMPTY` 与“有命中但无合格结果”。
+- 文档：详见 `competitor-alias-empty-result-repair.md`；代码、回归、真实 Run 和容器验收作为第 28 个工作单元。

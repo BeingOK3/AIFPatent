@@ -26,5 +26,6 @@
 - `acceptance.md`：真实 Run、容器、凭证和已知限制验收结论。
 - `selection-report-v2-design.md`：已落地的唯一全集统计、候选/精读选样和报告 1.1 契约。
 - `query-selection-v3-design.md`：中英文合并检索式、公司数量加权和同族覆盖优先的增量设计。
+- `competitor-alias-empty-result-repair.md`：友商多别名被错误组合为申请人过滤条件所导致空结果的修复设计。
 - `serpapi-provider-design.md`：已落地的 SerpAPI 检索、详情、凭证和配额边界。
 - `network-provider-incident.md`：网络与 Provider 故障诊断及修复记录。
