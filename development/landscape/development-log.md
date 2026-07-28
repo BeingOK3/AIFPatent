@@ -2,6 +2,18 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-FAMILY-IDENTITY-RANKING-022
+
+- 类型：过滤后专利身份组、稳定代表项和场景化排序口径。
+- 集合：新增唯一公开文本 `P`；分析集合 `U` 按一致 Family ID、申请号、公开号依次保守聚合，并保存全部成员公开号。
+- 确定性：代表项优先 A 类公开文本，再按规范化公开号排序；Query/Provider/返回顺序不得改变 Candidate 身份。
+- 冲突：同一公开号或申请号映射多个 Family ID 时撤销冲突身份并隔离，禁止并查集传递式过度合并。
+- 统计：区分确认 Family、申请号组、公开号保守项和身份冲突；排名按分析模式使用技术相关度、同族布局、固定排名、时间活跃度和真实共识加分。
+- 边界：缺 Family 身份不会触发全文抓取；只有缺公开日才执行既有有界详情补全并顺便补充身份。
+- 涉及文件：Search/Execution/Report/Frontend、规范、过滤/补全/报告/前端测试和两份追加式日志。
+- 验证：Landscape 全量 142 项通过；compileall、`git diff --check` 通过；零模型调用。
+- 未完成：生产 Graph 仍未使用公司 `Send` fan-out；下一工作单元先解决当前 LangGraph 动态调度兼容。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-EXECUTION-RECOVERY-021
 
 - 类型：单公司分类、Profile、PostgreSQL 持久化与恢复跳过的执行边界。

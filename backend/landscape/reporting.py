@@ -67,7 +67,7 @@ def build_report(
         ]
         enriched_clusters.append(cluster_dict)
     return {
-        "schema_version": "landscape-report/1.1.0",
+        "schema_version": "landscape-report/1.2.0",
         "run_id": run["run_id"],
         "scope": run["scope_json"],
         "model": run["model"],
@@ -76,6 +76,14 @@ def build_report(
         "coverage": coverage,
         "summary": {
             "candidate_count": coverage.get("unique_candidate_count", 0),
+            "family_count": coverage.get(
+                "unique_family_count",
+                coverage.get("unique_candidate_count", 0),
+            ),
+            "publication_count": coverage.get(
+                "unique_publication_count",
+                coverage.get("unique_candidate_count", 0),
+            ),
             "analyzed_count": len(analyses),
             "failed_analysis_count": len(failures),
             "company_patent_counts": coverage.get("company_patent_counts", []),
@@ -95,11 +103,12 @@ def render_markdown(report: dict[str, Any]) -> str:
         "# 专利态势分析报告",
         "",
         f"- Run：`{report['run_id']}`",
-        f"- 候选专利：{summary['candidate_count']}",
-        f"- 成功精读：{summary['analyzed_count']}",
+        f"- 唯一合格专利族：{summary.get('family_count', summary['candidate_count'])}",
+        f"- 合格公开文本：{summary.get('publication_count', summary['candidate_count'])}",
+        f"- 成功精读专利族：{summary['analyzed_count']}",
         f"- 技术聚类：{summary['cluster_count']}",
         "",
-        "## 公司专利数量",
+        "## 公司专利族数量",
         "",
     ]
     company_counts = summary.get("company_patent_counts", [])

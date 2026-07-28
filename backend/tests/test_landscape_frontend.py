@@ -26,7 +26,7 @@ class LandscapeFrontendContractTests(unittest.TestCase):
             "/api/landscape/runs/", "/debug", "searched_competitor_aliases",
             "本次检索到的友商别名", "系统运行调试", "provider_statuses",
             "provider_attempts", "technical_direction_expansion", "中英文技术词",
-            "实际补全",
+            "日期详情补全",
         ):
             self.assertIn(fragment, self.javascript if fragment != "系统运行调试" else self.html)
         self.assertIn("debug-view", self.css)
@@ -50,7 +50,7 @@ class LandscapeFrontendContractTests(unittest.TestCase):
     def test_v2_report_renders_company_counts_cluster_metadata_and_family_status(self) -> None:
         for fragment in (
             "company_patent_counts",
-            "各公司专利数量",
+            "各公司专利族数量",
             "统计口径：时间与友商条件过滤后",
             "cluster.members",
             "member.competitor",

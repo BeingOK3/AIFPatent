@@ -70,6 +70,8 @@ class LandscapeReportingTests(unittest.TestCase):
         )
         coverage = {
             "unique_candidate_count": 3,
+            "unique_family_count": 3,
+            "unique_publication_count": 5,
             "company_patent_counts": [
                 {
                     "company": "Example Corp",
@@ -101,8 +103,10 @@ class LandscapeReportingTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(report["schema_version"], "landscape-report/1.1.0")
+        self.assertEqual(report["schema_version"], "landscape-report/1.2.0")
         self.assertNotIn("filing_date_trend", report["summary"])
+        self.assertEqual(report["summary"]["family_count"], 3)
+        self.assertEqual(report["summary"]["publication_count"], 5)
         self.assertEqual(report["summary"]["company_patent_counts"], coverage["company_patent_counts"])
         self.assertEqual(report["clusters"][0]["members"][0]["competitor"], "Example Corp")
         self.assertEqual(report["clusters"][0]["members"][0]["filing_date"], "2025-02-01")
@@ -114,7 +118,7 @@ class LandscapeReportingTests(unittest.TestCase):
         self.assertTrue(family["members"][1]["is_current_application"])
 
         markdown = render_markdown(report)
-        self.assertIn("## 公司专利数量", markdown)
+        self.assertIn("## 公司专利族数量", markdown)
         self.assertNotIn("申请日趋势", markdown)
         self.assertIn("US123A1｜Example Corp｜申请日 2025-02-01", markdown)
         self.assertIn("全族总体状态：MIXED", markdown)

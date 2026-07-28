@@ -41,6 +41,8 @@ class EnrichmentProvider(SearchProvider):
         return FetchedDocument(
             provider=self.name,
             publication_number=request.publication_number or "US1A1",
+            application_number="US-APP-1",
+            family_id="FAMILY-1",
             title="补全后的液冷专利",
             filing_date="2026-05-01",
             publication_date="2026-06-15",
@@ -299,9 +301,58 @@ class LandscapeEnrichmentTests(unittest.TestCase):
             )
             self.assertEqual(enriched[0].hits[0].publication_date, "2026-06-15")
             self.assertEqual(enriched[1].hits[0].publication_date, "2026-06-15")
+            self.assertEqual(enriched[0].hits[0].application_number, "US-APP-1")
+            self.assertEqual(enriched[0].hits[0].family_id, "FAMILY-1")
             self.assertIn("US1A1", service.prefetched_documents["run-1"])
             self.assertEqual(provider.fetch_calls, 1)
             self.assertEqual(service.enrichment_stats["run-1"]["reused_hit_count"], 1)
+
+    def test_missing_family_identity_alone_does_not_fetch_full_text_during_filtering(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = LandscapeDatabase(root / "landscape.db")
+            database.initialize()
+            provider = EnrichmentProvider()
+            service = LandscapeExecutionService(
+                database=database,
+                store=LandscapeRunStore(root / "runs"),
+                model=StructuredModelClient(load_config().model),
+                providers=[provider],
+                provider_timeout_seconds={"fixture_enrichment": 1},
+                analysis_concurrency=1,
+                report_service=LandscapeReportService(
+                    database, LandscapeRunStore(root / "reports")
+                ),
+            )
+            result = ProviderResult(
+                provider="fixture_enrichment",
+                operation="search",
+                request_id="LQ-1",
+                status="SUCCESS",
+                duration_ms=0,
+                hits=[
+                    SearchHit(
+                        provider="fixture_enrichment",
+                        provider_rank=1,
+                        title="液冷",
+                        url="https://example.test/patent/US1A1",
+                        publication_number="US1A1",
+                        publication_date="2026-06-15",
+                    )
+                ],
+            )
+
+            enriched = asyncio.run(
+                service._enrich_missing_dates("run-1", [result])
+            )
+
+            self.assertEqual(enriched, [result])
+            self.assertEqual(provider.fetch_calls, 0)
+            self.assertEqual(
+                service.enrichment_stats["run-1"]["missing_family_identity_count"],
+                1,
+            )
+            self.assertEqual(service.enrichment_stats["run-1"]["attempted_count"], 0)
 
     def test_filter_persists_complete_u_before_candidate_limit_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

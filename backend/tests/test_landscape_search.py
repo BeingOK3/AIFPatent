@@ -17,6 +17,7 @@ from landscape.search import (
     assignee_matches_confirmed_competitor,
     execute_provider_queries,
     family_footprint,
+    family_publication_numbers,
     matched_competitor_name,
     scoped_provider_query_text,
     strict_filter_and_select,
@@ -117,7 +118,7 @@ class LandscapeSearchTests(unittest.TestCase):
         )
         self.assertEqual(
             [candidate.publication_number for candidate in result.candidates],
-            ["US1A1", "US2A1"],
+            ["US2A1", "US1A1"],
         )
         self.assertEqual(result.coverage.excluded_counts["PUBLICATION_DATE_OUTSIDE_WINDOW"], 1)
         self.assertEqual(result.coverage.excluded_counts["PUBLICATION_DATE_MISSING"], 1)
@@ -193,7 +194,7 @@ class LandscapeSearchTests(unittest.TestCase):
         self.assertEqual(result.candidates[0].query_ids, ["LQ-1", "LQ-2"])
         self.assertTrue(all(item.selected for item in result.ranking))
 
-    def test_deduplication_uses_only_normalized_publication_number(self) -> None:
+    def test_deduplication_aggregates_publications_with_shared_family_identity(self) -> None:
         result = strict_filter_and_select(
             [
                 (
@@ -223,31 +224,259 @@ class LandscapeSearchTests(unittest.TestCase):
                             "US 1 A1",
                             "2026-05-01",
                             assignee="Conflicting Corp",
-                            application_number="APP-OTHER",
-                            family_id="FAMILY-OTHER",
+                            application_number="APP-SHARED",
+                            family_id="FAMILY-SHARED",
                         )
                     ],
                 ),
             ],
             scope=self.technology_scope(),
         )
-        self.assertEqual(
-            {candidate.publication_number for candidate in result.candidates},
-            {"US1A1", "EP1A1"},
-        )
-        us = next(
-            candidate
-            for candidate in result.candidates
-            if candidate.publication_number == "US1A1"
-        )
-        self.assertEqual(us.query_ids, ["LQ-1", "LQ-2"])
+        self.assertEqual(len(result.candidates), 1)
+        family = result.candidates[0]
+        self.assertEqual(result.coverage.unique_publication_count, 2)
+        self.assertEqual(result.coverage.unique_family_count, 1)
+        self.assertEqual(family_publication_numbers(family), ["EP1A1", "US1A1"])
+        self.assertEqual(family_footprint(family), 2)
+        self.assertEqual(family.query_ids, ["LQ-1", "LQ-2"])
         self.assertEqual(
             {
                 source.raw["_landscape_assignee_observation"]
-                for source in us.sources
+                for source in family.sources
             },
             {"Example Corp", "Conflicting Corp"},
         )
+        self.assertEqual(result.coverage.identity_conflict_count, 0)
+
+    def test_conflicting_family_identity_is_isolated_instead_of_transitively_merged(
+        self,
+    ) -> None:
+        result = strict_filter_and_select(
+            [
+                (
+                    "LQ-1",
+                    [
+                        hit(
+                            1,
+                            "US-1-A1",
+                            "2026-05-01",
+                            application_number="APP-1",
+                            family_id="FAMILY-1",
+                        ),
+                        hit(
+                            2,
+                            "EP-1-A1",
+                            "2026-05-02",
+                            application_number="APP-EP",
+                            family_id="FAMILY-1",
+                        ),
+                    ],
+                ),
+                (
+                    "LQ-2",
+                    [
+                        hit(
+                            1,
+                            "US-1-A1",
+                            "2026-05-01",
+                            application_number="APP-2",
+                            family_id="FAMILY-2",
+                        ),
+                        hit(
+                            2,
+                            "CN-1-A",
+                            "2026-05-03",
+                            application_number="APP-CN",
+                            family_id="FAMILY-2",
+                        ),
+                    ],
+                ),
+            ],
+            scope=self.technology_scope(),
+        )
+
+        self.assertEqual(result.coverage.identity_conflict_count, 1)
+        self.assertEqual(len(result.candidates), 3)
+        self.assertEqual(
+            sorted(
+                family_publication_numbers(candidate)
+                for candidate in result.candidates
+            ),
+            [["CN1A"], ["EP1A1"], ["US1A1"]],
+        )
+
+    def test_application_identity_collapses_a1_and_b2_without_family_id(self) -> None:
+        result = strict_filter_and_select(
+            [
+                (
+                    "LQ-1",
+                    [
+                        hit(
+                            1,
+                            "US-123-A1",
+                            "2026-05-01",
+                            application_number="US-APP-123",
+                        ),
+                        hit(
+                            2,
+                            "US-123-B2",
+                            "2026-05-02",
+                            application_number="US-APP-123",
+                        ),
+                    ],
+                )
+            ],
+            scope=self.technology_scope(),
+        )
+        self.assertEqual(len(result.candidates), 1)
+        self.assertEqual(result.coverage.unique_publication_count, 2)
+        self.assertEqual(
+            family_publication_numbers(result.candidates[0]),
+            ["US123A1", "US123B2"],
+        )
+        self.assertEqual(
+            result.candidates[0].publication_number,
+            "US123A1",
+        )
+
+        reversed_result = strict_filter_and_select(
+            [
+                (
+                    "LQ-1",
+                    [
+                        hit(
+                            2,
+                            "US-123-B2",
+                            "2026-05-02",
+                            application_number="US-APP-123",
+                        ),
+                        hit(
+                            1,
+                            "US-123-A1",
+                            "2026-05-01",
+                            application_number="US-APP-123",
+                        ),
+                    ],
+                )
+            ],
+            scope=self.technology_scope(),
+        )
+        self.assertEqual(
+            reversed_result.candidates[0].model_dump(mode="json"),
+            result.candidates[0].model_dump(mode="json"),
+        )
+
+    def test_single_provider_ranking_rewards_family_breadth_without_fake_consensus(self) -> None:
+        scope = LandscapeScope(
+            mode=AnalysisMode.COMPETITOR,
+            competitors=[CompetitorInput(name="Example Corp")],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+        )
+        result = strict_filter_and_select(
+            [
+                (
+                    "LQ-1",
+                    [
+                        hit(
+                            1,
+                            "US-NARROW-A1",
+                            "2026-05-15",
+                            family_jurisdictions=["US"],
+                        ),
+                        hit(
+                            10,
+                            "US-WIDE-A1",
+                            "2026-05-15",
+                            family_jurisdictions=[
+                                "US", "EP", "CN", "JP", "KR", "WO", "CA", "AU"
+                            ],
+                        ),
+                    ],
+                )
+            ],
+            scope=scope,
+        )
+        self.assertEqual(result.candidates[0].publication_number, "USWIDEA1")
+        wide = next(
+            item
+            for item in result.ranking
+            if item.publication_number == "USWIDEA1"
+        )
+        narrow = next(
+            item
+            for item in result.ranking
+            if item.publication_number == "USNARROWA1"
+        )
+        self.assertEqual(wide.family_score, 1.0)
+        self.assertEqual(narrow.family_score, 0.2)
+        self.assertEqual(wide.query_consensus_bonus, 0.0)
+        self.assertEqual(wide.provider_consensus_bonus, 0.0)
+        self.assertGreater(wide.score, narrow.score)
+
+    def test_rank_quality_uses_configured_result_window_not_batch_relative_max(self) -> None:
+        result = strict_filter_and_select(
+            [("LQ-1", [hit(25, "US-25-A1", "2026-05-15")])],
+            scope=self.technology_scope(),
+        )
+        self.assertAlmostEqual(result.ranking[0].rank_quality, 1 - 24 / 49, places=6)
+
+    def test_technology_and_combined_modes_use_their_declared_weights(self) -> None:
+        candidate = hit(
+            1,
+            "US-TECH-A1",
+            "2026-06-30",
+            assignee="Example Corp",
+            query_title="liquid cooling",
+            family_jurisdictions=["US", "EP"],
+        )
+        technology = strict_filter_and_select(
+            [("LQ-1", [candidate])],
+            scope=self.technology_scope(),
+            direction_terms=["liquid cooling"],
+        ).ranking[0]
+        self.assertEqual(technology.technical_relevance, 1.0)
+        self.assertEqual(technology.family_score, 0.4)
+        self.assertEqual(technology.rank_quality, 1.0)
+        self.assertEqual(technology.recency_score, 1.0)
+        self.assertAlmostEqual(
+            technology.score,
+            0.55 * 1.0 + 0.25 * 0.4 + 0.15 * 1.0 + 0.05 * 1.0,
+        )
+
+        combined_scope = LandscapeScope(
+            technology_direction="liquid cooling",
+            competitors=[CompetitorInput(name="Example Corp")],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+        )
+        combined = strict_filter_and_select(
+            [("LQ-1", [candidate])],
+            scope=combined_scope,
+            direction_terms=["liquid cooling"],
+        ).ranking[0]
+        self.assertAlmostEqual(
+            combined.score,
+            0.45 * 1.0 + 0.35 * 0.4 + 0.15 * 1.0 + 0.05 * 1.0,
+        )
+
+    def test_consensus_bonuses_require_observed_cross_query_and_provider_hits(self) -> None:
+        first = hit(5, "US-1-A1", "2026-05-15")
+        second = first.model_copy(
+            update={
+                "provider": "fixture_second",
+                "provider_rank": 8,
+            }
+        )
+        result = strict_filter_and_select(
+            [("LQ-1", [first]), ("LQ-2", [second])],
+            scope=self.technology_scope(),
+        )
+        ranking = result.ranking[0]
+        self.assertEqual(ranking.query_coverage, 2)
+        self.assertEqual(ranking.provider_coverage, 2)
+        self.assertEqual(ranking.query_consensus_bonus, 0.03)
+        self.assertEqual(ranking.provider_consensus_bonus, 0.02)
 
     def test_company_counts_use_competitor_primary_name_and_deep_order_is_balanced(self) -> None:
         scope = LandscapeScope(

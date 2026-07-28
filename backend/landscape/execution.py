@@ -39,6 +39,7 @@ from .search import (
     LandscapeCandidateLimitExceededError,
     execute_provider_queries,
     exclusion_reason,
+    family_publication_numbers,
     strict_filter_and_select,
 )
 from .store import LandscapeRunStore
@@ -323,6 +324,9 @@ class LandscapeExecutionService:
                             "title": candidate.title,
                             "application_number": candidate.application_number,
                             "family_id": candidate.family_id,
+                            "family_publication_numbers": family_publication_numbers(
+                                candidate
+                            ),
                             "priority_date": candidate.priority_date,
                             "filing_date": candidate.filing_date,
                             "publication_date": candidate.publication_date,
@@ -640,18 +644,27 @@ class LandscapeExecutionService:
     async def _enrich_missing_dates(
         self, run_id: str, results: list[ProviderResult]
     ) -> list[ProviderResult]:
-        """Use a bounded details call to recover authoritative publication dates.
+        """Use bounded detail calls only when an authoritative date is missing.
 
-        Search indexes often omit patent-specific dates. The strict filter still rejects a
-        document when this enrichment cannot recover a real ISO publication date.
+        A date-recovery response also contributes its application/family identity
+        and is cached for FETCH_DETAILS. Missing family identity alone deliberately
+        does not trigger a details call: doing that here would turn deduplication
+        into an unbounded full-text crawl.
         """
         unique_requests: dict[tuple[str, str], SearchHit] = {}
         missing_hit_count = 0
+        missing_family_identity_count = 0
         for result in results:
             if not result.succeeded:
                 continue
             for hit in result.hits:
-                if hit.publication_date or not hit.publication_number:
+                if not hit.publication_number:
+                    continue
+                missing_date = not hit.publication_date
+                missing_family_identity = not hit.family_id
+                if missing_family_identity:
+                    missing_family_identity_count += 1
+                if not missing_date:
                     continue
                 missing_hit_count += 1
                 key = (hit.provider, hit.publication_number.replace(" ", "").upper())
@@ -663,6 +676,7 @@ class LandscapeExecutionService:
         requests = list(unique_requests.items())[:enrichment_limit]
         self.enrichment_stats[run_id] = {
             "missing_hit_count": missing_hit_count,
+            "missing_family_identity_count": missing_family_identity_count,
             "unique_publication_count": len(unique_requests),
             "attempted_count": len(requests),
             "reused_hit_count": max(0, missing_hit_count - len(unique_requests)),
@@ -689,7 +703,13 @@ class LandscapeExecutionService:
                 )
             if not fetched.succeeded or fetched.document is None:
                 return key, hit
-            document = fetched.document
+            document = fetched.document.model_copy(
+                update={
+                    "publication_date": (
+                        fetched.document.publication_date or hit.publication_date
+                    )
+                }
+            )
             if not document.publication_date:
                 return key, hit
             prefetched[hit.publication_number or ""] = document
@@ -698,6 +718,9 @@ class LandscapeExecutionService:
                 hit.model_copy(
                     update={
                         "publication_date": document.publication_date,
+                        "application_number": (
+                            document.application_number or hit.application_number
+                        ),
                         "filing_date": document.filing_date or hit.filing_date,
                         "assignee": document.assignee or hit.assignee,
                         "title": document.title or hit.title,

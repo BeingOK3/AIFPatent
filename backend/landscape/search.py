@@ -10,7 +10,13 @@ from enum import StrEnum
 
 from pydantic import Field
 
-from idea.merge import MergedHit, merge_hits, normalize_publication_number
+from idea.merge import (
+    MergedHit,
+    merge_hits,
+    normalize_application_number,
+    normalize_family_id,
+    normalize_publication_number,
+)
 from idea.providers.base import (
     ProviderResult,
     ProviderRunner,
@@ -34,7 +40,7 @@ class ExclusionReason(StrEnum):
 
 
 class LandscapeCandidateLimitExceededError(NonRetryableLandscapeWorkflowError):
-    """The complete eligible publication set exceeds its configured safety bound."""
+    """The complete eligible patent-family set exceeds its configured safety bound."""
 
     error_code = "LANDSCAPE_CANDIDATE_LIMIT_EXCEEDED"
 
@@ -42,7 +48,7 @@ class LandscapeCandidateLimitExceededError(NonRetryableLandscapeWorkflowError):
         self.unique_candidate_count = unique_candidate_count
         self.candidate_limit = candidate_limit
         super().__init__(
-            "eligible deduplicated publication count "
+            "eligible deduplicated patent-family count "
             f"{unique_candidate_count} exceeds candidate_limit safety bound "
             f"{candidate_limit}; the candidate set was not truncated"
         )
@@ -58,6 +64,12 @@ class CompanyPatentCount(LandscapeModel):
 class LandscapeSearchCoverage(LandscapeModel):
     raw_hit_count: int = Field(ge=0)
     eligible_hit_count: int = Field(ge=0)
+    unique_publication_count: int = Field(ge=0)
+    unique_family_count: int = Field(ge=0)
+    confirmed_family_count: int = Field(default=0, ge=0)
+    application_group_count: int = Field(default=0, ge=0)
+    publication_fallback_count: int = Field(default=0, ge=0)
+    identity_conflict_count: int = Field(default=0, ge=0)
     unique_candidate_count: int = Field(ge=0)
     selected_count: int = Field(ge=0)
     truncated_count: int = Field(ge=0)
@@ -76,6 +88,11 @@ class LandscapeCandidateRank(LandscapeModel):
     provider_coverage: int = Field(ge=1)
     technical_relevance: float = Field(ge=0.0, le=1.0)
     family_footprint: int = Field(ge=0)
+    family_score: float = Field(ge=0.0, le=1.0)
+    rank_quality: float = Field(ge=0.0, le=1.0)
+    recency_score: float = Field(ge=0.0, le=1.0)
+    query_consensus_bonus: float = Field(ge=0.0, le=0.03)
+    provider_consensus_bonus: float = Field(ge=0.0, le=0.02)
     selected: bool
     reasons: list[str]
 
@@ -124,7 +141,12 @@ def strict_filter_and_select(
             eligible_count += 1
         eligible_batches.append((query_id, eligible_hits))
 
-    merged = _merge_hits_by_publication(eligible_batches)
+    unique_publications = {
+        normalize_publication_number(hit.publication_number)
+        for _, hits in eligible_batches
+        for hit in hits
+    }
+    merged, identity_conflict_count = _merge_hits_by_family(eligible_batches)
     candidate_limit = scope.budget.candidate_limit
     ranked = _rank_candidates(merged, scope, direction_terms or [])
     selected_keys = {item.merge_key for item in merged}
@@ -142,6 +164,15 @@ def strict_filter_and_select(
                 provider_coverage=len(item.found_by),
                 technical_relevance=round(metrics["technical_relevance"], 6),
                 family_footprint=int(metrics["family_footprint"]),
+                family_score=round(metrics["family_score"], 6),
+                rank_quality=round(metrics["rank_quality"], 6),
+                recency_score=round(metrics["recency_score"], 6),
+                query_consensus_bonus=round(
+                    metrics["query_consensus_bonus"], 6
+                ),
+                provider_consensus_bonus=round(
+                    metrics["provider_consensus_bonus"], 6
+                ),
                 selected=item.merge_key in selected_keys,
                 reasons=_ranking_reasons(item, metrics),
             )
@@ -150,6 +181,22 @@ def strict_filter_and_select(
         coverage=LandscapeSearchCoverage(
             raw_hit_count=raw_count,
             eligible_hit_count=eligible_count,
+            unique_publication_count=len(unique_publications),
+            unique_family_count=len(merged),
+            confirmed_family_count=sum(
+                candidate.family_id is not None for candidate in merged
+            ),
+            application_group_count=sum(
+                candidate.family_id is None
+                and candidate.application_number is not None
+                for candidate in merged
+            ),
+            publication_fallback_count=sum(
+                candidate.family_id is None
+                and candidate.application_number is None
+                for candidate in merged
+            ),
+            identity_conflict_count=identity_conflict_count,
             unique_candidate_count=len(merged),
             selected_count=len(selected),
             truncated_count=0,
@@ -161,57 +208,96 @@ def strict_filter_and_select(
     )
 
 
-def _merge_hits_by_publication(
+def _merge_hits_by_family(
     batches: list[tuple[str, list[SearchHit]]],
-) -> list[MergedHit]:
-    """Merge duplicate provider records without collapsing distinct publications."""
+) -> tuple[list[MergedHit], int]:
+    """Merge publications when a provider exposes a shared family/application identity."""
 
-    records_by_publication: dict[str, list[tuple[str, SearchHit]]] = defaultdict(list)
-    for query_id, hits in batches:
-        for hit in hits:
-            publication = normalize_publication_number(hit.publication_number)
-            if publication is None:  # guarded by exclusion_reason; keep this fail closed
-                raise ValueError("eligible hit is missing a normalized publication number")
-            records_by_publication[publication].append((query_id, hit))
-
-    merged: list[MergedHit] = []
-    for publication in sorted(records_by_publication):
-        grouped_batches = [
+    records = [
+        (query_id, hit)
+        for query_id, hits in batches
+        for hit in hits
+    ]
+    families_by_publication: dict[str, set[str]] = defaultdict(set)
+    applications_by_publication: dict[str, set[str]] = defaultdict(set)
+    families_by_application: dict[str, set[str]] = defaultdict(set)
+    for _query_id, hit in records:
+        publication = normalize_publication_number(hit.publication_number)
+        application = normalize_application_number(hit.application_number)
+        family = normalize_family_id(hit.family_id)
+        if publication and application:
+            applications_by_publication[publication].add(application)
+        if publication and family:
+            families_by_publication[publication].add(family)
+        if application and family:
+            families_by_application[application].add(family)
+    conflicting_publications = {
+        publication
+        for publication in set(families_by_publication)
+        | set(applications_by_publication)
+        if len(families_by_publication[publication]) > 1
+        or len(applications_by_publication[publication]) > 1
+    }
+    conflicting_applications = {
+        application
+        for application, families in families_by_application.items()
+        if len(families) > 1
+    }
+    conflict_publications = set(conflicting_publications)
+    enriched_records = []
+    for query_id, hit in records:
+        publication = normalize_publication_number(hit.publication_number)
+        if publication is None:  # guarded by exclusion_reason; keep this fail closed
+            raise ValueError("eligible hit is missing a normalized publication number")
+        application = normalize_application_number(hit.application_number)
+        identity_conflict = (
+            publication in conflicting_publications
+            or application in conflicting_applications
+        )
+        if identity_conflict:
+            conflict_publications.add(publication)
+        enriched_records.append(
             (
                 query_id,
-                [
-                    hit.model_copy(
-                        update={
-                            "raw": {
-                                **hit.raw,
-                                "_landscape_assignee_observation": hit.assignee,
-                            }
-                        }
-                    )
-                ],
-            )
-            for query_id, hit in sorted(
-                records_by_publication[publication],
-                key=lambda item: (
-                    item[1].provider_rank,
-                    item[1].provider,
-                    item[0],
-                    item[1].url,
+                hit.model_copy(
+                    update={
+                        "application_number": (
+                            None
+                            if publication in conflicting_publications
+                            else hit.application_number
+                        ),
+                        "family_id": None if identity_conflict else hit.family_id,
+                        "raw": {
+                            **hit.raw,
+                            "_landscape_assignee_observation": hit.assignee,
+                            "_landscape_publication_observation": publication,
+                            "_landscape_identity_conflict": identity_conflict,
+                        },
+                    }
                 ),
             )
-        ]
-        publications = merge_hits(grouped_batches)
-        if len(publications) != 1:
-            raise ValueError(
-                f"publication-only deduplication produced an invalid group for {publication}"
-            )
-        merged.append(publications[0])
-    return sorted(
-        merged,
-        key=lambda item: (
-            min(source.provider_rank for source in item.sources),
-            item.publication_number or item.title,
-        ),
+        )
+    enriched_records.sort(key=_family_representative_order)
+    merged = merge_hits(
+        [(query_id, [hit]) for query_id, hit in enriched_records]
+    )
+    return merged, len(conflict_publications)
+
+
+def _family_representative_order(
+    record: tuple[str, SearchHit],
+) -> tuple[int, str, str, str, int, str]:
+    query_id, hit = record
+    publication = normalize_publication_number(hit.publication_number) or ""
+    kind = re.search(r"([A-Z])\d*$", publication)
+    kind_priority = 0 if kind and kind.group(1) == "A" else 1
+    return (
+        kind_priority,
+        publication,
+        hit.provider,
+        query_id,
+        hit.provider_rank,
+        hit.url,
     )
 
 
@@ -298,9 +384,41 @@ def family_footprint(hit: MergedHit) -> int:
             jurisdictions.update(str(value).upper() for value in status if value)
         elif isinstance(status, list):
             jurisdictions.update(str(value).upper() for value in status if value)
+    for publication in family_publication_numbers(hit):
+        match = re.match(r"^([A-Z]{2})", publication)
+        if match:
+            jurisdictions.add(match.group(1))
     if jurisdictions:
         return len(jurisdictions)
     return 1 if hit.family_id else 0
+
+
+def family_score(footprint: int) -> float:
+    """Score verified jurisdiction breadth without linearly rewarding duplicates."""
+
+    if footprint <= 0:
+        return 0.0
+    if footprint == 1:
+        return 0.2
+    if footprint == 2:
+        return 0.4
+    if footprint <= 4:
+        return 0.6
+    if footprint <= 7:
+        return 0.8
+    return 1.0
+
+
+def family_publication_numbers(hit: MergedHit) -> list[str]:
+    values = [
+        normalize_publication_number(
+            str(source.raw.get("_landscape_publication_observation") or "")
+        )
+        for source in hit.sources
+    ]
+    if hit.publication_number:
+        values.append(normalize_publication_number(hit.publication_number))
+    return sorted({value for value in values if value})
 
 
 def matched_competitor_name(
@@ -526,27 +644,36 @@ def _rank_candidates(
         sum(1.0 / (60.0 + source.provider_rank) for source in hit.sources)
         for hit in hits
     ]
-    max_rrf = max(raw_rrf, default=1.0)
     max_queries = max((len(hit.query_ids) for hit in hits), default=1)
     max_providers = max((len(hit.found_by) for hit in hits), default=1)
     ranked: list[tuple[MergedHit, float, dict[str, float]]] = []
     terms = _search_terms(direction_terms or [scope.technology_direction or ""])
     for hit, rrf_score in zip(hits, raw_rrf, strict=True):
         technical = _technical_relevance(hit, terms)
+        footprint = family_footprint(hit)
+        rank_quality = _rank_quality(hit, scope.budget.per_query_limit)
+        recency = _recency_score(hit, scope)
+        query_bonus = (
+            0.03 * (len(hit.query_ids) - 1) / (max_queries - 1)
+            if max_queries > 1
+            else 0.0
+        )
+        provider_bonus = (
+            0.02 * (len(hit.found_by) - 1) / (max_providers - 1)
+            if max_providers > 1
+            else 0.0
+        )
         metrics = {
             "rrf_score": rrf_score,
-            "rrf_normalized": rrf_score / max_rrf if max_rrf else 0.0,
-            "query_normalized": len(hit.query_ids) / max_queries,
-            "provider_normalized": len(hit.found_by) / max_providers,
             "technical_relevance": technical,
-            "family_footprint": float(family_footprint(hit)),
+            "family_footprint": float(footprint),
+            "family_score": family_score(footprint),
+            "rank_quality": rank_quality,
+            "recency_score": recency,
+            "query_consensus_bonus": query_bonus,
+            "provider_consensus_bonus": provider_bonus,
         }
-        score = (
-            0.5 * metrics["rrf_normalized"]
-            + 0.2 * metrics["query_normalized"]
-            + 0.1 * metrics["provider_normalized"]
-            + 0.2 * technical
-        )
+        score = _mode_score(scope.mode, metrics) + query_bonus + provider_bonus
         ranked.append((hit, min(1.0, score), metrics))
     return sorted(
         ranked,
@@ -555,6 +682,50 @@ def _rank_candidates(
             item[0].publication_number or item[0].title,
         ),
     )
+
+
+def _mode_score(mode: AnalysisMode, metrics: dict[str, float]) -> float:
+    if mode == AnalysisMode.COMPETITOR:
+        return (
+            0.55 * metrics["family_score"]
+            + 0.30 * metrics["rank_quality"]
+            + 0.15 * metrics["recency_score"]
+        )
+    if mode == AnalysisMode.TECHNOLOGY_COMPETITOR:
+        return (
+            0.45 * metrics["technical_relevance"]
+            + 0.35 * metrics["family_score"]
+            + 0.15 * metrics["rank_quality"]
+            + 0.05 * metrics["recency_score"]
+        )
+    return (
+        0.55 * metrics["technical_relevance"]
+        + 0.25 * metrics["family_score"]
+        + 0.15 * metrics["rank_quality"]
+        + 0.05 * metrics["recency_score"]
+    )
+
+
+def _rank_quality(hit: MergedHit, per_query_limit: int) -> float:
+    best_rank = min(source.provider_rank for source in hit.sources)
+    if per_query_limit <= 1:
+        return 1.0
+    bounded_rank = min(max(best_rank, 1), per_query_limit)
+    return 1.0 - (bounded_rank - 1) / (per_query_limit - 1)
+
+
+def _recency_score(hit: MergedHit, scope: LandscapeScope) -> float:
+    if not hit.publication_date:
+        return 0.0
+    try:
+        published = date.fromisoformat(hit.publication_date[:10])
+    except (TypeError, ValueError):
+        return 0.0
+    window_days = (scope.publication_end - scope.publication_start).days
+    if window_days <= 0:
+        return 1.0
+    elapsed = (published - scope.publication_start).days
+    return min(1.0, max(0.0, elapsed / window_days))
 
 
 def _search_terms(values: list[str]) -> set[str]:
@@ -592,4 +763,15 @@ def _ranking_reasons(
             f"技术文本匹配 {metrics['technical_relevance']:.2f}"
         )
     reasons.append(f"可核验同族法域 {int(metrics['family_footprint'])} 个")
+    reasons.append(f"同族布局分 {metrics['family_score']:.2f}")
+    reasons.append(f"固定排名分 {metrics['rank_quality']:.2f}")
+    reasons.append(f"时间活跃度 {metrics['recency_score']:.2f}")
+    if metrics["query_consensus_bonus"] > 0:
+        reasons.append(
+            f"跨检索式确认 +{metrics['query_consensus_bonus']:.3f}"
+        )
+    if metrics["provider_consensus_bonus"] > 0:
+        reasons.append(
+            f"跨 Provider 确认 +{metrics['provider_consensus_bonus']:.3f}"
+        )
     return reasons
