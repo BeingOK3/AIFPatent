@@ -2,6 +2,18 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-DETERMINISTIC-COMPANY-006
+
+- 类型：完整集合 `U` 的确定性公司归属与完整性校验。
+- 信任边界：竞争对手模式必须显式传入原始用户确认 Registry；模型推断别名不得自动获得公司归属权限。
+- 匹配：仅 NFKC、casefold 和空白折叠后的精确相等；不删除标点/法律后缀，不用子串或相似度推断。
+- 技术模式：相同原始 Assignee 使用稳定 `CO-RAW-<hash>`；不同名称不擅自合并；缺失与跨来源冲突进入 UNKNOWN/REVIEW_REQUIRED。
+- 审计：公司 ID、别名全局唯一，Assignment 必须恰好覆盖 `U`，不得重复、越界、引用未知公司或使用不属于该公司的 matched alias。
+- 数据限制：现有 Provider/FetchedDocument 仅保留单 Assignee，本提交不拆分字符串或伪造共同申请人，`co_assignees` 保持空。
+- 涉及文件：`backend/landscape/company_assignment.py`、`backend/landscape/schemas.py`、公司归属/检索测试和两份追加式日志。
+- 验证：Landscape 97 项测试通过；compileall、`git diff --check` 通过。
+- 未完成：尚未接 PostgreSQL 公司表与 Graph；旧搜索 Effective Scope 中模型推断别名仍需在下一切片拆出 search-only 信任级别。
+
 ## 2026-07-28 — LANDSCAPE-COMPLETE-ELIGIBLE-SET-005
 
 - 类型：完整去重合格集合 `U` 接入真实检索流程。

@@ -222,6 +222,7 @@ class LandscapeSearchTests(unittest.TestCase):
                             1,
                             "US 1 A1",
                             "2026-05-01",
+                            assignee="Conflicting Corp",
                             application_number="APP-OTHER",
                             family_id="FAMILY-OTHER",
                         )
@@ -240,6 +241,13 @@ class LandscapeSearchTests(unittest.TestCase):
             if candidate.publication_number == "US1A1"
         )
         self.assertEqual(us.query_ids, ["LQ-1", "LQ-2"])
+        self.assertEqual(
+            {
+                source.raw["_landscape_assignee_observation"]
+                for source in us.sources
+            },
+            {"Example Corp", "Conflicting Corp"},
+        )
 
     def test_company_counts_use_competitor_primary_name_and_deep_order_is_balanced(self) -> None:
         scope = LandscapeScope(

@@ -305,7 +305,12 @@ class CompanyAssignment(LandscapeModel):
     observed_assignee: str | None = Field(default=None, max_length=200)
     matched_alias: str | None = Field(default=None, max_length=200)
     co_assignees: list[str] = Field(default_factory=list, max_length=20)
-    status: Literal["CONFIRMED_ALIAS", "UNKNOWN", "REVIEW_REQUIRED"]
+    status: Literal[
+        "CONFIRMED_ALIAS",
+        "NORMALIZED_NAME",
+        "UNKNOWN",
+        "REVIEW_REQUIRED",
+    ]
 
     @field_validator("observed_assignee", "matched_alias")
     @classmethod
@@ -325,6 +330,17 @@ class CompanyAssignment(LandscapeModel):
             if self.observed_assignee is None or self.matched_alias is None:
                 raise ValueError(
                     "confirmed alias assignment requires observed_assignee and matched_alias"
+                )
+        elif self.status == "NORMALIZED_NAME":
+            if self.primary_company_id == "UNKNOWN":
+                raise ValueError("normalized-name assignment cannot target UNKNOWN")
+            if self.observed_assignee is None:
+                raise ValueError(
+                    "normalized-name assignment requires observed_assignee"
+                )
+            if self.matched_alias is not None:
+                raise ValueError(
+                    "normalized-name assignment cannot include matched_alias"
                 )
         else:
             if self.primary_company_id != "UNKNOWN":

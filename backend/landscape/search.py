@@ -177,7 +177,19 @@ def _merge_hits_by_publication(
     merged: list[MergedHit] = []
     for publication in sorted(records_by_publication):
         grouped_batches = [
-            (query_id, [hit])
+            (
+                query_id,
+                [
+                    hit.model_copy(
+                        update={
+                            "raw": {
+                                **hit.raw,
+                                "_landscape_assignee_observation": hit.assignee,
+                            }
+                        }
+                    )
+                ],
+            )
             for query_id, hit in sorted(
                 records_by_publication[publication],
                 key=lambda item: (

@@ -2,6 +2,23 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-deterministic-company-assignment
+
+### 已完成
+
+- 新增纯确定性公司归属服务与集合级 Validator，不调用模型、不写数据库。
+- 竞争对手归属必须单独传入原始用户确认 Registry，不能直接消费带模型推断别名的 Effective Scope。
+- 确认名称只做 NFKC、大小写和空白归一后的精确匹配；不做中文子串、英文词边界、法律后缀删除或相似度合并。
+- 纯技术模式只合并精确规范化后相同的原始 Assignee，使用稳定 `CO-RAW-<hash>`；缺失或跨 Provider 冲突进入 UNKNOWN/REVIEW_REQUIRED。
+- 集合 Validator 强制公司 ID/别名无冲突、Assignment 精确覆盖 `U`、无重复/越界并验证 matched alias 归属。
+- 当前 Provider 契约只有单一 Assignee，因此不拆分或伪造共同申请人，`co_assignees` 保持空。
+
+### 验证
+
+- Landscape 全量 97 项测试通过。
+- Python compileall 与 `git diff --check` 通过。
+- 本提交尚未接入 Graph 或 PostgreSQL 公司表；接入前仍需拆分现有搜索中的用户确认别名和模型推断别名信任来源。
+
 ## 2026-07-28 — landscape-complete-eligible-set
 
 ### 已完成
