@@ -2,7 +2,7 @@
 
 标准入口是仓库根目录的 `./start.sh` 与 `./stop.sh`。栈包含应用、PostgreSQL 17 + pgvector 0.8.2 和固定版本 MinIO，全部只绑定 `127.0.0.1`。
 
-`start.sh` 会创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env`，生成本机随机基础设施凭证，先启动 PostgreSQL/MinIO，执行当前 `020`～`060` 幂等迁移，再启动应用并确保 Bucket。这样应用启动钩子不会在旧 PostgreSQL 数据卷尚未迁移时查询新表。该文件不保存模型 Base URL、Model 或 API Key。
+`start.sh` 会创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env`，生成本机随机基础设施凭证，先启动 PostgreSQL/MinIO，执行当前全部幂等迁移（含 Landscape `070`～`075`），再启动应用并确保 Bucket。这样应用启动钩子不会在旧 PostgreSQL 数据卷尚未迁移时查询新表。该文件不保存模型 Base URL、Model 或 API Key。
 
 ```bash
 ./start.sh

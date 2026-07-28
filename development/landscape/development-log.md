@@ -2,6 +2,13 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-DEPLOY-MIGRATION-075-FIX-039
+
+- 类型：启动阻断修复。
+- 原因：应用要求迁移 `075`，但已有 PostgreSQL 卷的显式迁移链仅执行至 `074`；容器 init 目录不会在旧卷上自动重放。
+- 修复：`tools/rag_infra.py migrate` 追加 `075_landscape_repair_snapshots.sql`，`./start.sh` 可在 app 启动前完成增量迁移。
+- 验证：迁移/Schema/启动契约 32 项通过。
+
 ## 2026-07-28 — LANDSCAPE-REPAIR-ROUTE-RESUME-FIX-038
 
 - 类型：REPAIR_GAPS 恢复路由修复。

@@ -26,6 +26,9 @@ LANDSCAPE_RESULT_MANIFEST_SCHEMA_PATH = Path(
 LANDSCAPE_KEYED_STEPS_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/074_landscape_keyed_steps.sql"
 )
+LANDSCAPE_REPAIR_SNAPSHOTS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/075_landscape_repair_snapshots.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -51,6 +54,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_keyed_steps_sql = (
             LANDSCAPE_KEYED_STEPS_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_repair_snapshots_sql = (
+            LANDSCAPE_REPAIR_SNAPSHOTS_SCHEMA_PATH.read_text(encoding="utf-8")
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -147,6 +153,23 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.assertIn("idx_landscape_steps_task", sql)
         self.assertIn("'074_landscape_keyed_steps'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_repair_snapshots_are_append_only_and_versioned(self) -> None:
+        sql = self.landscape_repair_snapshots_sql
+        self.assertIn(
+            "CREATE TABLE IF NOT EXISTS landscape_company_profile_revisions", sql
+        )
+        self.assertIn(
+            "CREATE TABLE IF NOT EXISTS landscape_cross_company_analysis_revisions",
+            sql,
+        )
+        self.assertIn("PRIMARY KEY(run_id, repair_round, company_id)", sql)
+        self.assertIn("PRIMARY KEY(run_id, repair_round)", sql)
+        self.assertIn("'075_landscape_repair_snapshots'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)

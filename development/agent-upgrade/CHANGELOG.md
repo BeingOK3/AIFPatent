@@ -2,6 +2,17 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — deployment-apply-landscape-repair-migration
+
+### 已完成
+
+- 修复部署迁移执行器遗漏 `075_landscape_repair_snapshots.sql` 的问题。
+- `./start.sh` 经 `rag_infra up` 现在会在应用启动前执行 `075`；已有 PostgreSQL 数据卷可增量升级，无需删除卷。
+
+### 验证
+
+- RAG Infra、PostgreSQL Schema、Start Script 聚焦 32 项测试通过。
+
 ## 2026-07-28 — landscape-repair-route-resume-fix
 
 ### 已完成
