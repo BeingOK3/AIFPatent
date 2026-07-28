@@ -33,6 +33,7 @@ from .planning import (
     scope_with_alias_plan,
 )
 from .reporting import LandscapeReportService, build_report
+from .repair import build_repair_plan
 from .schemas import (
     CompanyTechnologyClassification,
     CompanyTechnologyProfile,
@@ -391,6 +392,128 @@ class LandscapeExecutionService:
             "repair_round": repair_round,
         }
 
+    async def repair_gaps(
+        self,
+        run_id: str,
+        *,
+        audit: LandscapeCoverageAudit,
+        repair_round: int,
+    ) -> dict[str, Any]:
+        """Execute one bounded repair plan without revisiting search or scope."""
+        if repair_round < 1:
+            raise ValueError("repair execution requires repair_round >= 1")
+        if (
+            self.candidate_repository is None
+            or self.company_repository is None
+            or self.fetch_repository is None
+            or self.analysis_repository is None
+        ):
+            raise RuntimeError("repair execution requires landscape repositories")
+        candidates = self.candidate_repository.list_candidates(run_id)
+        plan = build_repair_plan(
+            audit,
+            eligible_publications=[
+                candidate["publication_number"] for candidate in candidates
+            ],
+            assignment_result=self.company_repository.list_company_assignments(run_id),
+        )
+        selected_by_publication = (
+            {
+                hit.publication_number: hit
+                for hit in self.selected_hits(run_id)
+            }
+            if plan.fetch_publications
+            else {}
+        )
+        missing_hits = sorted(
+            set(plan.fetch_publications) - set(selected_by_publication)
+        )
+        if missing_hits:
+            raise ValueError(
+                "repair targets are absent from frozen selected hits: "
+                + ", ".join(missing_hits)
+            )
+
+        documents = self.fetch_repository.list_fetched_documents(run_id)
+        fetch_targets = [
+            selected_by_publication[publication]
+            for publication in plan.fetch_publications
+            if publication not in documents
+        ]
+        fetched, fetch_failures = await self._fetch_documents(run_id, fetch_targets)
+        documents.update(fetched)
+        self.documents[run_id] = documents
+        for publication, document in fetched.items():
+            self.fetch_repository.put_fetch_success(
+                run_id,
+                document_id=document_id(publication),
+                publication_number=publication,
+                document=document,
+            )
+            self.database.put_document(
+                run_id,
+                document_id=document_id(publication),
+                publication_number=publication,
+                status="FETCHED",
+                metadata=_document_metadata(document),
+            )
+        for publication, error in fetch_failures.items():
+            self.fetch_repository.put_fetch_failure(
+                run_id,
+                document_id=document_id(publication),
+                publication_number=publication,
+                error_message=error,
+            )
+
+        analyses = self.analysis_repository.list_patent_analyses(run_id)
+        if plan.analyze_publications:
+            scope = self.scope(run_id)
+            direction_terms = self.load_plan(run_id).direction_terms or (
+                [scope.technology_direction] if scope.technology_direction else []
+            )
+        else:
+            direction_terms = []
+        analysis_targets = [
+            (document_id(publication), documents[publication])
+            for publication in plan.analyze_publications
+            if publication in documents and publication not in analyses
+        ]
+        new_analyses, analysis_failures = await self.analysis.analyze_many(
+            run_id=run_id,
+            documents=analysis_targets,
+            direction_terms=direction_terms,
+        )
+        for publication in new_analyses:
+            self.database.put_document(
+                run_id,
+                document_id=document_id(publication),
+                publication_number=publication,
+                status="ANALYZED",
+                metadata=_document_metadata(documents[publication]),
+            )
+
+        rebuilt_companies = []
+        for company_id in plan.rebuild_company_ids:
+            result = await self.analyze_company(
+                run_id, company_id, repair_round=repair_round
+            )
+            rebuilt_companies.append(result["company_id"])
+        trend_result = None
+        if plan.rebuild_cross_company_trends:
+            trend_result = await self.analyze_cross_company_trends(
+                run_id, repair_round=repair_round
+            )
+        return {
+            "repair_round": repair_round,
+            "repair_targets": audit.repair_targets,
+            "fetched_publications": sorted(fetched),
+            "fetch_failures": fetch_failures,
+            "analyzed_publications": sorted(new_analyses),
+            "analysis_failures": analysis_failures,
+            "rebuilt_company_ids": rebuilt_companies,
+            "trend_rebuilt": trend_result is not None,
+        }
+
     async def verify_coverage(self, run_id: str) -> dict[str, Any]:
         if (
             self.candidate_repository is None
@@ -747,7 +870,14 @@ class LandscapeExecutionService:
         run = self.database.get_run(run_id)
         coverage = self.database.get_stage_result(run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value)["value"]["result"]["coverage"]
         analysis_raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.ANALYZE_PATENTS.value)["value"]
-        analyses = {key: LandscapePatentAnalysis.model_validate(value) for key, value in analysis_raw["analyses"].items()}
+        analyses = (
+            self.analysis_repository.list_patent_analyses(run_id)
+            if self.analysis_repository is not None
+            else {
+                key: LandscapePatentAnalysis.model_validate(value)
+                for key, value in analysis_raw["analyses"].items()
+            }
+        )
         profiles = (
             self.profile_repository.list_company_profiles(run_id)
             if self.profile_repository is not None

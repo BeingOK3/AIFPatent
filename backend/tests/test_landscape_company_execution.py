@@ -13,6 +13,7 @@ from landscape.execution import LandscapeExecutionService
 from landscape.schemas import (
     AnalysisMode,
     CompanyTechnologyProfileNarrative,
+    LandscapeCoverageAudit,
     LandscapeScope,
 )
 from tests.test_landscape_company_classification import company_batch
@@ -183,6 +184,32 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
             self.service.analyze_cross_company_trends("run-1", repair_round=1)
         )
         self.assertFalse(trend["recovered"])
+        self.assertEqual(self.repository.repair_trend_calls, [1])
+
+    def test_repair_executor_runs_only_planned_profile_and_trend_work(self) -> None:
+        self.service.scope = lambda _run_id: LandscapeScope(  # type: ignore[method-assign]
+            mode=AnalysisMode.TECHNOLOGY,
+            technology_direction="液冷",
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+        )
+        result = asyncio.run(
+            self.service.repair_gaps(
+                "run-1",
+                repair_round=1,
+                audit=LandscapeCoverageAudit(
+                    decision="REPAIR",
+                    coverage_ratio=0.5,
+                    missing_publications=["CN1A"],
+                    repair_targets=["PROFILE:CO-HUAWEI"],
+                ),
+            )
+        )
+        self.assertEqual(result["fetched_publications"], [])
+        self.assertEqual(result["analyzed_publications"], [])
+        self.assertEqual(result["rebuilt_company_ids"], ["CO-HUAWEI"])
+        self.assertTrue(result["trend_rebuilt"])
+        self.assertEqual(self.repository.repair_profile_calls, [(1, "CO-HUAWEI")])
         self.assertEqual(self.repository.repair_trend_calls, [1])
 
     def test_unknown_company_fails_before_model_call(self) -> None:

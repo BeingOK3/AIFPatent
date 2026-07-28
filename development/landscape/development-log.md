@@ -2,6 +2,15 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-BOUNDED-REPAIR-EXECUTOR-034
+
+- 类型：有限修复计划的定向执行器。
+- 执行：仅处理 Plan 的 FETCH/ANALYZE 公开号，再重建其 PRIMARY 公司画像和跨公司趋势；不重跑 Query Plan、Search 或扩大 U。
+- 失败：冻结 selected hit 缺失立即报错；抓取/精读失败留在本轮输出，后续 Audit 决定是否 LIMITED，不伪造修复成功。
+- 报告：修复后优先从 Repository 当前视图读取 Patent Analysis，覆盖新增精读结果。
+- 验证：Company Execution 聚焦 8 项、Landscape 全量 156 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：尚未把 executor 注册为主 Graph `REPAIR_GAPS` 节点并在执行后追加下一轮 Audit。
+
 ## 2026-07-28 — LANDSCAPE-FORCE-REBUILD-REPAIR-SNAPSHOTS-033
 
 - 类型：修复轮次的公司画像/趋势强制重建执行边界。

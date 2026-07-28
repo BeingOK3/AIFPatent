@@ -2,6 +2,19 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-bounded-repair-executor
+
+### 已完成
+
+- `repair_gaps()` 将不可变 Audit 和 Repair Plan 连接为定向执行：只抓取、精读 Plan 中的公开号，随后重建受影响公司和趋势快照。
+- 不调用检索规划或 Provider Search；冻结候选中缺失的 fetch 目标立即失败。
+- 报告构建在有 Repository 时从当前持久化分析视图读取，能包含修复轮次新增的精读结果。
+
+### 验证
+
+- Company Execution 聚焦 8 项、Landscape 全量 156 项测试通过。
+- Python compileall 与 `git diff --check` 通过；无真实模型调用。
+
 ## 2026-07-28 — landscape-force-rebuild-repair-snapshots
 
 ### 已完成
