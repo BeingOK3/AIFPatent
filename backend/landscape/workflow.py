@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import Any, NotRequired, TypedDict
@@ -418,10 +419,11 @@ class LandscapeWorkflow:
             run_id, LandscapeWorkflowStep.REPAIR_GAPS, task_key=task_key
         )
         if latest is not None and latest["status"] == "SUCCEEDED":
-            output = self.database.get_stage_result(
-                run_id, LandscapeWorkflowStep.VERIFY_COVERAGE.value
-            )["value"]
-            return {"audit_decision": output["decision"], "repair_round": audit_round}
+            output = json.loads(latest["output_json"])
+            return {
+                "audit_decision": output["decision"],
+                "repair_round": output["repair_round"],
+            }
         attempt = self.harness.start_step(
             run_id,
             LandscapeWorkflowStep.REPAIR_GAPS,
