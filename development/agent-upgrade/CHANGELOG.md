@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-deterministic-company-batches
+
+### 已完成
+
+- 新增纯确定性公司分析批次构建器，以持久化 PRIMARY 归属把成功分析集合 `A` 分桶。
+- 公司按 `company_id`、批次内专利按公开号稳定排序，输入公司、Assignment 或 Analysis 的排列不会影响输出。
+- Validator 强制 `A` 中每件专利恰好进入一个公司批次，拒绝重复、越界分析、未知公司引用、错桶和空批次。
+- 抓取或模型失败对应的 `U-A` 不会伪造空公司任务；其缺口保留给覆盖审计。
+
+### 验证
+
+- 公司批次、归属与领域 Schema 聚焦测试 30 项通过。
+- Landscape 全量 109 项测试、Python compileall 与 `git diff --check` 通过。
+- 本提交只建立后续 LangGraph `Send` 的确定性输入，不提前引入动态并行。
+
 ## 2026-07-28 — landscape-complete-resumable-analysis
 
 ### 已完成

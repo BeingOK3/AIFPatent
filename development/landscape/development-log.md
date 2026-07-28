@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-BATCHES-011
+
+- 类型：公司级 Agent fan-out 前的确定性批次。
+- 输入：只消费确定性 `CompanyAssignmentResult` 与已成功的逐件 Analysis 集合 `A`；不调用模型、不读取搜索别名。
+- 分组：只按 PRIMARY company ID 分桶，公司与公开号均稳定排序；输入顺序变化不改变结果，UNKNOWN 与普通公司遵循同一规则。
+- 硬门：每个 `A` 必须恰好出现一次，拒绝重复、越界、未知公司、Analysis 公开号错配、错桶和空 Batch。
+- 失败语义：没有成功 Analysis 的公司不产生空模型任务，`U-F` 和 `F-A` 由后续 Coverage Audit 披露或修复。
+- 涉及文件：`backend/landscape/company_batches.py`、公司批次测试和两份追加式日志。
+- 验证：聚焦 30 项、Landscape 全量 109 项通过；compileall、`git diff --check` 通过。
+- 未完成：尚未实现公司内技术分类、Profile 聚合或 LangGraph `Send`；下一提交进入单公司分类服务。
+
 ## 2026-07-28 — LANDSCAPE-COMPLETE-ANALYSIS-010
 
 - 类型：成功抓取集合 `F` 的完整、可恢复逐件精读。
