@@ -2,6 +2,19 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-bounded-repair-plan
+
+### 已完成
+
+- 新增纯确定性 `LandscapeRepairPlan`：只消费 Coverage Audit 的 `REPAIR` 目标，不会重新检索或扩张冻结范围。
+- 支持 `FETCH / ANALYZE / CLASSIFY / PROFILE / TREND` 目标，自动推导受影响公司的画像重建及跨公司趋势重建依赖。
+- 对非 REPAIR 决策、非法格式、未知动作、未知公司、超出 U 集合的专利目标和不完整公司分区 fail closed。
+
+### 验证
+
+- Repair Plan/Audit 聚焦 7 项、Landscape 全量 152 项测试通过。
+- Python compileall 与 `git diff --check` 通过；无真实模型调用。
+
 ## 2026-07-28 — landscape-report-coverage-audit
 
 ### 已完成

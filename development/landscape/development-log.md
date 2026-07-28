@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-BOUNDED-REPAIR-PLAN-031
+
+- 类型：有限自主修复的确定性计划层。
+- 输入：只接收不可变 Coverage Audit 的 `repair_targets`、冻结 U 和 Company Assignment；不调用模型、不重跑搜索。
+- 依赖：`FETCH` 自动要求后续 `ANALYZE`；任何专利修复映射回其 PRIMARY 公司，要求重建该公司画像；公司变化或 Trend 目标要求重建跨公司趋势。
+- 安全：非 REPAIR、越界公开号、未知公司、未知前缀、格式损坏和非完整 PRIMARY 分区全部立即拒绝。
+- 涉及文件：新增 `landscape/repair.py`、Repair Plan 测试和两份追加式日志。
+- 验证：Repair/Audit 聚焦 7 项、Landscape 全量 152 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：计划尚未执行；必须先为 Profile/Trend 增加追加式修复版本快照，之后才接到 LangGraph `REPAIR_GAPS` 回环。
+
 ## 2026-07-28 — LANDSCAPE-REPORT-COVERAGE-AUDIT-030
 
 - 类型：公司趋势 Coverage Audit 报告化。
