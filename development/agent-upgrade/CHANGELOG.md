@@ -2,6 +2,19 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-append-only-repair-snapshots
+
+### 已完成
+
+- 新增 PostgreSQL migration `075_landscape_repair_snapshots`，为公司 Profile 和跨公司趋势建立按 repair round 追加的快照表。
+- 修复快照同一 `(run_id, repair_round, entity)` 内容可幂等重放，内容不同一律拒绝覆盖。
+- 读取公司画像和跨公司趋势时自动叠加最新修复版本；基础快照、分类明细、Trend 明细和既有 Audit 历史不被修改。
+
+### 验证
+
+- PostgreSQL Snapshot/Repair 聚焦 19 项、Landscape 全量 154 项测试通过。
+- Python compileall 与 `git diff --check` 通过；无真实模型调用。
+
 ## 2026-07-28 — landscape-bounded-repair-plan
 
 ### 已完成

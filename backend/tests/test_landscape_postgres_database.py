@@ -58,10 +58,10 @@ class LandscapePostgreSQLInitializationTests(unittest.TestCase):
 
         database.connect = connect  # type: ignore[method-assign]
         with self.assertRaisesRegex(
-            PostgreSQLPersistenceError, "074_landscape_keyed_steps"
+            PostgreSQLPersistenceError, "075_landscape_repair_snapshots"
         ):
             database.initialize()
-        self.assertIn("074_landscape_keyed_steps", queries[0])
+        self.assertIn("075_landscape_repair_snapshots", queries[0])
 
 
 class _CandidateConnection:
@@ -591,6 +591,7 @@ class LandscapePostgreSQLAnalysisReadTests(unittest.TestCase):
 class _ResultConnection:
     def __init__(self):
         self.snapshot = None
+        self.revision_snapshots = {}
         self.trends = []
         self.audits = {}
 
@@ -598,6 +599,24 @@ class _ResultConnection:
         normalized = " ".join(sql.split())
         if normalized.startswith("SELECT run_id FROM landscape_runs"):
             return _Cursor([{"run_id": params[0]}])
+        if "FROM landscape_cross_company_analysis_revisions" in normalized:
+            if normalized.startswith("SELECT analysis_json,trend_count"):
+                if len(params) == 1:
+                    rows = [
+                        self.revision_snapshots[key]
+                        for key in sorted(self.revision_snapshots, reverse=True)
+                    ]
+                    return _Cursor(rows[:1])
+                row = self.revision_snapshots.get(params[1])
+                return _Cursor([row] if row else [])
+        if normalized.startswith("INSERT INTO landscape_cross_company_analysis_revisions"):
+            _run_id, repair_round, analysis_json, trend_count, content_hash, _created_at = params
+            self.revision_snapshots[repair_round] = {
+                "analysis_json": analysis_json,
+                "trend_count": trend_count,
+                "content_hash": content_hash,
+            }
+            return _Cursor()
         if normalized.startswith("SELECT analysis_json,trend_count"):
             return _Cursor([self.snapshot] if self.snapshot else [])
         if normalized.startswith("SELECT trend_id,trend_json"):
@@ -706,6 +725,91 @@ class LandscapePostgreSQLResultSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "immutable"):
             self.database.put_coverage_audit(
                 "run-1", repair_round=0, audit=second
+            )
+
+    def test_repaired_trend_snapshot_is_append_only_and_preferred_on_read(self) -> None:
+        base = CrossCompanyTrendAnalysis(overall_summary="base")
+        repaired = CrossCompanyTrendAnalysis(overall_summary="repaired")
+        self.database.put_cross_company_analysis("run-1", base)
+        self.database.put_repaired_cross_company_analysis(
+            "run-1", repair_round=1, analysis=repaired
+        )
+        self.database.put_repaired_cross_company_analysis(
+            "run-1", repair_round=1, analysis=repaired
+        )
+        self.assertEqual(
+            self.database.list_cross_company_analysis("run-1"), repaired
+        )
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.database.put_repaired_cross_company_analysis(
+                "run-1",
+                repair_round=1,
+                analysis=CrossCompanyTrendAnalysis(overall_summary="changed"),
+            )
+
+
+class _ProfileRepairConnection:
+    def __init__(self):
+        self.revisions = {}
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        if normalized.startswith("SELECT run_id FROM landscape_runs"):
+            return _Cursor([{"run_id": params[0]}])
+        if normalized.startswith("SELECT company_id FROM landscape_companies"):
+            return _Cursor([{"company_id": params[1]}])
+        if normalized.startswith("SELECT profile_json,content_hash FROM landscape_company_profile_revisions"):
+            row = self.revisions.get((params[1], params[2]))
+            return _Cursor([row] if row else [])
+        if normalized.startswith("INSERT INTO landscape_company_profile_revisions"):
+            _run_id, repair_round, company_id, profile_json, content_hash, _created_at = params
+            self.revisions[(repair_round, company_id)] = {
+                "company_id": company_id,
+                "profile_json": profile_json,
+                "content_hash": content_hash,
+            }
+            return _Cursor()
+        if normalized.startswith("SELECT company_id,profile_json,content_hash FROM landscape_company_profiles"):
+            return _Cursor()
+        if normalized.startswith("SELECT DISTINCT ON (company_id)"):
+            latest = {}
+            for (round_number, company_id), row in self.revisions.items():
+                if company_id not in latest or round_number > latest[company_id][0]:
+                    latest[company_id] = (round_number, row)
+            return _Cursor(
+                [row for _, row in sorted(latest.values(), key=lambda item: item[1]["company_id"])]
+            )
+        raise AssertionError(f"unexpected SQL: {normalized}")
+
+
+class LandscapePostgreSQLRepairProfileTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.database = LandscapePostgreSQLDatabase(
+            "postgresql://test:test@localhost/test"
+        )
+        self.connection = _ProfileRepairConnection()
+
+        @contextmanager
+        def connect():
+            yield self.connection
+
+        self.database.connect = connect  # type: ignore[method-assign]
+
+    def test_repaired_profile_is_append_only_and_overlays_base_reads(self) -> None:
+        first = profile("A", ["CN1A"])
+        second = profile("A", ["CN1A", "CN2A"])
+        self.database.put_repaired_company_profile(
+            "run-1", repair_round=1, company_id="CO-A", profile=first
+        )
+        self.database.put_repaired_company_profile(
+            "run-1", repair_round=2, company_id="CO-A", profile=second
+        )
+        self.assertEqual(
+            self.database.list_company_profiles("run-1")["CO-A"], second
+        )
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.database.put_repaired_company_profile(
+                "run-1", repair_round=2, company_id="CO-A", profile=first
             )
 
 

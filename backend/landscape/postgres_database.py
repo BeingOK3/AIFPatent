@@ -217,13 +217,13 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             row = connection.execute(
                 """
                 SELECT version FROM aifpatent_schema_migrations
-                WHERE version = '074_landscape_keyed_steps'
+                WHERE version = '075_landscape_repair_snapshots'
                 """
             ).fetchone()
         if row is None:
             raise PostgreSQLPersistenceError(
                 "PostgreSQL schema is not current; apply migration "
-                "074_landscape_keyed_steps"
+                "075_landscape_repair_snapshots"
             )
 
     @contextmanager
@@ -968,7 +968,7 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
         self, run_id: str
     ) -> dict[str, CompanyTechnologyProfile]:
         with self.connect() as connection:
-            rows = connection.execute(
+            base_rows = connection.execute(
                 """
                 SELECT company_id,profile_json,content_hash
                 FROM landscape_company_profiles
@@ -977,16 +977,77 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
                 """,
                 (run_id,),
             ).fetchall()
+            revision_rows = connection.execute(
+                """
+                SELECT DISTINCT ON (company_id) company_id,profile_json,content_hash
+                FROM landscape_company_profile_revisions
+                WHERE run_id=%s
+                ORDER BY company_id,repair_round DESC
+                """,
+                (run_id,),
+            ).fetchall()
+        rows_by_company = {row["company_id"]: row for row in base_rows}
+        rows_by_company.update({row["company_id"]: row for row in revision_rows})
         profiles = {}
-        for row in rows:
+        for company_id, row in sorted(rows_by_company.items()):
             value = _json_value(row["profile_json"])
             encoded = canonical_json(value)
             if hashlib.sha256(encoded.encode("utf-8")).hexdigest() != row["content_hash"]:
                 raise ValueError("landscape company profile hash mismatch")
-            profiles[row["company_id"]] = CompanyTechnologyProfile.model_validate(
+            profiles[company_id] = CompanyTechnologyProfile.model_validate(
                 value
             )
         return profiles
+
+    def put_repaired_company_profile(
+        self,
+        run_id: str,
+        *,
+        repair_round: int,
+        company_id: str,
+        profile: CompanyTechnologyProfile,
+    ) -> CompanyTechnologyProfile:
+        if repair_round < 1:
+            raise ValueError("repair profile snapshots require repair_round >= 1")
+        value = profile.model_dump(mode="json")
+        assert_no_secrets(value)
+        encoded = canonical_json(value)
+        content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        with self.connect() as connection:
+            _lock_landscape_run(connection, run_id)
+            company = connection.execute(
+                """
+                SELECT company_id FROM landscape_companies
+                WHERE run_id=%s AND company_id=%s
+                """,
+                (run_id, company_id),
+            ).fetchone()
+            if company is None:
+                raise ValueError(f"unknown landscape company: {company_id}")
+            existing = connection.execute(
+                """
+                SELECT profile_json,content_hash
+                FROM landscape_company_profile_revisions
+                WHERE run_id=%s AND repair_round=%s AND company_id=%s
+                """,
+                (run_id, repair_round, company_id),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["content_hash"] != content_hash
+                    or canonical_json(_json_value(existing["profile_json"])) != encoded
+                ):
+                    raise ValueError("landscape repair profile snapshot is immutable")
+                return profile
+            connection.execute(
+                """
+                INSERT INTO landscape_company_profile_revisions(
+                    run_id,repair_round,company_id,profile_json,content_hash,created_at
+                ) VALUES(%s,%s,%s,%s::jsonb,%s,%s)
+                """,
+                (run_id, repair_round, company_id, encoded, content_hash, now_ms()),
+            )
+        return profile
 
     def put_cross_company_analysis(
         self,
@@ -1076,11 +1137,22 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             row = connection.execute(
                 """
                 SELECT analysis_json,trend_count,content_hash
+                FROM landscape_cross_company_analysis_revisions
+                WHERE run_id=%s
+                ORDER BY repair_round DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                row = connection.execute(
+                """
+                SELECT analysis_json,trend_count,content_hash
                 FROM landscape_cross_company_analyses
                 WHERE run_id = %s
                 """,
                 (run_id,),
-            ).fetchone()
+                ).fetchone()
         if row is None:
             return None
         value = _json_value(row["analysis_json"])
@@ -1090,6 +1162,47 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
         analysis = CrossCompanyTrendAnalysis.model_validate(value)
         if len(analysis.trends) != row["trend_count"]:
             raise ValueError("landscape cross-company analysis trend count mismatch")
+        return analysis
+
+    def put_repaired_cross_company_analysis(
+        self,
+        run_id: str,
+        *,
+        repair_round: int,
+        analysis: CrossCompanyTrendAnalysis,
+    ) -> CrossCompanyTrendAnalysis:
+        if repair_round < 1:
+            raise ValueError("repair trend snapshots require repair_round >= 1")
+        value = analysis.model_dump(mode="json")
+        assert_no_secrets(value)
+        encoded = canonical_json(value)
+        content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        with self.connect() as connection:
+            _lock_landscape_run(connection, run_id)
+            existing = connection.execute(
+                """
+                SELECT analysis_json,trend_count,content_hash
+                FROM landscape_cross_company_analysis_revisions
+                WHERE run_id=%s AND repair_round=%s
+                """,
+                (run_id, repair_round),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["trend_count"] != len(analysis.trends)
+                    or existing["content_hash"] != content_hash
+                    or canonical_json(_json_value(existing["analysis_json"])) != encoded
+                ):
+                    raise ValueError("landscape repair trend snapshot is immutable")
+                return analysis
+            connection.execute(
+                """
+                INSERT INTO landscape_cross_company_analysis_revisions(
+                    run_id,repair_round,analysis_json,trend_count,content_hash,created_at
+                ) VALUES(%s,%s,%s::jsonb,%s,%s,%s)
+                """,
+                (run_id, repair_round, encoded, len(analysis.trends), content_hash, now_ms()),
+            )
         return analysis
 
     def put_coverage_audit(

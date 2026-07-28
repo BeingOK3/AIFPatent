@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-APPEND-ONLY-REPAIR-SNAPSHOTS-032
+
+- 类型：有限修复的 PostgreSQL 追加式结果版本。
+- Migration：`075_landscape_repair_snapshots.sql` 新建 `landscape_company_profile_revisions` 和 `landscape_cross_company_analysis_revisions`，主键包含 repair round。
+- 不可变性：同轮同对象仅允许相同 hash/JSON 重放；不同结果拒绝，基础 Profile/Trend 与旧审计不更新、不删除。
+- 读取：公司画像按公司叠加最新修复版本；趋势读取优先最新修复快照，因此 Report/Audit 可直接消费修复后的受控视图。
+- 涉及文件：PostgreSQL Repository、migration、PostgreSQL snapshot 测试和两份追加式日志。
+- 验证：PostgreSQL 聚焦 19 项、Landscape 全量 154 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：Repair executor 尚未调用这些 snapshot 写入方法，LangGraph 尚未添加 REPAIR_GAPS 回边。
+
 ## 2026-07-28 — LANDSCAPE-BOUNDED-REPAIR-PLAN-031
 
 - 类型：有限自主修复的确定性计划层。
