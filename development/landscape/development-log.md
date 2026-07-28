@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-TREND-REPORT-027
+
+- 类型：公司技术画像与跨公司趋势 Report Schema/Markdown/Frontend 发布。
+- JSON：`landscape-report/1.3.0` 增加 `company_profiles`、`cross_company_analysis`，保留程序校验后的分类、成员和趋势证据链。
+- Markdown：新增公司画像摘要、技术分类成员和跨公司趋势方向；旧 Cluster 章节暂保留。
+- Frontend：新增画像与趋势卡片、数量指标，兼容无趋势/无 Profile 的历史报告。
+- 涉及文件：Reporting、Execution 报告读取、Landscape Frontend、报告/前端测试和两份追加式日志。
+- 验证：聚焦 7 项、Landscape 全量 149 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：旧 Cluster 尚未移除；下一工作单元处理有限 Repair 或最终端到端夹具。
+
 ## 2026-07-28 — LANDSCAPE-MAIN-GRAPH-COVERAGE-026
 
 - 类型：Coverage Audit 主节点、持久化恢复与条件路由。

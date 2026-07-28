@@ -103,7 +103,7 @@ class LandscapeReportingTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(report["schema_version"], "landscape-report/1.2.0")
+        self.assertEqual(report["schema_version"], "landscape-report/1.3.0")
         self.assertNotIn("filing_date_trend", report["summary"])
         self.assertEqual(report["summary"]["family_count"], 3)
         self.assertEqual(report["summary"]["publication_count"], 5)

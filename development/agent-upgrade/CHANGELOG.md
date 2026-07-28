@@ -2,6 +2,20 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-company-trend-report-v1-3
+
+### 已完成
+
+- Report Schema 升级到 `landscape-report/1.3.0`。
+- 报告 JSON 新增 `company_profiles` 与 `cross_company_analysis`，保留 Profile 分类成员、Evidence ID、趋势方向、公司、公开号和时间基础。
+- Markdown 新增“公司技术画像”和“跨公司整体技术趋势”章节。
+- 前端新增公司画像卡片、跨公司趋势卡片和趋势数量指标；旧技术聚类暂时保留用于兼容历史报告。
+
+### 验证
+
+- Report/Frontend 聚焦 7 项、Landscape 全量 149 项测试通过。
+- Python compileall 与 `git diff --check` 通过；无模型调用。
+
 ## 2026-07-28 — landscape-main-graph-coverage-routing
 
 ### 已完成

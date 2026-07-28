@@ -61,6 +61,10 @@ class LandscapeFrontendContractTests(unittest.TestCase):
             "公司覆盖",
             "全族状态",
             "overall_legal_status",
+            "company_profiles",
+            "cross_company_analysis",
+            "公司技术画像",
+            "跨公司整体技术趋势",
         ):
             self.assertIn(fragment, self.javascript)
         self.assertNotIn("申请日趋势", self.javascript)

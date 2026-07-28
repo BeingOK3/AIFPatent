@@ -732,6 +732,16 @@ class LandscapeExecutionService:
         analyses = {key: LandscapePatentAnalysis.model_validate(value) for key, value in analysis_raw["analyses"].items()}
         cluster_raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.CLUSTER_PATENTS.value)["value"]
         clusters = LandscapeClusterPlan.model_validate({"clusters": cluster_raw["clusters"]}) if cluster_raw["clusters"] else None
+        profiles = (
+            self.profile_repository.list_company_profiles(run_id)
+            if self.profile_repository is not None
+            else {}
+        )
+        cross_company_analysis = (
+            self.trend_repository.list_cross_company_analysis(run_id)
+            if self.trend_repository is not None
+            else None
+        )
         limitations = self.collect_limitations(run_id)
         report = build_report(
             run=run,
@@ -743,6 +753,8 @@ class LandscapeExecutionService:
             limitations=limitations,
             searched_competitor_aliases=self.report_alias_output(run_id),
             technical_direction_expansion=self.direction_output(run_id),
+            company_profiles=profiles,
+            cross_company_analysis=cross_company_analysis,
         )
         self.report_service.save(run_id, report)
         return {"report": report, "manifest": "manifest.json"}

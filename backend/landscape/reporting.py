@@ -9,7 +9,12 @@ from typing import Any
 from idea.providers.base import FetchedDocument
 
 from .database import LandscapeDatabase
-from .schemas import LandscapeClusterPlan, LandscapePatentAnalysis
+from .schemas import (
+    CompanyTechnologyProfile,
+    CrossCompanyTrendAnalysis,
+    LandscapeClusterPlan,
+    LandscapePatentAnalysis,
+)
 from .store import LandscapeRunStore, sha256_file
 
 
@@ -24,6 +29,8 @@ def build_report(
     limitations: list[dict[str, Any]],
     searched_competitor_aliases: list[dict[str, Any]] | None = None,
     technical_direction_expansion: dict[str, Any] | None = None,
+    company_profiles: dict[str, CompanyTechnologyProfile] | None = None,
+    cross_company_analysis: CrossCompanyTrendAnalysis | None = None,
 ) -> dict[str, Any]:
     publication_jurisdictions: Counter[str] = Counter()
     patents = []
@@ -67,7 +74,7 @@ def build_report(
         ]
         enriched_clusters.append(cluster_dict)
     return {
-        "schema_version": "landscape-report/1.2.0",
+        "schema_version": "landscape-report/1.3.0",
         "run_id": run["run_id"],
         "scope": run["scope_json"],
         "model": run["model"],
@@ -89,8 +96,24 @@ def build_report(
             "company_patent_counts": coverage.get("company_patent_counts", []),
             "publication_jurisdictions": dict(sorted(publication_jurisdictions.items())),
             "cluster_count": len(clusters.clusters) if clusters else 0,
+            "company_profile_count": len(company_profiles or {}),
+            "trend_count": len(cross_company_analysis.trends)
+            if cross_company_analysis
+            else 0,
         },
         "clusters": enriched_clusters,
+        "company_profiles": [
+            {
+                "company_id": company_id,
+                **profile.model_dump(mode="json"),
+            }
+            for company_id, profile in sorted((company_profiles or {}).items())
+        ],
+        "cross_company_analysis": (
+            cross_company_analysis.model_dump(mode="json")
+            if cross_company_analysis
+            else None
+        ),
         "patents": patents,
         "failures": failures,
         "limitations": limitations,
@@ -118,6 +141,46 @@ def render_markdown(report: dict[str, Any]) -> str:
     )
     if not company_counts:
         lines.append("- 无可用权利人数据")
+    lines.extend(["", "## 公司技术画像", ""])
+    for company in report.get("company_profiles", []):
+        lines.extend(
+            [
+                f"### {company['company_id']}",
+                "",
+                company["overall_summary"],
+                "",
+                "- 技术方向：" + "、".join(company["technology_directions"]),
+                "",
+            ]
+        )
+        for category in company["technology_categories"]:
+            lines.append(
+                f"- {category['name']}：{category['summary']}（"
+                + "、".join(category["publication_numbers"])
+                + "）"
+            )
+    if not report.get("company_profiles"):
+        lines.append("- 暂无公司技术画像")
+    cross_company = report.get("cross_company_analysis")
+    lines.extend(["", "## 跨公司整体技术趋势", ""])
+    if cross_company:
+        lines.extend(
+            [
+                cross_company["overall_summary"],
+                "",
+                "- 共同方向：" + "、".join(cross_company["common_directions"]),
+                "- 差异方向："
+                + "；".join(cross_company["differentiated_directions"]),
+                "",
+            ]
+        )
+        for trend in cross_company["trends"]:
+            lines.append(
+                f"- {trend['trend_id']} {trend['name']}（{trend['direction']}）："
+                + trend["summary"]
+            )
+    else:
+        lines.append("- 暂无跨公司趋势")
     lines.extend(["", "## 国家/地区布局", ""])
     jurisdictions = summary["publication_jurisdictions"]
     lines.extend(f"- {country}：{count}" for country, count in jurisdictions.items())
