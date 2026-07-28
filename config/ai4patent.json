@@ -98,17 +98,17 @@
     "default_mode": "standard",
     "modes": {
       "quick": {
-        "candidate_max": 30,
+        "candidate_max": 60,
         "deep_review_min": 10,
         "deep_review_max": 10
       },
       "standard": {
-        "candidate_max": 80,
+        "candidate_max": 200,
         "deep_review_min": 10,
         "deep_review_max": 20
       },
       "deep": {
-        "candidate_max": 150,
+        "candidate_max": 400,
         "deep_review_min": 20,
         "deep_review_max": 40
       }

@@ -157,7 +157,7 @@ def add_start_arguments(parser):
     parser.add_argument("--evaluation-date", default=date.today().isoformat())
     parser.add_argument("--date-basis", default="用户指定或提交日")
     parser.add_argument("--mode", choices=("quick", "standard", "deep"), default="standard")
-    parser.add_argument("--candidate-max", type=int, default=80)
+    parser.add_argument("--candidate-max", type=int, default=200)
     parser.add_argument("--deep-min", type=int, default=10)
     parser.add_argument("--deep-max", type=int, default=20)
 

@@ -30,10 +30,10 @@ from .run_store import RunStore, RunStoreError
 from .runtime_debug import RunDebugLog
 from .search_strategy import assess_breadth, build_budget
 from .value_analysis import ValueAnalysisService
-from .workflow import WorkflowHarness, WorkflowStep
+from .workflow import NonRetryableWorkflowError, WorkflowHarness, WorkflowStep
 
 
-class ExecutionGateError(RuntimeError):
+class ExecutionGateError(NonRetryableWorkflowError):
     pass
 
 
@@ -173,8 +173,12 @@ class WorkflowExecutor:
                 minimum_documents=self._budget(run_id, self._idea(run_id)).deep_review_min,
             )
             if not output.documents:
+                if not retrieval.selected_publication_numbers:
+                    raise ExecutionGateError(
+                        "检索已完成，但没有日期合格且可识别的专利候选可供全文核验"
+                    )
                 raise ExecutionGateError(
-                    "no patent full text is available for evidence-based analysis"
+                    "已选择专利候选，但所有全文抓取或证据完整性校验均失败"
                 )
             corpus_version_ids: list[str] | None = None
             corpus_snapshot_hash: str | None = None

@@ -23,6 +23,7 @@ from .providers import (
     SearchProvider,
     SearchQuery,
 )
+from .query_strategy import compile_provider_query
 from .runtime_debug import RunDebugLog
 from .search_strategy import (
     DEFAULT_RELEVANCE_THRESHOLD,
@@ -171,15 +172,17 @@ class RetrievalService:
             call_specs = []
             for planned in queries_by_round[round_number]:
                 query_id = f"{run_id}:{planned.query_id}"
-                query = SearchQuery(
-                    query_id=query_id,
-                    text=planned.query_text,
-                    language=planned.language,
-                    round_number=round_number,
-                    limit=budget.per_query_limit,
-                    query_type=planned.query_type,
-                )
                 for provider in self.providers:
+                    query = SearchQuery(
+                        query_id=query_id,
+                        text=compile_provider_query(
+                            planned.query_text, provider.name
+                        ),
+                        language=planned.language,
+                        round_number=round_number,
+                        limit=budget.per_query_limit,
+                        query_type=planned.query_type,
+                    )
                     call_specs.append((provider, query))
             if self.debug_log:
                 for provider, query in call_specs:

@@ -9,7 +9,13 @@ from langgraph.types import RetryPolicy
 
 from .database import Database
 from .runtime_debug import RunDebugLog
-from .workflow import CompletionGateError, WorkflowHarness, WorkflowStep, WORKFLOW_STEPS
+from .workflow import (
+    CompletionGateError,
+    NonRetryableWorkflowError,
+    WorkflowHarness,
+    WorkflowStep,
+    WORKFLOW_STEPS,
+)
 
 
 class IdeaGraphState(TypedDict):
@@ -23,6 +29,10 @@ class IdeaGraphState(TypedDict):
 StepHandler = Callable[[str, WorkflowStep, int], Awaitable[dict[str, Any]]]
 FingerprintBuilder = Callable[[str, WorkflowStep], dict[str, Any]]
 LimitationCollector = Callable[[str], list[dict[str, Any]]]
+
+
+def _retry_transient_error(error: Exception) -> bool:
+    return not isinstance(error, NonRetryableWorkflowError)
 
 
 class LangGraphWorkflow:
@@ -123,7 +133,7 @@ class LangGraphWorkflow:
         builder = StateGraph(IdeaGraphState)
         retry = RetryPolicy(
             max_attempts=self.max_step_attempts,
-            retry_on=Exception,
+            retry_on=_retry_transient_error,
         )
         previous: str | None = None
         for step in WORKFLOW_STEPS:

@@ -2,6 +2,31 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — idea-high-recall-retrieval
+
+### 运行故障复盘
+
+- Run `720f6eee-5a72-4bfd-bd20-598c26a2be55` 并非卡在全文下载：6 条检索式中仅 1 条返回 20 条无关结果，4 条为空，1 条因 `IPC:(...)` 方言报错。
+- 20 条命中的标题摘要相关性分数全部为 0，深读列表为空，因此没有发起任何全文请求；旧错误信息却将其描述为“没有可用全文”，并对同一确定性错误重试 3 次。
+- SSE 断开后前端未回读持久化 Run，页面可能保留最后一个运行中步骤。
+
+### 高召回改造
+
+- Query Planner 明确采用 recall-first 策略：生成 8～16 条中英文检索式，每条最多两个概念组，IPC/CPC 只输出结构化候选，不直接生成 Provider 字段语法。
+- 新增确定性 Query Strategy：将模型生成的三组以上 `AND` 检索式拆为一组或两组查询，补充中英文单概念和分类号兜底，单 Run 最多执行 24 条检索式。
+- 新增 Provider 查询编译层：移除 `IPC:` / `CPC:` 等不兼容字段前缀；Exa 使用语义化纯文本，SerpAPI/Google Patents 使用受控 Boolean 子集。
+- 候选池上限调整为 quick 60、standard 200、deep 400；全文深读上限仍为 10/20/40，避免候选召回量与高成本全文分析线性绑定。
+- 保留标题摘要强相关优先级；当强相关候选不足深读下限时，按日期和标识有效性补入低置信候选进行全文核验，并记录 `LOW_CONFIDENCE_RECALL_BACKFILL`。补入候选不能仅凭摘要进入最终结论。
+- 区分“没有可识别候选”与“候选全文/证据完整性全部失败”，不再用同一个“无全文”错误掩盖检索问题。
+- `ExecutionGateError` 作为确定性业务门禁不再重试；连接错误等瞬态异常仍按原策略重试。
+- SSE 断开后前端主动读取 PostgreSQL 中的最新 Run，避免终态已落盘但页面仍显示运行中。
+
+### 验证
+
+- 新增过度约束拆分、Provider 方言编译、零分候选补入全文核验、确定性门禁单次失败等模拟用例。
+- 检索、筛选、Workflow、前端契约共 54 项通过；`node --check frontend/app.js`、Python compileall、diff check 通过。
+- 全量 unittest 仍在既有同步 FastAPI `TestClient` 首次请求处等待，240 秒硬超时；线程栈停留在 AnyIO blocking portal，与本次检索代码无调用关系。
+
 ## 2026-07-28 — postgres-boolean-runtime-fix
 
 ### 根因与修复

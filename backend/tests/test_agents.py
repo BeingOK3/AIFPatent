@@ -136,15 +136,23 @@ class IdeaAgentServiceTests(unittest.TestCase):
         idea = parser_output()
         service = IdeaAgentService(self.db, StubModel([planner_output()]))
         result = asyncio.run(service.plan_queries(self.run["run_id"], idea, per_query_limit=20))
-        self.assertEqual(len(result.queries), 2)
+        self.assertGreater(len(result.queries), 2)
+        self.assertTrue(
+            all(
+                query.query_id == f"Q{index}"
+                for index, query in enumerate(result.queries, 1)
+            )
+        )
         with self.db.connect() as connection:
-            rows = connection.execute("SELECT query_id FROM search_queries ORDER BY query_id").fetchall()
+            rows = connection.execute(
+                "SELECT query_id FROM search_queries ORDER BY query_id"
+            ).fetchall()
         self.assertEqual(
-            [row["query_id"] for row in rows],
-            [f"{self.run['run_id']}:Q1", f"{self.run['run_id']}:Q2"],
+            {row["query_id"] for row in rows},
+            {f"{self.run['run_id']}:{query.query_id}" for query in result.queries},
         )
         checkpoint = self.db.get_stage_result(self.run["run_id"], "PLAN_QUERIES")
-        self.assertEqual(len(checkpoint["value"]["queries"]), 2)
+        self.assertEqual(len(checkpoint["value"]["queries"]), len(result.queries))
 
     def test_query_placeholder_is_rejected(self) -> None:
         service = IdeaAgentService(

@@ -123,6 +123,12 @@ class FakeRetrieval:
         )
 
 
+class EmptyCandidateRetrieval(FakeRetrieval):
+    async def fetch_selected(self, **kwargs):
+        self.fetch_calls += 1
+        return FetchResult(documents=[], document_ids={}, limitations=[])
+
+
 class FakeDocuments:
     def __init__(self):
         self.legacy_calls = []
@@ -453,13 +459,32 @@ class WorkflowExecutorTests(unittest.TestCase):
         self.assertEqual(self.run_executor(executor, run["run_id"]), "COMPLETED")
         self.assertEqual(agents.parse_calls, 0)
 
-    def test_critical_audit_exhausts_step_and_never_writes_report(self) -> None:
+    def test_critical_audit_is_not_retried_and_never_writes_report(self) -> None:
         run = self.create_run()
         audit = FakeAudit(critical=True)
         executor = self.executor(run, audit=audit)
         self.assertEqual(self.run_executor(executor, run["run_id"]), "FAILED")
-        self.assertEqual(audit.calls, 2)
+        self.assertEqual(audit.calls, 1)
         self.assertFalse(self.store.paths(self.case["case_id"], run["run_id"]).manifest.exists())
+
+    def test_empty_candidate_gate_is_failed_once_with_accurate_message(self) -> None:
+        run = self.create_run()
+        retrieval = EmptyCandidateRetrieval()
+        executor = self.executor(run, retrieval=retrieval)
+
+        self.assertEqual(self.run_executor(executor, run["run_id"]), "FAILED")
+        stored = self.db.get_run(run["run_id"])
+        self.assertIn("没有日期合格且可识别的专利候选", stored["error_message"])
+        self.assertEqual(retrieval.fetch_calls, 1)
+        with self.db.connect() as connection:
+            attempts = connection.execute(
+                """
+                SELECT COUNT(*) FROM run_steps
+                WHERE run_id = ? AND step_name = 'NORMALIZE_AND_FETCH'
+                """,
+                (run["run_id"],),
+            ).fetchone()[0]
+        self.assertEqual(attempts, 1)
 
     def test_manifest_completion_gate_marks_run_failed(self) -> None:
         run = self.create_run()

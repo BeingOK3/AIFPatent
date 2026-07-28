@@ -95,7 +95,7 @@ class SearchStrategyTests(unittest.TestCase):
             tracker.add(RoundStats(1, 0, 0, 0, 0)), StopReason.PROVIDERS_UNAVAILABLE
         )
 
-    def test_summary_screening_excludes_post_date_and_does_not_pad_weak_results(self) -> None:
+    def test_summary_screening_backfills_weak_candidate_for_full_text_verification(self) -> None:
         hits = [
             merged(f"US{i}A1", "cache eviction controller", "token heat threshold")
             for i in range(8)
@@ -118,9 +118,10 @@ class SearchStrategyTests(unittest.TestCase):
         )
         budget = build_budget(self.settings, ScopeBreadth.NARROW, mode_name="standard")
         selection = select_deep_review(screened, budget)
-        self.assertEqual(len(selection.selected), 8)
+        self.assertEqual(len(selection.selected), 9)
+        self.assertEqual(selection.backfilled_count, 1)
         self.assertEqual(selection.limitation["code"], "INSUFFICIENT_RELEVANT_DEEP_REVIEWS")
-        self.assertNotIn("US-WEAK-A1", [item.hit.publication_number for item in selection.selected])
+        self.assertIn("US-WEAK-A1", [item.hit.publication_number for item in selection.selected])
         self.assertNotIn("US-LATE-A1", [item.hit.publication_number for item in selection.selected])
 
     def test_bilingual_term_groups_require_two_concepts_not_one_generic_match(self) -> None:
@@ -144,6 +145,33 @@ class SearchStrategyTests(unittest.TestCase):
         scores = {item.hit.publication_number: item.relevance_score for item in screened}
         self.assertGreaterEqual(scores["CN-STRONG-A1"], 0.15)
         self.assertLess(scores["CN-WEAK-A1"], 0.15)
+
+    def test_all_zero_score_results_still_reach_minimum_full_text_verification(self) -> None:
+        screened = screen_summaries(
+            [
+                merged(
+                    f"US-ZERO-{index}-A1",
+                    f"unfamiliar terminology {index}",
+                    "provider returned a short and non-descriptive snippet",
+                )
+                for index in range(12)
+            ],
+            idea_terms=["cache eviction", "token heat"],
+            term_groups=[
+                ["cache eviction", "缓存淘汰"],
+                ["token heat", "令牌热度"],
+            ],
+            evaluation_date=date(2026, 7, 16),
+        )
+        budget = build_budget(self.settings, ScopeBreadth.NARROW, mode_name="standard")
+
+        selection = select_deep_review(screened, budget)
+
+        self.assertEqual(len(selection.selected), 10)
+        self.assertEqual(selection.backfilled_count, 10)
+        self.assertEqual(
+            selection.limitation["code"], "LOW_CONFIDENCE_RECALL_BACKFILL"
+        )
 
 
 if __name__ == "__main__":
