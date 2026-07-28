@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-keyed-step-schema
+
+### 已完成
+
+- 新增 PostgreSQL `074_landscape_keyed_steps` 迁移，为 `landscape_steps` 增加非空 `task_key`，既有记录自动归入 `__main__`。
+- Step Attempt 唯一键升级为 `(run_id, step_name, task_key, attempt)`，公司级和专利级 fan-out 不再互相占用尝试次数。
+- 新增 task lookup 索引，并将已有数据卷显式迁移链和应用启动版本门提升到 `074`。
+- 迁移可重复执行；保留原有步骤记录，不删除业务数据。
+
+### 验证
+
+- PostgreSQL Schema/部署基础设施 28 项测试通过。
+- Landscape PostgreSQL Repository 17 项、Landscape 全量 130 项测试通过。
+- Python compileall 与 `git diff --check` 通过；本提交无模型调用或 API Key。
+
 ## 2026-07-28 — landscape-company-profile-persistence
 
 ### 已完成

@@ -10,6 +10,7 @@ from landscape.company_assignment import CompanyAssignmentResult
 from landscape.database import canonical_json
 from landscape.postgres_database import (
     LandscapePostgreSQLDatabase,
+    PostgreSQLPersistenceError,
     _prepare_candidate_rows,
     _prepare_company_assignment_rows,
     _prepare_profile_rows,
@@ -37,6 +38,30 @@ class _Cursor:
 
     def fetchall(self):
         return list(self._rows)
+
+
+class LandscapePostgreSQLInitializationTests(unittest.TestCase):
+    def test_initialize_requires_latest_keyed_step_migration(self) -> None:
+        database = LandscapePostgreSQLDatabase(
+            "postgresql://test:test@localhost/test"
+        )
+        queries = []
+
+        @contextmanager
+        def connect():
+            class Connection:
+                def execute(self, sql, _params=()):
+                    queries.append(" ".join(sql.split()))
+                    return _Cursor()
+
+            yield Connection()
+
+        database.connect = connect  # type: ignore[method-assign]
+        with self.assertRaisesRegex(
+            PostgreSQLPersistenceError, "074_landscape_keyed_steps"
+        ):
+            database.initialize()
+        self.assertIn("074_landscape_keyed_steps", queries[0])
 
 
 class _CandidateConnection:

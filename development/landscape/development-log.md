@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-KEYED-STEP-SCHEMA-019
+
+- 类型：公司/专利 fan-out 的 PostgreSQL Task Attempt 身份迁移。
+- 迁移：新增 `074_landscape_keyed_steps.sql`；`task_key` 默认 `__main__`，既有主流程记录无需回填脚本。
+- 唯一性：从 `(run_id, step_name, attempt)` 调整为 `(run_id, step_name, task_key, attempt)`，并新增按任务读取最新 attempt 的索引。
+- 部署：已有数据卷迁移链和应用启动版本门同步提升至 `074`。
+- 涉及文件：`074` SQL、PostgreSQL 启动门、迁移工具、Schema/基础设施/启动门测试和两份追加式日志。
+- 验证：Schema/基础设施 28 项、Repository 17 项、Landscape 全量 130 项通过；compileall、`git diff --check` 通过。
+- 未完成：Workflow Harness 尚未读写 `task_key`；下一工作单元实现 keyed start/complete/fail/latest 和恢复语义。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-PROFILE-PERSISTENCE-018
 
 - 类型：Company Categories/Members/Profile/Manifest 的 PostgreSQL 多表事务。

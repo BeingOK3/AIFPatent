@@ -23,6 +23,9 @@ LANDSCAPE_FETCH_SCHEMA_PATH = Path(
 LANDSCAPE_RESULT_MANIFEST_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/073_landscape_company_result_manifests.sql"
 )
+LANDSCAPE_KEYED_STEPS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/074_landscape_keyed_steps.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -45,6 +48,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_result_manifest_sql = (
             LANDSCAPE_RESULT_MANIFEST_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_keyed_steps_sql = (
+            LANDSCAPE_KEYED_STEPS_SCHEMA_PATH.read_text(encoding="utf-8")
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -128,6 +134,23 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertNotIn("TRUNCATE", upper)
         self.assertNotIn("DELETE FROM", upper)
         self.assertNotIn("POSTGRES_PASSWORD=", upper)
+
+    def test_landscape_step_attempts_are_scoped_by_stable_task_key(self) -> None:
+        sql = self.landscape_keyed_steps_sql
+        self.assertIn(
+            "ADD COLUMN IF NOT EXISTS task_key TEXT NOT NULL DEFAULT '__main__'",
+            " ".join(sql.split()),
+        )
+        self.assertIn(
+            "UNIQUE(run_id, step_name, task_key, attempt)",
+            sql,
+        )
+        self.assertIn("idx_landscape_steps_task", sql)
+        self.assertIn("'074_landscape_keyed_steps'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
 
     def test_corpus_schema_is_versioned_and_scoped(self) -> None:
         self.assertIn("BEGIN;", self.corpus_sql)
