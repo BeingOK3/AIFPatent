@@ -2,6 +2,16 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-repair-route-resume-fix
+
+### 已完成
+
+- 修复已成功的 `REPAIR_GAPS` keyed task 在恢复时从自身不可变输出读取最终 Audit 决策，不再误读 round 0 的 VERIFY Stage Result。
+
+### 验证
+
+- Workflow 聚焦 6 项测试通过。
+
 ## 2026-07-28 — landscape-graph-repair-gaps-routing
 
 ### 已完成

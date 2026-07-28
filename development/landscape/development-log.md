@@ -2,6 +2,12 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-REPAIR-ROUTE-RESUME-FIX-038
+
+- 类型：REPAIR_GAPS 恢复路由修复。
+- 修复：恢复已成功 repair task 时读取 task 自身输出的最终 PASS/LIMITED，而非初始 VERIFY 的 REPAIR；防止重启后错误再次路由。
+- 验证：Workflow 聚焦 6 项通过。
+
 ## 2026-07-28 — LANDSCAPE-GRAPH-REPAIR-GAPS-037
 
 - 类型：显式 LangGraph 修复条件节点。
