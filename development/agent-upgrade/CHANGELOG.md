@@ -2,6 +2,18 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-report-repair-history
+
+### 已完成
+
+- Report 新增 `company_trend_coverage_history`，以不可变 Audit 的轮次顺序发布 decision、coverage、targets 与 limitations。
+- Markdown 和前端显示修复轨迹，例如 `round 0 REPAIR → round 1 PASS`。
+
+### 验证
+
+- Report/Frontend 聚焦 7 项、Landscape 全量 157 项测试通过。
+- `git diff --check` 通过；无真实模型调用。
+
 ## 2026-07-28 — landscape-one-round-autonomous-repair
 
 ### 已完成

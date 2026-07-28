@@ -907,6 +907,22 @@ class LandscapeExecutionService:
             )["value"]
         except KeyError:
             company_trend_coverage = None
+        company_trend_coverage_history = (
+            [
+                {
+                    "repair_round": index,
+                    "decision": audit.decision,
+                    "coverage_ratio": audit.coverage_ratio,
+                    "repair_targets": audit.repair_targets,
+                    "limitations": audit.limitations,
+                }
+                for index, audit in enumerate(
+                    self.audit_repository.list_coverage_audits(run_id)
+                )
+            ]
+            if self.audit_repository is not None
+            else []
+        )
         limitations = self.collect_limitations(run_id)
         report = build_report(
             run=run,
@@ -920,6 +936,7 @@ class LandscapeExecutionService:
             company_profiles=profiles,
             cross_company_analysis=cross_company_analysis,
             company_trend_coverage=company_trend_coverage,
+            company_trend_coverage_history=company_trend_coverage_history,
         )
         self.report_service.save(run_id, report)
         return {"report": report, "manifest": "manifest.json"}

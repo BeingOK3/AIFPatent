@@ -30,6 +30,7 @@ def build_report(
     company_profiles: dict[str, CompanyTechnologyProfile] | None = None,
     cross_company_analysis: CrossCompanyTrendAnalysis | None = None,
     company_trend_coverage: dict[str, Any] | None = None,
+    company_trend_coverage_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     publication_jurisdictions: Counter[str] = Counter()
     patents = []
@@ -106,6 +107,7 @@ def build_report(
             else None
         ),
         "company_trend_coverage": company_trend_coverage,
+        "company_trend_coverage_history": company_trend_coverage_history or [],
         "patents": patents,
         "failures": failures,
         "limitations": limitations,
@@ -136,6 +138,15 @@ def render_markdown(report: dict[str, Any]) -> str:
         )
         for limitation in audit.get("limitations", []):
             lines.append(f"- 审计限制：{limitation}")
+        history = report.get("company_trend_coverage_history", [])
+        if history:
+            lines.append(
+                "- 审计轨迹："
+                + " → ".join(
+                    f"round {item.get('repair_round', index)} {item.get('decision', 'UNKNOWN')}"
+                    for index, item in enumerate(history)
+                )
+            )
     else:
         lines.append("- 本报告来自旧版本 Run，未记录公司趋势覆盖审计。")
     lines.extend(["", "## 公司专利族数量", ""])

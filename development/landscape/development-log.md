@@ -2,6 +2,14 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-REPORT-REPAIR-HISTORY-036
+
+- 类型：自主修复轨迹报告化。
+- 数据：读取按 round 排序的不可变 Audit 历史，发布每轮 decision、coverage、targets 与限制；不从日志或模型文本推断。
+- UI：JSON、Markdown、前端统一展示 `REPAIR → PASS/LIMITED` 轨迹。
+- 验证：Report/Frontend 聚焦 7 项、Landscape 全量 157 项通过；`git diff --check` 通过。
+- 未完成：下一工作单元仍是显式 LangGraph `REPAIR_GAPS` 节点拆分。
+
 ## 2026-07-28 — LANDSCAPE-ONE-ROUND-AUTONOMOUS-REPAIR-035
 
 - 类型：一次性受控自主修复与再审计闭环。
