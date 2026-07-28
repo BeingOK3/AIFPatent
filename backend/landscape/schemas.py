@@ -461,6 +461,53 @@ class TrendTimeBasis(LandscapeModel):
         return self
 
 
+class CrossCompanyTrendProposal(LandscapeModel):
+    """Model proposal without program-owned trend identity or date boundaries."""
+
+    name: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=3000)
+    direction: Literal[
+        "EMERGING",
+        "GROWING",
+        "DECLINING",
+        "SHIFTING",
+        "ACCELERATING",
+        "STABLE",
+        "UNCERTAIN",
+    ]
+    company_ids: list[CompanyId] = Field(min_length=2, max_length=50)
+    publication_numbers: list[PublicationNumber] = Field(min_length=2)
+    evidence_ids: list[EvidenceId] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def references_are_unique(self) -> "CrossCompanyTrendProposal":
+        for label, values in (
+            ("company IDs", self.company_ids),
+            ("publication numbers", self.publication_numbers),
+            ("evidence IDs", self.evidence_ids),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"trend proposal {label} must be unique")
+        return self
+
+
+class CrossCompanyTrendProposalAnalysis(LandscapeModel):
+    overall_summary: str = Field(min_length=1, max_length=4000)
+    common_directions: list[str] = Field(default_factory=list, max_length=20)
+    differentiated_directions: list[str] = Field(default_factory=list, max_length=20)
+    trends: list[CrossCompanyTrendProposal] = Field(default_factory=list, max_length=20)
+    limitations: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator(
+        "common_directions",
+        "differentiated_directions",
+        "limitations",
+    )
+    @classmethod
+    def normalize_text_lists(cls, values: list[str]) -> list[str]:
+        return _normalized_unique_strings(values)
+
+
 class CrossCompanyTrend(LandscapeModel):
     trend_id: str = Field(pattern=r"^TR-[A-Za-z0-9._-]+$")
     name: str = Field(min_length=1, max_length=200)

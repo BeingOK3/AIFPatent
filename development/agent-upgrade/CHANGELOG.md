@@ -2,6 +2,22 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-evidence-bound-company-trends
+
+### 已完成
+
+- 新增跨公司趋势建议契约与分析服务，模型不再返回 Trend ID、精确日期、数量、比例或斜率。
+- 程序从公开日计算 MONTH/QUARTER Bucket，并为验证后的趋势附加稳定 `TR-NN` 与 Time Basis。
+- 每条趋势必须形成 company → publication → evidence 的完整有效链，引用公司必须恰好等于引用专利的归属公司。
+- 增长、下降、出现、转向、加速和稳定等时间方向必须满足最少专利数与至少两个时间桶，否则 fail closed。
+- 单家公司直接返回受限结果且不调用模型；公司 Profile 与 Analysis/日期集合不一致时拒绝生成趋势。
+
+### 验证
+
+- 跨公司趋势、Profile 和领域 Schema 聚焦测试 21 项通过。
+- Landscape 全量 119 项测试、Python compileall 与 `git diff --check` 通过。
+- 测试使用 Stub Model，未请求或消耗真实 API Key。
+
 ## 2026-07-28 — landscape-company-technology-profiles
 
 ### 已完成

@@ -2,6 +2,18 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-CROSS-COMPANY-TRENDS-014
+
+- 类型：证据约束、时间门控的跨公司整体技术方向。
+- 模型边界：新增 Proposal Schema；模型只提议叙述、方向和引用，不返回 Trend ID、精确日期、统计量或斜率。
+- 程序统计：按 MONTH/QUARTER 生成 Bucket；程序稳定分配 `TR-NN` 并附加输入 Time Basis。
+- 证据链：Profile、Analysis 和公开日必须覆盖同一集合；趋势公司必须恰好等于引用专利 Owner，每件引用专利至少贡献一个自身 Evidence。
+- 时间硬门：`EMERGING/GROWING/DECLINING/SHIFTING/ACCELERATING/STABLE` 至少跨两个 Bucket，并满足最少专利数；不足时只能使用 `UNCERTAIN`。
+- 降级：少于两家公司直接产生受限分析且零模型调用。
+- 涉及文件：`backend/landscape/{schemas,company_trends}.py`、跨公司趋势测试和两份追加式日志。
+- 验证：聚焦 21 项、Landscape 全量 119 项通过；compileall、`git diff --check` 通过；未使用真实模型 API。
+- 未完成：趋势和 Profile 尚未持久化；下一工作单元实现 `U/F/A/T` 与证据覆盖审计。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-PROFILE-013
 
 - 类型：公司分类结果与公司级技术方向叙述聚合。
