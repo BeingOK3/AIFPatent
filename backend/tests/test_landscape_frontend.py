@@ -62,6 +62,8 @@ class LandscapeFrontendContractTests(unittest.TestCase):
             "cross_company_analysis",
             "公司技术画像",
             "跨公司整体技术趋势",
+            "company_trend_coverage",
+            "公司趋势覆盖审计",
             "landscape-report/2.0.0",
             "历史技术聚类",
         ):

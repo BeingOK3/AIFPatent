@@ -88,6 +88,12 @@ class LandscapeReportingTests(unittest.TestCase):
                     "source": "MODEL_INFERRED",
                 }
             ],
+            company_trend_coverage={
+                "decision": "LIMITED",
+                "coverage_ratio": 0.5,
+                "repair_round": 1,
+                "limitations": ["精读预算不足。"],
+            },
         )
 
         self.assertEqual(report["schema_version"], "landscape-report/2.0.0")
@@ -97,6 +103,9 @@ class LandscapeReportingTests(unittest.TestCase):
         self.assertEqual(report["summary"]["family_count"], 3)
         self.assertEqual(report["summary"]["publication_count"], 5)
         self.assertEqual(report["summary"]["company_patent_counts"], coverage["company_patent_counts"])
+        self.assertEqual(report["summary"]["company_trend_coverage_decision"], "LIMITED")
+        self.assertEqual(report["summary"]["company_trend_coverage_ratio"], 0.5)
+        self.assertEqual(report["company_trend_coverage"]["repair_round"], 1)
         family = report["patents"][0]["family_status"]
         self.assertEqual(family["data_status"], "PARTIAL")
         self.assertEqual(family["overall_legal_status"], "MIXED")
@@ -108,6 +117,8 @@ class LandscapeReportingTests(unittest.TestCase):
         self.assertIn("## 公司专利族数量", markdown)
         self.assertIn("## 公司技术画像", markdown)
         self.assertIn("## 跨公司整体技术趋势", markdown)
+        self.assertIn("## 公司趋势覆盖审计", markdown)
+        self.assertIn("决策：LIMITED；覆盖率：50.00%；修复轮次：1", markdown)
         self.assertNotIn("申请日趋势", markdown)
         self.assertNotIn("## 技术聚类", markdown)
         self.assertIn("全族总体状态：MIXED", markdown)

@@ -29,6 +29,7 @@ def build_report(
     technical_direction_expansion: dict[str, Any] | None = None,
     company_profiles: dict[str, CompanyTechnologyProfile] | None = None,
     cross_company_analysis: CrossCompanyTrendAnalysis | None = None,
+    company_trend_coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     publication_jurisdictions: Counter[str] = Counter()
     patents = []
@@ -81,6 +82,16 @@ def build_report(
             "trend_count": len(cross_company_analysis.trends)
             if cross_company_analysis
             else 0,
+            "company_trend_coverage_decision": (
+                company_trend_coverage.get("decision")
+                if company_trend_coverage
+                else None
+            ),
+            "company_trend_coverage_ratio": (
+                company_trend_coverage.get("coverage_ratio")
+                if company_trend_coverage
+                else None
+            ),
         },
         "company_profiles": [
             {
@@ -94,6 +105,7 @@ def build_report(
             if cross_company_analysis
             else None
         ),
+        "company_trend_coverage": company_trend_coverage,
         "patents": patents,
         "failures": failures,
         "limitations": limitations,
@@ -110,9 +122,23 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- 合格公开文本：{summary.get('publication_count', summary['candidate_count'])}",
         f"- 成功精读专利族：{summary['analyzed_count']}",
         "",
-        "## 公司专利族数量",
+        "## 公司趋势覆盖审计",
         "",
     ]
+    audit = report.get("company_trend_coverage")
+    if audit:
+        lines.append(
+            "- 决策：{decision}；覆盖率：{ratio:.2%}；修复轮次：{round}".format(
+                decision=audit.get("decision", "UNKNOWN"),
+                ratio=float(audit.get("coverage_ratio", 0)),
+                round=audit.get("repair_round", 0),
+            )
+        )
+        for limitation in audit.get("limitations", []):
+            lines.append(f"- 审计限制：{limitation}")
+    else:
+        lines.append("- 本报告来自旧版本 Run，未记录公司趋势覆盖审计。")
+    lines.extend(["", "## 公司专利族数量", ""])
     company_counts = summary.get("company_patent_counts", [])
     lines.extend(
         f"- {item['company']}：{item['patent_count']}"

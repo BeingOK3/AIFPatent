@@ -411,6 +411,7 @@ class LandscapeExecutionService:
             "coverage_ratio": audit.coverage_ratio,
             "repair_round": repair_round,
             "missing_publications": audit.missing_publications,
+            "repair_targets": audit.repair_targets,
             "limitations": audit.limitations,
             "recovered": recovered,
         }
@@ -717,6 +718,12 @@ class LandscapeExecutionService:
             if self.trend_repository is not None
             else None
         )
+        try:
+            company_trend_coverage = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.VERIFY_COVERAGE.value
+            )["value"]
+        except KeyError:
+            company_trend_coverage = None
         limitations = self.collect_limitations(run_id)
         report = build_report(
             run=run,
@@ -729,6 +736,7 @@ class LandscapeExecutionService:
             technical_direction_expansion=self.direction_output(run_id),
             company_profiles=profiles,
             cross_company_analysis=cross_company_analysis,
+            company_trend_coverage=company_trend_coverage,
         )
         self.report_service.save(run_id, report)
         return {"report": report, "manifest": "manifest.json"}

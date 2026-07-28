@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-REPORT-COVERAGE-AUDIT-030
+
+- 类型：公司趋势 Coverage Audit 报告化。
+- Report：`company_trend_coverage` 保存已持久化审计的 decision、ratio、repair round、缺口与 limitations；Summary 提供决策和比例，避免把搜索覆盖与公司趋势覆盖混为一谈。
+- UI：JSON、Markdown、前端都显示公司趋势审计；旧 Run 不伪造审计结果，而是明确提示历史版本缺少该快照。
+- 控制输入：VERIFY 阶段输出带入 `repair_targets`，只供下一阶段的确定性修复调度使用，不含全文或模型凭证。
+- 涉及文件：Execution、Reporting、Frontend、Report/Frontend/Company Execution 测试和两份追加式日志。
+- 验证：聚焦 13 项、Landscape 全量 149 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：Repair 仍未执行；下一工作单元必须先解决公司 Profile 不可变快照在补分析后的版本化/重建语义，再接入 REPAIR 回环。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-TREND-REPORT-V2-029
 
 - 类型：公司趋势报告契约收口与旧聚类执行代码退场。

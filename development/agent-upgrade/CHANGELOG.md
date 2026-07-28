@@ -2,6 +2,19 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-report-coverage-audit
+
+### 已完成
+
+- Report JSON 新增结构化 `company_trend_coverage`，并在 Summary 暴露审计决策与覆盖率。
+- Markdown 与前端新增“公司趋势覆盖审计”，展示 PASS/LIMITED、覆盖率、修复轮次和审计限制；历史 Run 明确标记未记录该数据。
+- VERIFY_COVERAGE 的 Stage Result 公开已验证的 `repair_targets`，为后续有限修复路由提供控制输入。
+
+### 验证
+
+- Report/Frontend/Company Execution 聚焦 13 项、Landscape 全量 149 项测试通过。
+- Python compileall 与 `git diff --check` 通过；无真实模型调用。
+
 ## 2026-07-28 — landscape-company-trend-report-v2
 
 ### 已完成
