@@ -2,6 +2,23 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-complete-eligible-set
+
+### 已完成
+
+- Landscape 去重改为只按规范化公开号分组；相同 Application 或 Family 的不同公开号不再被折叠。
+- `strict_filter_and_select` 始终返回完整合格集合 `U`，排名只排序不抽样，`truncated_count` 固定为零。
+- `candidate_limit` 改为 fail-closed 安全门：先将完整 `U` 写入 PostgreSQL，再以确定性错误终止，不生成被截断的伪全量报告。
+- 生产 Runtime 显式注入 canonical candidate repository；SQLite 仅保留旧测试仓储职责。
+- 候选哈希输入中的来源、Query 和排名理由稳定排序，保证步骤重试时幂等。
+- 确定性安全门不再触发 LangGraph 重试；连接类瞬态错误仍可重试。
+
+### 验证
+
+- Landscape 全量 84 项测试通过。
+- Python compileall 与 `git diff --check` 通过。
+- 后续抓取/精读仍受旧 `analysis_limit` 影响，本提交只保证 `U` 完整，不声称已全量精读。
+
 ## 2026-07-28 — landscape-canonical-candidate-persistence
 
 ### 已完成

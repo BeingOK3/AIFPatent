@@ -14,6 +14,7 @@ from landscape.database import LandscapeDatabase
 from landscape.execution import LandscapeExecutionService, coverage_limitations
 from landscape.reporting import LandscapeReportService
 from landscape.schemas import AnalysisBudget, AnalysisMode, LandscapeScope
+from landscape.search import LandscapeCandidateLimitExceededError
 from landscape.store import LandscapeRunStore
 
 
@@ -45,6 +46,15 @@ class EnrichmentProvider(SearchProvider):
                 "description": [{"label": "background", "start": 0, "end": 5, "text": "背景技术。"}],
             },
         )
+
+
+class CandidateCaptureRepository:
+    def __init__(self):
+        self.calls: list[tuple[str, list[dict]]] = []
+
+    def put_candidates(self, run_id: str, candidates: list[dict]) -> list[dict]:
+        self.calls.append((run_id, candidates))
+        return candidates
 
 
 class LandscapeEnrichmentTests(unittest.TestCase):
@@ -114,6 +124,114 @@ class LandscapeEnrichmentTests(unittest.TestCase):
             self.assertIn("US1A1", service.prefetched_documents["run-1"])
             self.assertEqual(provider.fetch_calls, 1)
             self.assertEqual(service.enrichment_stats["run-1"]["reused_hit_count"], 1)
+
+    def test_filter_persists_complete_u_before_candidate_limit_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = LandscapeDatabase(root / "landscape.db")
+            database.initialize()
+            store = LandscapeRunStore(root / "runs")
+            repository = CandidateCaptureRepository()
+            service = LandscapeExecutionService(
+                database=database,
+                store=store,
+                model=StructuredModelClient(load_config().model),
+                providers=[],
+                provider_timeout_seconds={},
+                analysis_concurrency=1,
+                report_service=LandscapeReportService(database, store),
+                candidate_repository=repository,
+            )
+            scope = LandscapeScope(
+                mode=AnalysisMode.TECHNOLOGY,
+                technology_direction="液冷",
+                publication_start=date(2026, 4, 1),
+                publication_end=date(2026, 6, 30),
+                budget=AnalysisBudget(
+                    candidate_limit=10,
+                    analysis_limit=10,
+                    per_query_limit=20,
+                ),
+            )
+            run = database.create_run(
+                scope=scope,
+                model="fixture",
+                workflow_version="1.0.0",
+                prompt_version="1.0.0",
+            )
+            run_id = run["run_id"]
+            database.put_queries(
+                run_id,
+                [
+                    {
+                        "query_id": service.query_key(run_id, 1),
+                        "query_text": "液冷",
+                        "language": "zh",
+                        "rationale": "fixture",
+                    }
+                ],
+            )
+            database.put_stage_result(
+                run_id,
+                "PLAN_SEARCH",
+                {
+                    "plan": {
+                        "direction_terms": ["液冷"],
+                        "direction_english_terms": ["liquid cooling"],
+                        "queries": [
+                            {
+                                "query_text": "液冷",
+                                "language": "zh",
+                                "rationale": "fixture",
+                            }
+                        ],
+                    },
+                    "competitor_aliases": [],
+                },
+            )
+            database.put_stage_result(
+                run_id,
+                "SEARCH_PUBLICATIONS",
+                {
+                    "results": [
+                        ProviderResult(
+                            provider="fixture",
+                            operation="search",
+                            request_id="LQ-1",
+                            status="SUCCESS",
+                            duration_ms=0,
+                            hits=[
+                                SearchHit(
+                                    provider="fixture",
+                                    provider_rank=index,
+                                    title=f"液冷专利 {index}",
+                                    url=f"https://example.test/{index}",
+                                    publication_number=f"US{index}A1",
+                                    publication_date="2026-05-01",
+                                )
+                                for index in range(1, 12)
+                            ],
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+
+            with self.assertRaises(LandscapeCandidateLimitExceededError) as raised:
+                asyncio.run(service.filter_and_select(run_id))
+
+            self.assertEqual(raised.exception.unique_candidate_count, 11)
+            self.assertEqual(len(repository.calls), 1)
+            persisted_run_id, candidates = repository.calls[0]
+            self.assertEqual(persisted_run_id, run_id)
+            self.assertEqual(len(candidates), 11)
+            self.assertEqual(
+                [candidate["rank"] for candidate in candidates],
+                list(range(1, 12)),
+            )
+            self.assertEqual(
+                len({candidate["publication_number"] for candidate in candidates}),
+                11,
+            )
 
     def test_fetch_details_backfills_failed_primary_selection(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

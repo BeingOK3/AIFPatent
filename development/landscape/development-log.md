@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPLETE-ELIGIBLE-SET-005
+
+- 类型：完整去重合格集合 `U` 接入真实检索流程。
+- 去重：按规范化公开号分组后组内合并来源，不再因相同 Application/Family 折叠不同公开号。
+- 预算：`candidate_limit` 从静默截断改为安全门；无论是否超限都先形成完整 `U`，超限时持久化后明确失败。
+- 持久化：生产 Runtime 显式注入 PostgreSQL candidate repository；候选 Metadata 使用精简稳定字段并排序，支持不可变幂等重放。
+- 重试：候选超限属于确定性策略错误，不再重复执行相同 Graph 节点。
+- 涉及文件：`backend/landscape/{search,execution,runtime,workflow}.py`、检索/执行/工作流测试和两份追加式日志。
+- 验证：Landscape 84 项测试通过；compileall、`git diff --check` 通过。
+- 未完成：`FETCH_DETAILS/ANALYZE_PATENTS` 仍按旧 `analysis_limit` 选样；全量抓取与精读在后续独立提交完成。
+
 ## 2026-07-28 — LANDSCAPE-CANONICAL-CANDIDATES-004
 
 - 类型：去重合格全集 `U` 的 PostgreSQL 持久化基座。

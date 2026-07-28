@@ -66,6 +66,8 @@ def hit(
     assignee: str | None = "Example Corp",
     query_title: str = "Liquid cooling system",
     family_jurisdictions: list[str] | None = None,
+    application_number: str | None = None,
+    family_id: str | None = None,
 ) -> SearchHit:
     return SearchHit(
         provider="fixture",
@@ -73,6 +75,8 @@ def hit(
         title=query_title,
         url=f"https://example.test/{rank}",
         publication_number=publication,
+        application_number=application_number,
+        family_id=family_id,
         publication_date=published,
         assignee=assignee,
         raw={
@@ -146,7 +150,7 @@ class LandscapeSearchTests(unittest.TestCase):
         self.assertEqual([item.publication_number for item in result.candidates], ["US1A1"])
         self.assertEqual(result.coverage.excluded_counts["COMPETITOR_NOT_CONFIRMED"], 2)
 
-    def test_duplicates_merge_and_budget_truncation_is_explicit(self) -> None:
+    def test_candidate_limit_marks_complete_set_for_fail_closed_execution(self) -> None:
         batches = [
             (
                 "LQ-1",
@@ -157,17 +161,85 @@ class LandscapeSearchTests(unittest.TestCase):
             ),
             ("LQ-2", [hit(1, "US-1-A1", "2026-05-01")]),
         ]
-        result = strict_filter_and_select(batches, scope=self.technology_scope(candidate_limit=10))
+        result = strict_filter_and_select(
+            batches, scope=self.technology_scope(candidate_limit=10)
+        )
         self.assertEqual(result.coverage.eligible_hit_count, 12)
         self.assertEqual(result.coverage.unique_candidate_count, 11)
-        self.assertEqual(result.coverage.selected_count, 10)
-        self.assertEqual(result.coverage.truncated_count, 1)
+        self.assertEqual(result.coverage.selected_count, 11)
+        self.assertEqual(result.coverage.truncated_count, 0)
+        self.assertTrue(result.coverage.candidate_limit_exceeded)
+        self.assertEqual(len(result.candidates), 11)
+
+    def test_complete_eligible_set_is_preserved_when_within_safety_bound(self) -> None:
+        batches = [
+            (
+                "LQ-1",
+                [
+                    hit(index, f"US-{index}-A1", "2026-05-01")
+                    for index in range(1, 10)
+                ],
+            ),
+            ("LQ-2", [hit(1, "US-1-A1", "2026-05-01")]),
+        ]
+        result = strict_filter_and_select(
+            batches, scope=self.technology_scope(candidate_limit=10)
+        )
+        self.assertEqual(result.coverage.eligible_hit_count, 10)
+        self.assertEqual(result.coverage.unique_candidate_count, 9)
+        self.assertEqual(result.coverage.selected_count, 9)
+        self.assertEqual(result.coverage.truncated_count, 0)
+        self.assertEqual(len(result.candidates), 9)
         self.assertEqual(result.candidates[0].query_ids, ["LQ-1", "LQ-2"])
-        self.assertEqual(result.coverage.company_patent_counts[0].patent_count, 11)
-        self.assertEqual(result.coverage.company_patent_counts[0].company, "Example Corp")
-        self.assertEqual(len(result.ranking), 11)
-        self.assertTrue(result.ranking[0].selected)
-        self.assertGreater(result.ranking[0].query_coverage, result.ranking[1].query_coverage)
+        self.assertTrue(all(item.selected for item in result.ranking))
+
+    def test_deduplication_uses_only_normalized_publication_number(self) -> None:
+        result = strict_filter_and_select(
+            [
+                (
+                    "LQ-1",
+                    [
+                        hit(
+                            1,
+                            "US-1-A1",
+                            "2026-05-01",
+                            application_number="APP-SHARED",
+                            family_id="FAMILY-SHARED",
+                        ),
+                        hit(
+                            2,
+                            "EP-1-A1",
+                            "2026-05-02",
+                            application_number="APP-SHARED",
+                            family_id="FAMILY-SHARED",
+                        ),
+                    ],
+                ),
+                (
+                    "LQ-2",
+                    [
+                        hit(
+                            1,
+                            "US 1 A1",
+                            "2026-05-01",
+                            application_number="APP-OTHER",
+                            family_id="FAMILY-OTHER",
+                        )
+                    ],
+                ),
+            ],
+            scope=self.technology_scope(),
+        )
+        self.assertEqual(
+            {candidate.publication_number for candidate in result.candidates},
+            {"US1A1", "EP1A1"},
+        )
+        us = next(
+            candidate
+            for candidate in result.candidates
+            if candidate.publication_number == "US1A1"
+        )
+        self.assertEqual(us.query_ids, ["LQ-1", "LQ-2"])
 
     def test_company_counts_use_competitor_primary_name_and_deep_order_is_balanced(self) -> None:
         scope = LandscapeScope(

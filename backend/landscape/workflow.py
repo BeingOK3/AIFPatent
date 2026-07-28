@@ -32,6 +32,14 @@ class LandscapeWorkflowError(RuntimeError):
     pass
 
 
+class NonRetryableLandscapeWorkflowError(LandscapeWorkflowError):
+    """A deterministic policy or data gate that cannot succeed on identical retry."""
+
+
+def _retry_transient_error(error: Exception) -> bool:
+    return not isinstance(error, NonRetryableLandscapeWorkflowError)
+
+
 class LandscapeWorkflowState(TypedDict):
     run_id: str
     last_completed_step: str | None
@@ -264,7 +272,10 @@ class LandscapeWorkflow:
 
     def _build_graph(self) -> StateGraph:
         builder = StateGraph(LandscapeWorkflowState)
-        retry = RetryPolicy(max_attempts=self.max_step_attempts, retry_on=Exception)
+        retry = RetryPolicy(
+            max_attempts=self.max_step_attempts,
+            retry_on=_retry_transient_error,
+        )
         previous = None
         for step in WORKFLOW_STEPS:
             builder.add_node(step.value, self._node(step), retry_policy=retry)

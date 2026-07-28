@@ -156,6 +156,7 @@ def build_landscape_runtime(
         provider_timeout_seconds=timeouts,
         analysis_concurrency=config.workflow.document_agent_concurrency,
         report_service=report_service,
+        candidate_repository=database,
     )
     workflow = LandscapeWorkflow(
         database=database,

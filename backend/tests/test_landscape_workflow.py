@@ -8,10 +8,21 @@ from pathlib import Path
 from landscape.database import LandscapeDatabase
 from landscape.schemas import AnalysisMode, LandscapeScope
 from landscape.store import LandscapeRunStore
-from landscape.workflow import LandscapeWorkflowHarness, LandscapeWorkflowStep
+from landscape.workflow import (
+    LandscapeWorkflowHarness,
+    LandscapeWorkflowStep,
+    NonRetryableLandscapeWorkflowError,
+    _retry_transient_error,
+)
 
 
 class LandscapeWorkflowHarnessTests(unittest.TestCase):
+    def test_deterministic_policy_gate_is_not_retried(self) -> None:
+        self.assertFalse(
+            _retry_transient_error(NonRetryableLandscapeWorkflowError("policy gate"))
+        )
+        self.assertTrue(_retry_transient_error(ConnectionError("temporary")))
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)

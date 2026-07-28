@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Protocol
 
 from idea.merge import MergedHit
+from idea.merge import normalize_publication_number
 from idea.model_client import StructuredModelClient
 from idea.providers.base import FetchRequest, FetchedDocument, ProviderResult, ProviderRunner, SearchHit, SearchProvider
 
@@ -23,6 +24,7 @@ from .reporting import LandscapeReportService, build_report
 from .schemas import LandscapeQueryPlan, LandscapeScope
 from .search import (
     CompanyPatentCount,
+    LandscapeCandidateLimitExceededError,
     candidate_company,
     execute_provider_queries,
     exclusion_reason,
@@ -31,6 +33,12 @@ from .search import (
 )
 from .store import LandscapeRunStore
 from .workflow import LandscapeWorkflowStep
+
+
+class LandscapeCandidateRepository(Protocol):
+    def put_candidates(
+        self, run_id: str, candidates: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]: ...
 
 
 class LandscapeExecutionService:
@@ -44,6 +52,7 @@ class LandscapeExecutionService:
         provider_timeout_seconds: dict[str, float],
         analysis_concurrency: int,
         report_service: LandscapeReportService,
+        candidate_repository: "LandscapeCandidateRepository | None" = None,
     ):
         self.database = database
         self.store = store
@@ -57,6 +66,7 @@ class LandscapeExecutionService:
         self.aliases = CompetitorAliasService(model)
         self.directions = TechnicalDirectionService(model)
         self.report_service = report_service
+        self.candidate_repository = candidate_repository
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.enrichment_stats: dict[str, dict[str, int]] = {}
@@ -162,11 +172,59 @@ class LandscapeExecutionService:
                     application_number=hit.application_number,
                     publication_date=hit.publication_date,
                     assignee=hit.assignee,
-                    normalized_key=hit.publication_number,
+                    normalized_key=normalize_publication_number(hit.publication_number),
                     decision=decision,
                     exclusion_reason=reason.value if reason else None,
                     raw=hit.model_dump(mode="json"),
                 )
+        if self.candidate_repository is not None:
+            ranking_by_publication = {
+                item.publication_number: item
+                for item in result.ranking
+            }
+            self.candidate_repository.put_candidates(
+                run_id,
+                [
+                    {
+                        "document_id": document_id(candidate.publication_number or ""),
+                        "publication_number": candidate.publication_number,
+                        "normalized_key": candidate.publication_number,
+                        "rank": rank,
+                        "decision": "ELIGIBLE",
+                        "metadata": {
+                            "title": candidate.title,
+                            "application_number": candidate.application_number,
+                            "family_id": candidate.family_id,
+                            "priority_date": candidate.priority_date,
+                            "filing_date": candidate.filing_date,
+                            "publication_date": candidate.publication_date,
+                            "assignee": candidate.assignee,
+                            "found_by": sorted(candidate.found_by),
+                            "query_ids": sorted(candidate.query_ids),
+                            "ranking": (
+                                {
+                                    **ranking_by_publication[
+                                        candidate.publication_number
+                                    ].model_dump(mode="json"),
+                                    "reasons": sorted(
+                                        ranking_by_publication[
+                                            candidate.publication_number
+                                        ].reasons
+                                    ),
+                                }
+                                if candidate.publication_number in ranking_by_publication
+                                else None
+                            ),
+                        },
+                    }
+                    for rank, candidate in enumerate(result.candidates, start=1)
+                ],
+            )
+        if result.coverage.candidate_limit_exceeded:
+            raise LandscapeCandidateLimitExceededError(
+                unique_candidate_count=result.coverage.unique_candidate_count,
+                candidate_limit=scope.budget.candidate_limit,
+            )
         return {
             "result": result.model_dump(mode="json"),
             "enrichment": self.enrichment_stats.get(run_id, {}),

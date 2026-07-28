@@ -22,6 +22,7 @@ from idea.providers.base import (
 
 from .planning import validate_query_plan_scope
 from .schemas import AnalysisMode, LandscapeModel, LandscapeQueryPlan, LandscapeScope
+from .workflow import NonRetryableLandscapeWorkflowError
 
 
 class ExclusionReason(StrEnum):
@@ -30,6 +31,21 @@ class ExclusionReason(StrEnum):
     PUBLICATION_DATE_INVALID = "PUBLICATION_DATE_INVALID"
     PUBLICATION_DATE_OUTSIDE_WINDOW = "PUBLICATION_DATE_OUTSIDE_WINDOW"
     COMPETITOR_NOT_CONFIRMED = "COMPETITOR_NOT_CONFIRMED"
+
+
+class LandscapeCandidateLimitExceededError(NonRetryableLandscapeWorkflowError):
+    """The complete eligible publication set exceeds its configured safety bound."""
+
+    error_code = "LANDSCAPE_CANDIDATE_LIMIT_EXCEEDED"
+
+    def __init__(self, *, unique_candidate_count: int, candidate_limit: int):
+        self.unique_candidate_count = unique_candidate_count
+        self.candidate_limit = candidate_limit
+        super().__init__(
+            "eligible deduplicated publication count "
+            f"{unique_candidate_count} exceeds candidate_limit safety bound "
+            f"{candidate_limit}; the candidate set was not truncated"
+        )
 
 
 class CompanyPatentCount(LandscapeModel):
@@ -45,6 +61,7 @@ class LandscapeSearchCoverage(LandscapeModel):
     unique_candidate_count: int = Field(ge=0)
     selected_count: int = Field(ge=0)
     truncated_count: int = Field(ge=0)
+    candidate_limit_exceeded: bool = False
     excluded_counts: dict[str, int]
     provider_statuses: dict[str, str] = Field(default_factory=dict)
     company_patent_counts: list[CompanyPatentCount] = Field(default_factory=list)
@@ -107,14 +124,11 @@ def strict_filter_and_select(
             eligible_count += 1
         eligible_batches.append((query_id, eligible_hits))
 
-    merged = merge_hits(eligible_batches)
+    merged = _merge_hits_by_publication(eligible_batches)
     candidate_limit = scope.budget.candidate_limit
     ranked = _rank_candidates(merged, scope, direction_terms or [])
-    selected_ranked = _balanced_candidate_selection(
-        ranked, scope, min(candidate_limit, len(ranked))
-    )
-    selected_keys = {item[0].merge_key for item in selected_ranked}
-    selected = [item[0] for item in selected_ranked]
+    selected_keys = {item.merge_key for item in merged}
+    selected = [item for item, _, _ in ranked]
     company_counts = _company_patent_counts(merged, scope)
     return LandscapeSearchResult(
         candidates=selected,
@@ -138,10 +152,53 @@ def strict_filter_and_select(
             eligible_hit_count=eligible_count,
             unique_candidate_count=len(merged),
             selected_count=len(selected),
-            truncated_count=max(0, len(merged) - len(selected)),
+            truncated_count=0,
+            candidate_limit_exceeded=len(merged) > candidate_limit,
             excluded_counts=dict(sorted(exclusions.items())),
             provider_statuses=provider_statuses or {},
             company_patent_counts=company_counts,
+        ),
+    )
+
+
+def _merge_hits_by_publication(
+    batches: list[tuple[str, list[SearchHit]]],
+) -> list[MergedHit]:
+    """Merge duplicate provider records without collapsing distinct publications."""
+
+    records_by_publication: dict[str, list[tuple[str, SearchHit]]] = defaultdict(list)
+    for query_id, hits in batches:
+        for hit in hits:
+            publication = normalize_publication_number(hit.publication_number)
+            if publication is None:  # guarded by exclusion_reason; keep this fail closed
+                raise ValueError("eligible hit is missing a normalized publication number")
+            records_by_publication[publication].append((query_id, hit))
+
+    merged: list[MergedHit] = []
+    for publication in sorted(records_by_publication):
+        grouped_batches = [
+            (query_id, [hit])
+            for query_id, hit in sorted(
+                records_by_publication[publication],
+                key=lambda item: (
+                    item[1].provider_rank,
+                    item[1].provider,
+                    item[0],
+                    item[1].url,
+                ),
+            )
+        ]
+        publications = merge_hits(grouped_batches)
+        if len(publications) != 1:
+            raise ValueError(
+                f"publication-only deduplication produced an invalid group for {publication}"
+            )
+        merged.append(publications[0])
+    return sorted(
+        merged,
+        key=lambda item: (
+            min(source.provider_rank for source in item.sources),
+            item.publication_number or item.title,
         ),
     )
 
@@ -485,59 +542,6 @@ def _rank_candidates(
             -item[1],
             item[0].publication_number or item[0].title,
         ),
-    )
-
-
-def _balanced_candidate_selection(
-    ranked: list[tuple[MergedHit, float, dict[str, float]]],
-    scope: LandscapeScope,
-    limit: int,
-) -> list[tuple[MergedHit, float, dict[str, float]]]:
-    if limit >= len(ranked):
-        return ranked
-    queues: dict[str, list[tuple[MergedHit, float, dict[str, float]]]] = defaultdict(list)
-    for item in ranked:
-        queues[_company_for_hit(item[0], scope)[0]].append(item)
-    if scope.mode in {AnalysisMode.COMPETITOR, AnalysisMode.TECHNOLOGY_COMPETITOR}:
-        companies = [
-            competitor.name for competitor in scope.competitors if queues[competitor.name]
-        ]
-        total = sum(len(queues[name]) for name in companies)
-        equal_slots = int(limit * 0.4)
-        proportional_slots = limit - equal_slots
-        quotas = {
-            name: min(
-                len(queues[name]),
-                equal_slots // max(1, len(companies))
-                + round(proportional_slots * len(queues[name]) / max(1, total)),
-            )
-            for name in companies
-        }
-    else:
-        cap = max(1, (limit + 3) // 4)
-        quotas = {name: min(len(items), cap) for name, items in queues.items()}
-    selected: list[tuple[MergedHit, float, dict[str, float]]] = []
-    selected_keys: set[str] = set()
-    for item in ranked:
-        company = _company_for_hit(item[0], scope)[0]
-        if quotas.get(company, 0) <= 0:
-            continue
-        selected.append(item)
-        selected_keys.add(item[0].merge_key)
-        quotas[company] -= 1
-        if len(selected) == limit:
-            break
-    if len(selected) < limit:
-        for item in ranked:
-            if item[0].merge_key in selected_keys:
-                continue
-            selected.append(item)
-            selected_keys.add(item[0].merge_key)
-            if len(selected) == limit:
-                break
-    return sorted(
-        selected,
-        key=lambda item: (-item[1], item[0].publication_number or item[0].title),
     )
 
 
