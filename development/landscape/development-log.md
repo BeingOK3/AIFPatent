@@ -2,6 +2,14 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-FORCE-REBUILD-REPAIR-SNAPSHOTS-033
+
+- 类型：修复轮次的公司画像/趋势强制重建执行边界。
+- 语义：普通执行遇到有效已有快照会恢复；repair round 调用必须重新分类/画像或重新归纳趋势，并写入对应的追加式快照。
+- 安全：repair round 必须大于 0；不改写基础表或旧轮次；输出包含 round，便于后续 Graph/Audit 留痕。
+- 验证：Company Execution 聚焦 7 项、Landscape 全量 155 项通过；零真实模型调用。
+- 未完成：尚未把 Repair Plan 的 FETCH/ANALYZE 和强制重建串成 executor，也未路由回主 Graph。
+
 ## 2026-07-28 — LANDSCAPE-APPEND-ONLY-REPAIR-SNAPSHOTS-032
 
 - 类型：有限修复的 PostgreSQL 追加式结果版本。

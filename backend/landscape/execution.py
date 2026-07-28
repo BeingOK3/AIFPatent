@@ -122,6 +122,15 @@ class LandscapeCompanyProfileRepository(Protocol):
         profile: CompanyTechnologyProfile,
     ) -> CompanyTechnologyProfile: ...
 
+    def put_repaired_company_profile(
+        self,
+        run_id: str,
+        *,
+        repair_round: int,
+        company_id: str,
+        profile: CompanyTechnologyProfile,
+    ) -> CompanyTechnologyProfile: ...
+
 
 class LandscapeCompanyFanoutRunner(Protocol):
     async def execute(
@@ -136,6 +145,14 @@ class LandscapeTrendRepository(Protocol):
 
     def put_cross_company_analysis(
         self, run_id: str, analysis: CrossCompanyTrendAnalysis
+    ) -> CrossCompanyTrendAnalysis: ...
+
+    def put_repaired_cross_company_analysis(
+        self,
+        run_id: str,
+        *,
+        repair_round: int,
+        analysis: CrossCompanyTrendAnalysis,
     ) -> CrossCompanyTrendAnalysis: ...
 
 
@@ -210,6 +227,8 @@ class LandscapeExecutionService:
         self,
         run_id: str,
         company_id: str,
+        *,
+        repair_round: int | None = None,
     ) -> dict[str, Any]:
         if (
             self.company_repository is None
@@ -233,8 +252,11 @@ class LandscapeExecutionService:
 
         existing = self.profile_repository.list_company_profiles(run_id)
         profile = existing.get(company_id)
+        force_rebuild = repair_round is not None
+        if force_rebuild and repair_round < 1:
+            raise ValueError("company repair requires repair_round >= 1")
         recovered = profile is not None
-        if profile is not None:
+        if profile is not None and not force_rebuild:
             validate_company_technology_classification(
                 batch,
                 CompanyTechnologyClassification(
@@ -244,16 +266,25 @@ class LandscapeExecutionService:
         else:
             classification = await self.company_classifier.classify(batch)
             profile = await self.company_profiler.build(batch, classification)
-            self.profile_repository.put_company_profile(
-                run_id,
-                company_id=company_id,
-                profile=profile,
-            )
+            if force_rebuild:
+                self.profile_repository.put_repaired_company_profile(
+                    run_id,
+                    repair_round=repair_round,
+                    company_id=company_id,
+                    profile=profile,
+                )
+            else:
+                self.profile_repository.put_company_profile(
+                    run_id,
+                    company_id=company_id,
+                    profile=profile,
+                )
         return {
             "company_id": company_id,
             "publication_count": len(batch.items),
             "category_count": len(profile.technology_categories),
-            "recovered": recovered,
+            "recovered": recovered and not force_rebuild,
+            "repair_round": repair_round,
         }
 
     async def handle_step(
@@ -296,7 +327,7 @@ class LandscapeExecutionService:
         }
 
     async def analyze_cross_company_trends(
-        self, run_id: str
+        self, run_id: str, *, repair_round: int | None = None
     ) -> dict[str, Any]:
         if (
             self.profile_repository is None
@@ -327,8 +358,11 @@ class LandscapeExecutionService:
             bucket="QUARTER",
         )
         existing = self.trend_repository.list_cross_company_analysis(run_id)
-        recovered = existing is not None
-        if existing is not None:
+        force_rebuild = repair_round is not None
+        if force_rebuild and repair_round < 1:
+            raise ValueError("trend repair requires repair_round >= 1")
+        recovered = existing is not None and not force_rebuild
+        if existing is not None and not force_rebuild:
             _validate_recovered_trends(
                 existing,
                 profiles=profiles,
@@ -344,11 +378,17 @@ class LandscapeExecutionService:
                 publication_dates=publication_dates,
                 time_basis=time_basis,
             )
-            self.trend_repository.put_cross_company_analysis(run_id, analysis)
+            if force_rebuild:
+                self.trend_repository.put_repaired_cross_company_analysis(
+                    run_id, repair_round=repair_round, analysis=analysis
+                )
+            else:
+                self.trend_repository.put_cross_company_analysis(run_id, analysis)
         return {
             "trend_count": len(analysis.trends),
             "company_count": len(profiles),
             "recovered": recovered,
+            "repair_round": repair_round,
         }
 
     async def verify_coverage(self, run_id: str) -> dict[str, Any]:

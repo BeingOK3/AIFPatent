@@ -52,7 +52,9 @@ class _CompanyExecutionRepository:
         self.trend_analysis = None
         self.audits = []
         self.put_calls = 0
+        self.repair_profile_calls = []
         self.trend_put_calls = 0
+        self.repair_trend_calls = []
 
     def list_company_assignments(self, _run_id):
         return self.assignment_result
@@ -74,6 +76,13 @@ class _CompanyExecutionRepository:
         self.profiles[company_id] = profile
         return profile
 
+    def put_repaired_company_profile(
+        self, _run_id, *, repair_round, company_id, profile
+    ):
+        self.repair_profile_calls.append((repair_round, company_id))
+        self.profiles[company_id] = profile
+        return profile
+
     def list_fetched_documents(self, _run_id):
         return {
             publication: FetchedDocument(
@@ -90,6 +99,11 @@ class _CompanyExecutionRepository:
 
     def put_cross_company_analysis(self, _run_id, analysis):
         self.trend_put_calls += 1
+        self.trend_analysis = analysis
+        return analysis
+
+    def put_repaired_cross_company_analysis(self, _run_id, *, repair_round, analysis):
+        self.repair_trend_calls.append(repair_round)
         self.trend_analysis = analysis
         return analysis
 
@@ -148,6 +162,28 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
             [call[0] for call in self.model.calls],
             [COMPANY_CLASSIFIER_NAME, COMPANY_PROFILE_AGENT_NAME],
         )
+
+    def test_repair_forces_append_only_company_and_trend_snapshots(self) -> None:
+        asyncio.run(self.service.analyze_company("run-1", "CO-HUAWEI"))
+        repaired = asyncio.run(
+            self.service.analyze_company(
+                "run-1", "CO-HUAWEI", repair_round=1
+            )
+        )
+        self.assertFalse(repaired["recovered"])
+        self.assertEqual(self.repository.repair_profile_calls, [(1, "CO-HUAWEI")])
+        self.service.scope = lambda _run_id: LandscapeScope(  # type: ignore[method-assign]
+            mode=AnalysisMode.TECHNOLOGY,
+            technology_direction="液冷",
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+        )
+        asyncio.run(self.service.analyze_cross_company_trends("run-1"))
+        trend = asyncio.run(
+            self.service.analyze_cross_company_trends("run-1", repair_round=1)
+        )
+        self.assertFalse(trend["recovered"])
+        self.assertEqual(self.repository.repair_trend_calls, [1])
 
     def test_unknown_company_fails_before_model_call(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown or empty"):

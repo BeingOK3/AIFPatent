@@ -2,6 +2,19 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-force-rebuild-repair-snapshots
+
+### 已完成
+
+- Company/Profile 与 Cross-company Trend 执行服务支持带 `repair_round` 的强制重建。
+- 修复调用跳过普通恢复短路，结果写入追加式 repair snapshot；普通调用仍保持既有的幂等恢复语义。
+- 拒绝无效 repair round，并在阶段输出中标识所属修复轮次。
+
+### 验证
+
+- Company Execution 聚焦 7 项、Landscape 全量 155 项测试通过。
+- `git diff --check` 通过；无真实模型调用。
+
 ## 2026-07-28 — landscape-append-only-repair-snapshots
 
 ### 已完成
