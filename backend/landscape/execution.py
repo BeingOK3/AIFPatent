@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Iterable
+from datetime import date
 from typing import Any, Protocol
 
 from idea.merge import MergedHit
@@ -19,6 +20,10 @@ from .company_classification import (
     validate_company_technology_classification,
 )
 from .company_profiles import CompanyTechnologyProfileService
+from .company_trends import (
+    CrossCompanyTrendService,
+    validate_cross_company_trend_proposal,
+)
 from .database import LandscapeDatabase
 from .planning import (
     CompetitorAliasService,
@@ -31,9 +36,13 @@ from .reporting import LandscapeReportService, build_report
 from .schemas import (
     CompanyTechnologyClassification,
     CompanyTechnologyProfile,
+    CrossCompanyTrendAnalysis,
+    CrossCompanyTrendProposal,
+    CrossCompanyTrendProposalAnalysis,
     LandscapePatentAnalysis,
     LandscapeQueryPlan,
     LandscapeScope,
+    TrendTimeBasis,
 )
 from .search import (
     LandscapeCandidateLimitExceededError,
@@ -114,6 +123,16 @@ class LandscapeCompanyFanoutRunner(Protocol):
     ) -> list[str]: ...
 
 
+class LandscapeTrendRepository(Protocol):
+    def list_cross_company_analysis(
+        self, run_id: str
+    ) -> CrossCompanyTrendAnalysis | None: ...
+
+    def put_cross_company_analysis(
+        self, run_id: str, analysis: CrossCompanyTrendAnalysis
+    ) -> CrossCompanyTrendAnalysis: ...
+
+
 class LandscapeExecutionService:
     def __init__(
         self,
@@ -131,6 +150,7 @@ class LandscapeExecutionService:
         analysis_repository: "LandscapeAnalysisRepository | None" = None,
         profile_repository: "LandscapeCompanyProfileRepository | None" = None,
         company_fanout: "LandscapeCompanyFanoutRunner | None" = None,
+        trend_repository: "LandscapeTrendRepository | None" = None,
     ):
         self.database = database
         self.store = store
@@ -145,6 +165,7 @@ class LandscapeExecutionService:
         self.directions = TechnicalDirectionService(model)
         self.company_classifier = CompanyTechnologyClassificationService(model)
         self.company_profiler = CompanyTechnologyProfileService(model)
+        self.company_trends = CrossCompanyTrendService(model)
         self.report_service = report_service
         self.candidate_repository = candidate_repository
         self.company_repository = company_repository
@@ -152,6 +173,7 @@ class LandscapeExecutionService:
         self.analysis_repository = analysis_repository
         self.profile_repository = profile_repository
         self.company_fanout = company_fanout
+        self.trend_repository = trend_repository
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.enrichment_stats: dict[str, dict[str, int]] = {}
@@ -225,6 +247,9 @@ class LandscapeExecutionService:
             LandscapeWorkflowStep.FETCH_DETAILS: self.fetch_details,
             LandscapeWorkflowStep.ANALYZE_PATENTS: self.analyze_patents,
             LandscapeWorkflowStep.ANALYZE_COMPANIES: self.analyze_companies,
+            LandscapeWorkflowStep.ANALYZE_CROSS_COMPANY_TRENDS: (
+                self.analyze_cross_company_trends
+            ),
             LandscapeWorkflowStep.CLUSTER_PATENTS: self.cluster_patents,
             LandscapeWorkflowStep.BUILD_REPORT: self.build_report,
         }
@@ -248,6 +273,62 @@ class LandscapeExecutionService:
             "company_count": len(company_ids),
             "company_ids": company_ids,
             "completed_company_ids": completed,
+        }
+
+    async def analyze_cross_company_trends(
+        self, run_id: str
+    ) -> dict[str, Any]:
+        if (
+            self.profile_repository is None
+            or self.analysis_repository is None
+            or self.fetch_repository is None
+            or self.trend_repository is None
+        ):
+            raise RuntimeError(
+                "trend analysis requires profile, analysis, fetch and trend repositories"
+            )
+        scope = self.scope(run_id)
+        profiles = self.profile_repository.list_company_profiles(run_id)
+        analyses = self.analysis_repository.list_patent_analyses(run_id)
+        documents = self.fetch_repository.list_fetched_documents(run_id)
+        publication_dates: dict[str, date] = {}
+        for publication in analyses:
+            document = documents.get(publication)
+            if document is None or not document.publication_date:
+                raise ValueError(
+                    f"trend input lacks publication date: {publication}"
+                )
+            publication_dates[publication] = date.fromisoformat(
+                document.publication_date[:10]
+            )
+        time_basis = TrendTimeBasis(
+            start=scope.publication_start,
+            end=scope.publication_end,
+            bucket="QUARTER",
+        )
+        existing = self.trend_repository.list_cross_company_analysis(run_id)
+        recovered = existing is not None
+        if existing is not None:
+            _validate_recovered_trends(
+                existing,
+                profiles=profiles,
+                analyses=analyses,
+                publication_dates=publication_dates,
+                time_basis=time_basis,
+            )
+            analysis = existing
+        else:
+            analysis = await self.company_trends.analyze(
+                profiles=profiles,
+                analyses=analyses,
+                publication_dates=publication_dates,
+                time_basis=time_basis,
+            )
+            self.trend_repository.put_cross_company_analysis(run_id, analysis)
+        return {
+            "trend_count": len(analysis.trends),
+            "company_count": len(profiles),
+            "recovered": recovered,
         }
 
     async def validate_scope(self, run_id: str) -> dict[str, Any]:
@@ -857,6 +938,67 @@ def coverage_limitations(coverage: dict[str, Any]) -> list[dict[str, str]]:
             }
         )
     return limitations
+
+
+def _validate_recovered_trends(
+    analysis: CrossCompanyTrendAnalysis,
+    *,
+    profiles: dict[str, CompanyTechnologyProfile],
+    analyses: dict[str, LandscapePatentAnalysis],
+    publication_dates: dict[str, date],
+    time_basis: TrendTimeBasis,
+) -> None:
+    company_by_publication = {
+        publication: company_id
+        for company_id, profile in profiles.items()
+        for category in profile.technology_categories
+        for publication in category.publication_numbers
+    }
+    if set(company_by_publication) != set(analyses):
+        raise ValueError(
+            "recovered trend profiles do not cover current analyses"
+        )
+    if set(publication_dates) != set(analyses):
+        raise ValueError(
+            "recovered trend dates do not cover current analyses"
+        )
+    evidence_by_publication = {
+        publication: {
+            reference.evidence_id for reference in patent.evidence_refs
+        }
+        for publication, patent in analyses.items()
+    }
+    bucket_by_publication = {
+        publication: (
+            f"{published.year:04d}-Q{(published.month - 1) // 3 + 1}"
+        )
+        for publication, published in publication_dates.items()
+    }
+    if any(trend.time_basis != time_basis for trend in analysis.trends):
+        raise ValueError("recovered trend time basis does not match run scope")
+    validate_cross_company_trend_proposal(
+        CrossCompanyTrendProposalAnalysis(
+            overall_summary=analysis.overall_summary,
+            common_directions=analysis.common_directions,
+            differentiated_directions=analysis.differentiated_directions,
+            trends=[
+                CrossCompanyTrendProposal(
+                    name=trend.name,
+                    summary=trend.summary,
+                    direction=trend.direction,
+                    company_ids=trend.company_ids,
+                    publication_numbers=trend.publication_numbers,
+                    evidence_ids=trend.evidence_ids,
+                )
+                for trend in analysis.trends
+            ],
+            limitations=analysis.limitations,
+        ),
+        company_by_publication=company_by_publication,
+        evidence_by_publication=evidence_by_publication,
+        bucket_by_publication=bucket_by_publication,
+        minimum_patents_for_time_trend=3,
+    )
 
 
 def document_id(publication: str) -> str:

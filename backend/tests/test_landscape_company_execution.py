@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from datetime import date
 from types import SimpleNamespace
 
+from idea.providers.base import FetchedDocument
 from landscape.company_assignment import CompanyAssignmentResult
 from landscape.company_classification import COMPANY_CLASSIFIER_NAME
 from landscape.company_profiles import COMPANY_PROFILE_AGENT_NAME
 from landscape.execution import LandscapeExecutionService
-from landscape.schemas import CompanyTechnologyProfileNarrative
+from landscape.schemas import (
+    AnalysisMode,
+    CompanyTechnologyProfileNarrative,
+    LandscapeScope,
+)
 from tests.test_landscape_company_classification import company_batch
 from tests.test_landscape_company_profiles import classification
 
@@ -43,7 +49,9 @@ class _CompanyExecutionRepository:
             item.publication_number: item.analysis for item in batch.items
         }
         self.profiles = {}
+        self.trend_analysis = None
         self.put_calls = 0
+        self.trend_put_calls = 0
 
     def list_company_assignments(self, _run_id):
         return self.assignment_result
@@ -58,6 +66,25 @@ class _CompanyExecutionRepository:
         self.put_calls += 1
         self.profiles[company_id] = profile
         return profile
+
+    def list_fetched_documents(self, _run_id):
+        return {
+            publication: FetchedDocument(
+                provider="fixture",
+                publication_number=publication,
+                publication_date="2026-05-01",
+                url=f"https://example.test/{publication}",
+            )
+            for publication in self.analyses
+        }
+
+    def list_cross_company_analysis(self, _run_id):
+        return self.trend_analysis
+
+    def put_cross_company_analysis(self, _run_id, analysis):
+        self.trend_put_calls += 1
+        self.trend_analysis = analysis
+        return analysis
 
 
 class _CompanyFanoutRecorder:
@@ -82,8 +109,10 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
             analysis_concurrency=1,
             report_service=None,  # type: ignore[arg-type]
             company_repository=self.repository,
+            fetch_repository=self.repository,
             analysis_repository=self.repository,
             profile_repository=self.repository,
+            trend_repository=self.repository,
         )
 
     def test_company_analysis_persists_once_and_resume_skips_model(self) -> None:
@@ -138,6 +167,29 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
         self.assertEqual(result["completed_company_ids"], ["CO-HUAWEI"])
         with self.assertRaisesRegex(RuntimeError, "already bound"):
             self.service.bind_company_fanout(fanout)
+
+    def test_single_company_trend_is_persisted_and_resumed_without_model(self):
+        asyncio.run(self.service.analyze_company("run-1", "CO-HUAWEI"))
+        calls_before_trend = len(self.model.calls)
+        self.service.scope = lambda _run_id: LandscapeScope(  # type: ignore[method-assign]
+            mode=AnalysisMode.TECHNOLOGY,
+            technology_direction="液冷",
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+        )
+
+        first = asyncio.run(
+            self.service.analyze_cross_company_trends("run-1")
+        )
+        second = asyncio.run(
+            self.service.analyze_cross_company_trends("run-1")
+        )
+
+        self.assertFalse(first["recovered"])
+        self.assertTrue(second["recovered"])
+        self.assertEqual(first["trend_count"], 0)
+        self.assertEqual(self.repository.trend_put_calls, 1)
+        self.assertEqual(len(self.model.calls), calls_before_trend)
 
 
 if __name__ == "__main__":

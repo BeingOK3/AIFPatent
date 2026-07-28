@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-MAIN-GRAPH-TRENDS-025
+
+- 类型：跨公司趋势执行、恢复与生产主 Graph 节点。
+- 顺序：新增 `ANALYZE_CROSS_COMPANY_TRENDS`，消费已完成公司 Profiles。
+- 输入：Repository 重读 Profiles、Analyses 和 Fetched Documents；时间边界来自冻结 Scope，按季度生成 Time Basis。
+- 恢复：Snapshot 存在时重验 Profile/Analysis 等集、公司 Owner、Evidence Owner、时间基础与方向阈值，合法才零模型跳过。
+- 单公司：程序生成并持久化零 Trend 的受限 Analysis，不把空数组误判为未执行。
+- 涉及文件：Workflow Enum、Execution 趋势节点、Runtime Repository 注入、趋势恢复测试和两份追加式日志。
+- 验证：聚焦 10 项、Landscape 全量 147 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：Coverage Audit 尚未接入主 Graph；下一工作单元实现审计节点和条件终止路由。
+
 ## 2026-07-28 — LANDSCAPE-MAIN-GRAPH-COMPANY-STAGE-024
 
 - 类型：公司 `Send` 子图接入生产主 Workflow。

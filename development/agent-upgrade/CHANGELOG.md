@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-main-graph-cross-company-trends
+
+### 已完成
+
+- 主 Workflow 新增 `ANALYZE_CROSS_COMPANY_TRENDS`，位于公司 fan-out 完成之后。
+- 趋势输入从 PostgreSQL Profile、Patent Analysis、Fetched Document 和冻结 Scope 重建，Graph State 不保存业务正文。
+- 使用公开日生成程序拥有的季度 Time Basis；缺失或非法日期直接 fail closed。
+- 已存在趋势快照时重新校验公司—专利—Evidence 链、时间范围和方向阈值后跳过模型。
+- 单公司场景确定性保存零趋势受限结果，并可恢复，无需模型调用。
+
+### 验证
+
+- 趋势执行/主 Workflow 聚焦 10 项、Landscape 全量 147 项测试通过。
+- Python compileall 与 `git diff --check` 通过；无真实模型调用。
+
 ## 2026-07-28 — landscape-main-graph-company-stage
 
 ### 已完成
