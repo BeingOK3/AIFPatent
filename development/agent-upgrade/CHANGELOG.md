@@ -2,6 +2,22 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-company-result-manifests
+
+### 已完成
+
+- 新增 PostgreSQL `073_landscape_company_result_manifests` 迁移。
+- 公司分析 Manifest 冻结 company/category/member 数量与集合哈希，为公司级幂等恢复提供完成标志。
+- 新增跨公司 Analysis 快照表，即使合法结果包含零条 Trend，也能区分“已执行”与“尚未执行”。
+- 新增按 `repair_round` 保存的 Coverage Audit 表，保留 PASS/REPAIR/LIMITED/FAIL 每轮决策。
+- 将 `073` 接入已有数据卷显式迁移链，并把 Landscape 启动版本门提升到 `073`。
+
+### 验证
+
+- PostgreSQL Schema、部署迁移与 Landscape Repository 聚焦测试 37 项通过。
+- Landscape 全量 123 项测试、Python compileall 与 `git diff --check` 通过。
+- 本提交只建立持久化 Schema，Repository 写入在下一独立提交实现。
+
 ## 2026-07-28 — landscape-coverage-evidence-audit
 
 ### 已完成

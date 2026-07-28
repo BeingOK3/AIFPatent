@@ -2,6 +2,18 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-RESULT-MANIFESTS-016
+
+- 类型：公司分析、跨公司结果与 Coverage Audit 的 PostgreSQL 完成标记。
+- 迁移：新增 `073_landscape_company_result_manifests.sql`，不回改已登记的 `070/071/072`。
+- 公司恢复：每个 `(run_id, company_id)` 保存 category/member count 与 content hash，后续公司任务可判断成功结果并跳过模型。
+- 零趋势语义：`landscape_cross_company_analyses` 保存完整 Analysis 快照与 `trend_count=0`，不再把空趋势误判为未执行。
+- 审计历史：`landscape_coverage_audits` 以 `(run_id, repair_round)` 为主键，保留有限修复的逐轮决策。
+- 部署：已有卷迁移命令和启动版本门提升至 `073`。
+- 涉及文件：`073` SQL、PostgreSQL 启动门、迁移工具、Schema/基础设施测试和两份追加式日志。
+- 验证：聚焦 37 项、Landscape 全量 123 项通过；compileall、`git diff --check` 通过。
+- 未完成：本提交未实现 Repository 写入与读取；下一工作单元接入原子、幂等、不可变持久化。
+
 ## 2026-07-28 — LANDSCAPE-COVERAGE-AUDIT-015
 
 - 类型：`U/F/A/T` 集合、公司成员与 Evidence 完整性审计。

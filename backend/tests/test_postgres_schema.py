@@ -20,6 +20,9 @@ LANDSCAPE_COMPANY_MANIFEST_SCHEMA_PATH = Path(
 LANDSCAPE_FETCH_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/072_landscape_document_fetches.sql"
 )
+LANDSCAPE_RESULT_MANIFEST_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/073_landscape_company_result_manifests.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -39,6 +42,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_fetch_sql = LANDSCAPE_FETCH_SCHEMA_PATH.read_text(
             encoding="utf-8"
+        )
+        self.landscape_result_manifest_sql = (
+            LANDSCAPE_RESULT_MANIFEST_SCHEMA_PATH.read_text(encoding="utf-8")
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -97,6 +103,26 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("document_json JSONB", sql)
         self.assertIn("REFERENCES landscape_candidates(run_id, document_id)", sql)
         self.assertIn("'072_landscape_document_fetches'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_company_result_manifests_cover_zero_trends_and_audits(self) -> None:
+        sql = self.landscape_result_manifest_sql
+        for table in (
+            "landscape_company_analysis_manifests",
+            "landscape_cross_company_analyses",
+            "landscape_coverage_audits",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("trend_count INTEGER NOT NULL CHECK (trend_count >= 0)", sql)
+        self.assertIn("PRIMARY KEY(run_id, repair_round)", sql)
+        self.assertIn(
+            "decision IN ('PASS','REPAIR','LIMITED','FAIL')",
+            sql,
+        )
+        self.assertIn("'073_landscape_company_result_manifests'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
