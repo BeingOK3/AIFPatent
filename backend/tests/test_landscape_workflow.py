@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 from datetime import date
@@ -10,6 +11,7 @@ from landscape.schemas import AnalysisMode, LandscapeScope
 from landscape.store import LandscapeRunStore
 from landscape.workflow import (
     LandscapeWorkflowHarness,
+    LandscapeWorkflow,
     LandscapeWorkflowStep,
     NonRetryableLandscapeWorkflowError,
     _retry_transient_error,
@@ -148,6 +150,40 @@ class LandscapeWorkflowHarnessTests(unittest.TestCase):
         self.assertEqual(
             self.harness.latest_task(run_id, step, task_key="CO-A")["status"],
             "RUNNING",
+        )
+
+    def test_main_graph_routes_pass_audit_through_async_condition(self) -> None:
+        async def handler(run_id, step, _attempt):
+            if step == LandscapeWorkflowStep.VERIFY_COVERAGE:
+                return {"decision": "PASS"}
+            if step == LandscapeWorkflowStep.BUILD_REPORT:
+                self.store.write_reports(
+                    run_id,
+                    report={"summary": {}},
+                    markdown="# report\n",
+                    patents_csv="publication_number\n",
+                    manifest_metadata={},
+                )
+            return {"ok": True}
+
+        workflow = LandscapeWorkflow(
+            database=self.db,
+            harness=self.harness,
+            step_handler=handler,
+            limitation_collector=lambda _run_id: [],
+            step_timeout_seconds=5,
+            max_step_attempts=2,
+        )
+
+        status = asyncio.run(workflow.execute(self.run["run_id"]))
+
+        self.assertEqual(status, "COMPLETED")
+        self.assertEqual(
+            self.db.get_stage_result(
+                self.run["run_id"],
+                LandscapeWorkflowStep.VERIFY_COVERAGE.value,
+            )["value"]["decision"],
+            "PASS",
         )
 
 

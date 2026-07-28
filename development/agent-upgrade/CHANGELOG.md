@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-main-graph-coverage-routing
+
+### 已完成
+
+- 主 Workflow 新增 `VERIFY_COVERAGE`，从 PostgreSQL 重建 U/F/A/T、公司归属、Profile、Trend 和 Evidence 集合。
+- Audit round 0 原子持久化并可恢复；PASS 与 LIMITED 通过 async 条件边继续，FAIL 以确定性错误终止 Run。
+- 当前明确设置 `max_repair_rounds=0`：尚未实现修复执行器前，缺口输出 LIMITED，不伪装成已修复。
+- LIMITED 的审计限制进入最终 Run limitations，从而形成 `COMPLETED_WITH_LIMITATIONS`。
+- 主 Graph 端到端测试实际执行全部节点和条件边，验证短事件循环可正常结束。
+
+### 验证
+
+- Audit/Graph 聚焦 12 项、Landscape 全量 149 项测试通过。
+- Python compileall 与 `git diff --check` 通过；无模型 API Key。
+
 ## 2026-07-28 — landscape-main-graph-cross-company-trends
 
 ### 已完成

@@ -163,6 +163,7 @@ def build_landscape_runtime(
         analysis_repository=database,
         profile_repository=database,
         trend_repository=database,
+        audit_repository=database,
     )
     company_fanout = LandscapeCompanyFanout(
         harness=harness,

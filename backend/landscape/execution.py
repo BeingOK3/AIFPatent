@@ -24,6 +24,7 @@ from .company_trends import (
     CrossCompanyTrendService,
     validate_cross_company_trend_proposal,
 )
+from .coverage_audit import audit_company_trend_coverage
 from .database import LandscapeDatabase
 from .planning import (
     CompetitorAliasService,
@@ -39,6 +40,7 @@ from .schemas import (
     CrossCompanyTrendAnalysis,
     CrossCompanyTrendProposal,
     CrossCompanyTrendProposalAnalysis,
+    LandscapeCoverageAudit,
     LandscapePatentAnalysis,
     LandscapeQueryPlan,
     LandscapeScope,
@@ -52,13 +54,18 @@ from .search import (
     strict_filter_and_select,
 )
 from .store import LandscapeRunStore
-from .workflow import LandscapeWorkflowStep
+from .workflow import (
+    LandscapeWorkflowStep,
+    NonRetryableLandscapeWorkflowError,
+)
 
 
 class LandscapeCandidateRepository(Protocol):
     def put_candidates(
         self, run_id: str, candidates: list[dict[str, Any]]
     ) -> list[dict[str, Any]]: ...
+
+    def list_candidates(self, run_id: str) -> list[dict[str, Any]]: ...
 
 
 class LandscapeCompanyRepository(Protocol):
@@ -133,6 +140,20 @@ class LandscapeTrendRepository(Protocol):
     ) -> CrossCompanyTrendAnalysis: ...
 
 
+class LandscapeCoverageAuditRepository(Protocol):
+    def list_coverage_audits(
+        self, run_id: str
+    ) -> list[LandscapeCoverageAudit]: ...
+
+    def put_coverage_audit(
+        self,
+        run_id: str,
+        *,
+        repair_round: int,
+        audit: LandscapeCoverageAudit,
+    ) -> LandscapeCoverageAudit: ...
+
+
 class LandscapeExecutionService:
     def __init__(
         self,
@@ -151,6 +172,7 @@ class LandscapeExecutionService:
         profile_repository: "LandscapeCompanyProfileRepository | None" = None,
         company_fanout: "LandscapeCompanyFanoutRunner | None" = None,
         trend_repository: "LandscapeTrendRepository | None" = None,
+        audit_repository: "LandscapeCoverageAuditRepository | None" = None,
     ):
         self.database = database
         self.store = store
@@ -174,6 +196,7 @@ class LandscapeExecutionService:
         self.profile_repository = profile_repository
         self.company_fanout = company_fanout
         self.trend_repository = trend_repository
+        self.audit_repository = audit_repository
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.enrichment_stats: dict[str, dict[str, int]] = {}
@@ -250,6 +273,7 @@ class LandscapeExecutionService:
             LandscapeWorkflowStep.ANALYZE_CROSS_COMPANY_TRENDS: (
                 self.analyze_cross_company_trends
             ),
+            LandscapeWorkflowStep.VERIFY_COVERAGE: self.verify_coverage,
             LandscapeWorkflowStep.CLUSTER_PATENTS: self.cluster_patents,
             LandscapeWorkflowStep.BUILD_REPORT: self.build_report,
         }
@@ -328,6 +352,70 @@ class LandscapeExecutionService:
         return {
             "trend_count": len(analysis.trends),
             "company_count": len(profiles),
+            "recovered": recovered,
+        }
+
+    async def verify_coverage(self, run_id: str) -> dict[str, Any]:
+        if (
+            self.candidate_repository is None
+            or self.company_repository is None
+            or self.fetch_repository is None
+            or self.analysis_repository is None
+            or self.profile_repository is None
+            or self.trend_repository is None
+            or self.audit_repository is None
+        ):
+            raise RuntimeError("coverage audit requires all landscape repositories")
+        existing = self.audit_repository.list_coverage_audits(run_id)
+        if existing:
+            audit = existing[-1]
+            recovered = True
+            repair_round = len(existing) - 1
+        else:
+            candidates = self.candidate_repository.list_candidates(run_id)
+            assignments = self.company_repository.list_company_assignments(run_id)
+            documents = self.fetch_repository.list_fetched_documents(run_id)
+            analyses = self.analysis_repository.list_patent_analyses(run_id)
+            profiles = self.profile_repository.list_company_profiles(run_id)
+            trends = self.trend_repository.list_cross_company_analysis(run_id)
+            evidence = {
+                publication: {
+                    reference.evidence_id
+                    for reference in analysis.evidence_refs
+                }
+                for publication, analysis in analyses.items()
+            }
+            repair_round = 0
+            audit = audit_company_trend_coverage(
+                eligible_publications=[
+                    candidate["publication_number"]
+                    for candidate in candidates
+                ],
+                assignment_result=assignments,
+                fetched_publications=set(documents),
+                analyses=analyses,
+                profiles=profiles,
+                trends=trends,
+                valid_evidence_ids_by_publication=evidence,
+                repair_round=repair_round,
+                max_repair_rounds=0,
+            )
+            self.audit_repository.put_coverage_audit(
+                run_id,
+                repair_round=repair_round,
+                audit=audit,
+            )
+            recovered = False
+        if audit.decision == "FAIL":
+            raise NonRetryableLandscapeWorkflowError(
+                "coverage audit rejected corrupt landscape result"
+            )
+        return {
+            "decision": audit.decision,
+            "coverage_ratio": audit.coverage_ratio,
+            "repair_round": repair_round,
+            "missing_publications": audit.missing_publications,
+            "limitations": audit.limitations,
             "recovered": recovered,
         }
 
@@ -677,6 +765,23 @@ class LandscapeExecutionService:
             analysis = self.database.get_stage_result(run_id, LandscapeWorkflowStep.ANALYZE_PATENTS.value)["value"]
             if analysis["failures"]:
                 limitations.append({"code": "ANALYSIS_FAILURE", "message": f"{len(analysis['failures'])} 件专利精读失败。"})
+        except KeyError:
+            pass
+        try:
+            audit = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.VERIFY_COVERAGE.value
+            )["value"]
+            if audit.get("decision") == "LIMITED":
+                messages = audit.get("limitations") or [
+                    "公司趋势覆盖未达到完整报告门槛。"
+                ]
+                limitations.extend(
+                    {
+                        "code": "COVERAGE_LIMITED",
+                        "message": message,
+                    }
+                    for message in messages
+                )
         except KeyError:
             pass
         if run_id in self.cluster_failures:

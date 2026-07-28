@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
@@ -22,6 +22,7 @@ class LandscapeWorkflowStep(StrEnum):
     ANALYZE_PATENTS = "ANALYZE_PATENTS"
     ANALYZE_COMPANIES = "ANALYZE_COMPANIES"
     ANALYZE_CROSS_COMPANY_TRENDS = "ANALYZE_CROSS_COMPANY_TRENDS"
+    VERIFY_COVERAGE = "VERIFY_COVERAGE"
     CLUSTER_PATENTS = "CLUSTER_PATENTS"
     BUILD_REPORT = "BUILD_REPORT"
 
@@ -47,6 +48,7 @@ class LandscapeWorkflowState(TypedDict):
     run_id: str
     last_completed_step: str | None
     completed_steps: int
+    audit_decision: NotRequired[str]
 
 
 StepHandler = Callable[[str, LandscapeWorkflowStep, int], Awaitable[dict[str, Any]]]
@@ -355,13 +357,32 @@ class LandscapeWorkflow:
             max_attempts=self.max_step_attempts,
             retry_on=_retry_transient_error,
         )
-        previous = None
         for step in WORKFLOW_STEPS:
             builder.add_node(step.value, self._node(step), retry_policy=retry)
-            builder.add_edge(START if previous is None else previous, step.value)
-            previous = step.value
-        builder.add_edge(previous, END)
+        builder.add_edge(START, WORKFLOW_STEPS[0].value)
+        for current, following in zip(WORKFLOW_STEPS, WORKFLOW_STEPS[1:]):
+            if current == LandscapeWorkflowStep.VERIFY_COVERAGE:
+                continue
+            builder.add_edge(current.value, following.value)
+        builder.add_conditional_edges(
+            LandscapeWorkflowStep.VERIFY_COVERAGE.value,
+            self._route_coverage,
+            {
+                "PASS": LandscapeWorkflowStep.CLUSTER_PATENTS.value,
+                "LIMITED": LandscapeWorkflowStep.CLUSTER_PATENTS.value,
+            },
+        )
+        builder.add_edge(WORKFLOW_STEPS[-1].value, END)
         return builder
+
+    @staticmethod
+    async def _route_coverage(state: LandscapeWorkflowState) -> str:
+        decision = state.get("audit_decision")
+        if decision not in {"PASS", "LIMITED"}:
+            raise NonRetryableLandscapeWorkflowError(
+                f"unsupported coverage route: {decision}"
+            )
+        return decision
 
     def _node(self, step: LandscapeWorkflowStep):
         async def node(state: LandscapeWorkflowState) -> dict[str, Any]:
@@ -369,7 +390,15 @@ class LandscapeWorkflow:
             progress = self.harness.progress(run_id)
             state_for_step = next(item for item in progress["steps"] if item["name"] == step.value)
             if state_for_step["status"] == "SUCCEEDED":
-                return {"last_completed_step": step.value, "completed_steps": progress["completed_steps"]}
+                result = {
+                    "last_completed_step": step.value,
+                    "completed_steps": progress["completed_steps"],
+                }
+                if step == LandscapeWorkflowStep.VERIFY_COVERAGE:
+                    result["audit_decision"] = self.database.get_stage_result(
+                        run_id, step.value
+                    )["value"]["decision"]
+                return result
             attempt = self.harness.start_step(run_id, step, {"input_hash": self.database.get_run(run_id)["input_hash"]})
             try:
                 output = await asyncio.wait_for(
@@ -381,7 +410,13 @@ class LandscapeWorkflow:
                 self.harness.fail_step(run_id, step, attempt, exc)
                 raise
             self.harness.complete_step(run_id, step, attempt, output)
-            return {"last_completed_step": step.value, "completed_steps": progress["completed_steps"] + 1}
+            result = {
+                "last_completed_step": step.value,
+                "completed_steps": progress["completed_steps"] + 1,
+            }
+            if step == LandscapeWorkflowStep.VERIFY_COVERAGE:
+                result["audit_decision"] = output["decision"]
+            return result
 
         node.__name__ = f"run_{step.value.lower()}"
         return node

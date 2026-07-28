@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-MAIN-GRAPH-COVERAGE-026
+
+- 类型：Coverage Audit 主节点、持久化恢复与条件路由。
+- 输入：读取 Candidates(U)、Assignments(C)、Fetched(F)、Analyses(A)、Profiles(T)、Trend 和 Analysis Evidence，程序计算覆盖。
+- 决策：PASS/LIMITED 通过 async conditional edge 进入后续报告；FAIL 抛出 non-retryable 错误并终止 Run。
+- 恢复：Audit Snapshot 存在时复用同一不可变轮次；当前 `max_repair_rounds=0`，不会在缺少修复执行器时声称 REPAIR 成功。
+- 限制：LIMITED 的 Audit limitations 注入最终 Run limitations，驱动 `COMPLETED_WITH_LIMITATIONS`。
+- 涉及文件：Workflow State/Graph、Execution Audit 节点、Runtime Repository 注入、Graph/Audit 测试和两份追加式日志。
+- 验证：聚焦 12 项、Landscape 全量 149 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：定向 REPAIR 执行器和回环尚未实现；下一工作单元先发布公司趋势 Report 数据，随后实现有限修复。
+
 ## 2026-07-28 — LANDSCAPE-MAIN-GRAPH-TRENDS-025
 
 - 类型：跨公司趋势执行、恢复与生产主 Graph 节点。

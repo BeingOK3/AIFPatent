@@ -50,11 +50,18 @@ class _CompanyExecutionRepository:
         }
         self.profiles = {}
         self.trend_analysis = None
+        self.audits = []
         self.put_calls = 0
         self.trend_put_calls = 0
 
     def list_company_assignments(self, _run_id):
         return self.assignment_result
+
+    def list_candidates(self, _run_id):
+        return [
+            {"publication_number": publication}
+            for publication in sorted(self.analyses)
+        ]
 
     def list_patent_analyses(self, _run_id):
         return dict(self.analyses)
@@ -86,6 +93,13 @@ class _CompanyExecutionRepository:
         self.trend_analysis = analysis
         return analysis
 
+    def list_coverage_audits(self, _run_id):
+        return list(self.audits)
+
+    def put_coverage_audit(self, _run_id, *, repair_round, audit):
+        self.audits.append(audit)
+        return audit
+
 
 class _CompanyFanoutRecorder:
     def __init__(self):
@@ -108,11 +122,13 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
             provider_timeout_seconds={},
             analysis_concurrency=1,
             report_service=None,  # type: ignore[arg-type]
+            candidate_repository=self.repository,
             company_repository=self.repository,
             fetch_repository=self.repository,
             analysis_repository=self.repository,
             profile_repository=self.repository,
             trend_repository=self.repository,
+            audit_repository=self.repository,
         )
 
     def test_company_analysis_persists_once_and_resume_skips_model(self) -> None:
@@ -190,6 +206,24 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
         self.assertEqual(first["trend_count"], 0)
         self.assertEqual(self.repository.trend_put_calls, 1)
         self.assertEqual(len(self.model.calls), calls_before_trend)
+
+    def test_coverage_audit_pass_is_persisted_and_resumed(self):
+        asyncio.run(self.service.analyze_company("run-1", "CO-HUAWEI"))
+        self.service.scope = lambda _run_id: LandscapeScope(  # type: ignore[method-assign]
+            mode=AnalysisMode.TECHNOLOGY,
+            technology_direction="液冷",
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+        )
+        asyncio.run(self.service.analyze_cross_company_trends("run-1"))
+
+        first = asyncio.run(self.service.verify_coverage("run-1"))
+        second = asyncio.run(self.service.verify_coverage("run-1"))
+
+        self.assertEqual(first["decision"], "PASS")
+        self.assertFalse(first["recovered"])
+        self.assertTrue(second["recovered"])
+        self.assertEqual(len(self.repository.audits), 1)
 
 
 if __name__ == "__main__":
