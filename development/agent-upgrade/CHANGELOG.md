@@ -2,6 +2,22 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-company-profile-persistence
+
+### 已完成
+
+- 新增公司 Profile 的 PostgreSQL 多表原子写入与读取。
+- 写入前从数据库重新验证本公司 PRIMARY 归属、成功 Analysis、Candidate document ID 和 Evidence Owner。
+- Categories、Members、Category Evidence、Profile Snapshot 与 Company Manifest 在同一事务提交。
+- Profile 必须恰好覆盖该公司全部成功 Analysis；每件分类成员必须贡献自身已持久化 Evidence。
+- 幂等重放同时比较 Profile 哈希、Manifest、Category 哈希、成员映射和 Evidence 映射；半套数据或旁路修改 fail closed。
+
+### 验证
+
+- Landscape PostgreSQL Repository 16 项测试通过。
+- Landscape 全量 129 项测试、Python compileall 与 `git diff --check` 通过。
+- 本提交只涉及确定性持久化，无模型调用或 API Key。
+
 ## 2026-07-28 — landscape-trend-audit-persistence
 
 ### 已完成

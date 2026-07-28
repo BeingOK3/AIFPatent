@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-PROFILE-PERSISTENCE-018
+
+- 类型：Company Categories/Members/Profile/Manifest 的 PostgreSQL 多表事务。
+- 数据库复核：以 PRIMARY Assignment 与成功 Analysis 的 Join 结果作为公司 A；Profile 成员必须恰好覆盖该集合。
+- Evidence：每个 Category Evidence 必须存在于当前 Run，document/publication Owner 必须属于 Category，且每件成员至少贡献一个 Evidence。
+- 原子写入：Categories、Members、`insight_evidence`、Profile Snapshot 和 Manifest 同事务提交。
+- 恢复：同内容重放逐项比较 Profile/Manifest 哈希、Category 哈希、成员 Document 映射和 Evidence 映射；部分或变化数据拒绝。
+- 涉及文件：`backend/landscape/postgres_database.py`、Profile Repository 准备/校验测试和两份追加式日志。
+- 验证：Repository 16 项、Landscape 全量 129 项通过；compileall、`git diff --check` 通过；零模型调用。
+- 未完成：这些 Repository 尚未由新 Workflow 节点调用；下一工作单元实现 keyed task attempt 与执行接入。
+
 ## 2026-07-28 — LANDSCAPE-TREND-AUDIT-PERSISTENCE-017
 
 - 类型：跨公司 Analysis 与逐轮 Coverage Audit 的 PostgreSQL 原生 Repository。

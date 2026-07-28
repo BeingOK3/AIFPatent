@@ -13,6 +13,7 @@ from .company_assignment import CompanyAssignmentResult
 from .database import LandscapeDatabase, assert_no_secrets, canonical_json, now_ms
 from .schemas import (
     CompanyAssignment,
+    CompanyTechnologyProfile,
     CrossCompanyTrendAnalysis,
     LandscapeCoverageAudit,
     LandscapePatentAnalysis,
@@ -732,6 +733,261 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             analyses[row["publication_number"]] = analysis
         return analyses
 
+    def put_company_profile(
+        self,
+        run_id: str,
+        *,
+        company_id: str,
+        profile: CompanyTechnologyProfile,
+    ) -> CompanyTechnologyProfile:
+        value = profile.model_dump(mode="json")
+        assert_no_secrets(value)
+        encoded = canonical_json(value)
+        profile_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        with self.connect() as connection:
+            _lock_landscape_run(connection, run_id)
+            company = connection.execute(
+                """
+                SELECT company_id FROM landscape_companies
+                WHERE run_id = %s AND company_id = %s
+                """,
+                (run_id, company_id),
+            ).fetchone()
+            if company is None:
+                raise ValueError(f"unknown landscape company: {company_id}")
+            analyzed_rows = connection.execute(
+                """
+                SELECT c.document_id,c.publication_number
+                FROM landscape_candidates c
+                JOIN landscape_document_companies dc
+                  ON dc.run_id=c.run_id AND dc.document_id=c.document_id
+                 AND dc.relationship='PRIMARY'
+                JOIN landscape_patent_analyses pa
+                  ON pa.run_id=c.run_id AND pa.document_id=c.document_id
+                WHERE c.run_id=%s AND dc.company_id=%s
+                ORDER BY c.publication_number
+                """,
+                (run_id, company_id),
+            ).fetchall()
+            document_by_publication = {
+                row["publication_number"]: row["document_id"]
+                for row in analyzed_rows
+            }
+            members = [
+                publication
+                for category in profile.technology_categories
+                for publication in category.publication_numbers
+            ]
+            if set(members) != set(document_by_publication):
+                raise ValueError(
+                    "company profile must cover all analyzed company patents exactly"
+                )
+            evidence_rows = connection.execute(
+                """
+                SELECT e.evidence_id,e.document_id,c.publication_number
+                FROM landscape_evidence e
+                JOIN landscape_candidates c
+                  ON c.run_id=e.run_id AND c.document_id=e.document_id
+                WHERE e.run_id=%s
+                ORDER BY e.evidence_id
+                """,
+                (run_id,),
+            ).fetchall()
+            evidence_owner = {
+                row["evidence_id"]: (
+                    row["document_id"],
+                    row["publication_number"],
+                )
+                for row in evidence_rows
+            }
+            category_rows, member_rows, insight_rows = _prepare_profile_rows(
+                company_id=company_id,
+                profile=profile,
+                document_by_publication=document_by_publication,
+                evidence_owner=evidence_owner,
+            )
+            manifest = connection.execute(
+                """
+                SELECT category_count,member_count,content_hash
+                FROM landscape_company_analysis_manifests
+                WHERE run_id=%s AND company_id=%s
+                """,
+                (run_id, company_id),
+            ).fetchone()
+            stored_profile = connection.execute(
+                """
+                SELECT profile_json,content_hash
+                FROM landscape_company_profiles
+                WHERE run_id=%s AND company_id=%s
+                """,
+                (run_id, company_id),
+            ).fetchone()
+            stored_categories = connection.execute(
+                """
+                SELECT category_id,name,summary,keywords_json,content_hash
+                FROM landscape_company_categories
+                WHERE run_id=%s AND company_id=%s
+                ORDER BY category_id
+                """,
+                (run_id, company_id),
+            ).fetchall()
+            stored_members = connection.execute(
+                """
+                SELECT category_id,document_id,publication_number
+                FROM landscape_company_category_members
+                WHERE run_id=%s AND company_id=%s
+                ORDER BY publication_number
+                """,
+                (run_id, company_id),
+            ).fetchall()
+            stored_insights = connection.execute(
+                """
+                SELECT ie.insight_id,ie.evidence_id,ie.document_id
+                FROM landscape_insight_evidence ie
+                JOIN landscape_company_categories cc
+                  ON cc.run_id=ie.run_id
+                 AND ie.insight_id=cc.company_id || ':' || cc.category_id
+                WHERE ie.run_id=%s AND ie.insight_type='CATEGORY'
+                  AND cc.company_id=%s
+                ORDER BY ie.insight_id,ie.evidence_id
+                """,
+                (run_id, company_id),
+            ).fetchall()
+            any_stored = bool(
+                manifest
+                or stored_profile
+                or stored_categories
+                or stored_members
+                or stored_insights
+            )
+            if manifest is not None and stored_profile is not None:
+                stored_encoded = canonical_json(
+                    _json_value(stored_profile["profile_json"])
+                )
+                if (
+                    manifest["category_count"] != len(category_rows)
+                    or manifest["member_count"] != len(member_rows)
+                    or manifest["content_hash"] != profile_hash
+                    or stored_profile["content_hash"] != profile_hash
+                    or stored_encoded != encoded
+                    or [
+                        _category_storage_projection(row)
+                        for row in stored_categories
+                    ]
+                    != category_rows
+                    or [dict(row) for row in stored_members] != member_rows
+                    or [dict(row) for row in stored_insights] != insight_rows
+                ):
+                    raise ValueError(
+                        "landscape company profile is immutable or corrupt"
+                    )
+                return profile
+            if any_stored:
+                raise ValueError("landscape company profile is partial or corrupt")
+
+            created_at = now_ms()
+            for category in category_rows:
+                connection.execute(
+                    """
+                    INSERT INTO landscape_company_categories(
+                        run_id,company_id,category_id,name,summary,keywords_json,
+                        content_hash,created_at
+                    ) VALUES(%s,%s,%s,%s,%s,%s::jsonb,%s,%s)
+                    """,
+                    (
+                        run_id,
+                        company_id,
+                        category["category_id"],
+                        category["name"],
+                        category["summary"],
+                        category["keywords_json"],
+                        category["content_hash"],
+                        created_at,
+                    ),
+                )
+            for member in member_rows:
+                connection.execute(
+                    """
+                    INSERT INTO landscape_company_category_members(
+                        run_id,company_id,category_id,document_id,
+                        publication_number,created_at
+                    ) VALUES(%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        run_id,
+                        company_id,
+                        member["category_id"],
+                        member["document_id"],
+                        member["publication_number"],
+                        created_at,
+                    ),
+                )
+            for insight in insight_rows:
+                connection.execute(
+                    """
+                    INSERT INTO landscape_insight_evidence(
+                        run_id,insight_type,insight_id,evidence_id,
+                        document_id,created_at
+                    ) VALUES(%s,'CATEGORY',%s,%s,%s,%s)
+                    """,
+                    (
+                        run_id,
+                        insight["insight_id"],
+                        insight["evidence_id"],
+                        insight["document_id"],
+                        created_at,
+                    ),
+                )
+            connection.execute(
+                """
+                INSERT INTO landscape_company_profiles(
+                    run_id,company_id,profile_json,content_hash,created_at
+                ) VALUES(%s,%s,%s::jsonb,%s,%s)
+                """,
+                (run_id, company_id, encoded, profile_hash, created_at),
+            )
+            connection.execute(
+                """
+                INSERT INTO landscape_company_analysis_manifests(
+                    run_id,company_id,category_count,member_count,
+                    content_hash,created_at
+                ) VALUES(%s,%s,%s,%s,%s,%s)
+                """,
+                (
+                    run_id,
+                    company_id,
+                    len(category_rows),
+                    len(member_rows),
+                    profile_hash,
+                    created_at,
+                ),
+            )
+        return profile
+
+    def list_company_profiles(
+        self, run_id: str
+    ) -> dict[str, CompanyTechnologyProfile]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT company_id,profile_json,content_hash
+                FROM landscape_company_profiles
+                WHERE run_id=%s
+                ORDER BY company_id
+                """,
+                (run_id,),
+            ).fetchall()
+        profiles = {}
+        for row in rows:
+            value = _json_value(row["profile_json"])
+            encoded = canonical_json(value)
+            if hashlib.sha256(encoded.encode("utf-8")).hexdigest() != row["content_hash"]:
+                raise ValueError("landscape company profile hash mismatch")
+            profiles[row["company_id"]] = CompanyTechnologyProfile.model_validate(
+                value
+            )
+        return profiles
+
     def put_cross_company_analysis(
         self,
         run_id: str,
@@ -951,6 +1207,76 @@ def _trend_storage_row(value: dict[str, Any]) -> dict[str, Any]:
         "trend_json": encoded,
         "content_hash": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
     }
+
+
+def _category_storage_projection(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "category_id": row["category_id"],
+        "name": row["name"],
+        "summary": row["summary"],
+        "keywords_json": canonical_json(_json_value(row["keywords_json"])),
+        "content_hash": row["content_hash"],
+    }
+
+
+def _prepare_profile_rows(
+    *,
+    company_id: str,
+    profile: CompanyTechnologyProfile,
+    document_by_publication: dict[str, str],
+    evidence_owner: dict[str, tuple[str, str]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    categories = []
+    members = []
+    insights = []
+    for category in profile.technology_categories:
+        category_value = category.model_dump(mode="json")
+        encoded = canonical_json(category_value)
+        categories.append(
+            {
+                "category_id": category.category_id,
+                "name": category.name,
+                "summary": category.summary,
+                "keywords_json": canonical_json(category.keywords),
+                "content_hash": hashlib.sha256(
+                    encoded.encode("utf-8")
+                ).hexdigest(),
+            }
+        )
+        publications = set(category.publication_numbers)
+        for publication in sorted(publications):
+            if publication not in document_by_publication:
+                raise ValueError("category publication is outside analyzed company set")
+            members.append(
+                {
+                    "category_id": category.category_id,
+                    "document_id": document_by_publication[publication],
+                    "publication_number": publication,
+                }
+            )
+        cited_publications = set()
+        for evidence_id in sorted(category.evidence_ids):
+            owner = evidence_owner.get(evidence_id)
+            if owner is None or owner[1] not in publications:
+                raise ValueError(
+                    "category evidence is unknown or belongs to another patent"
+                )
+            cited_publications.add(owner[1])
+            insights.append(
+                {
+                    "insight_id": f"{company_id}:{category.category_id}",
+                    "evidence_id": evidence_id,
+                    "document_id": owner[0],
+                }
+            )
+        if cited_publications != publications:
+            raise ValueError(
+                "every category member must contribute persisted evidence"
+            )
+    categories.sort(key=lambda row: row["category_id"])
+    members.sort(key=lambda row: row["publication_number"])
+    insights.sort(key=lambda row: (row["insight_id"], row["evidence_id"]))
+    return categories, members, insights
 
 
 def _lock_landscape_run(connection: Any, run_id: str) -> None:

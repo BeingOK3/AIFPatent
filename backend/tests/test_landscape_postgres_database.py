@@ -12,6 +12,7 @@ from landscape.postgres_database import (
     LandscapePostgreSQLDatabase,
     _prepare_candidate_rows,
     _prepare_company_assignment_rows,
+    _prepare_profile_rows,
 )
 from landscape.schemas import (
     CompanyAssignment,
@@ -23,6 +24,7 @@ from landscape.schemas import (
     LandscapePatentAnalysis,
     NormalizedCompany,
 )
+from tests.test_landscape_company_trends import profile
 
 
 class _Cursor:
@@ -679,6 +681,246 @@ class LandscapePostgreSQLResultSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "immutable"):
             self.database.put_coverage_audit(
                 "run-1", repair_round=0, audit=second
+            )
+
+
+class LandscapePostgreSQLCompanyProfilePreparationTests(unittest.TestCase):
+    def test_profile_rows_preserve_members_and_evidence_ownership(self) -> None:
+        company_profile = profile("A", ["CN1A", "CN2A"])
+        categories, members, insights = _prepare_profile_rows(
+            company_id="CO-A",
+            profile=company_profile,
+            document_by_publication={
+                "CN1A": "LD-1",
+                "CN2A": "LD-2",
+            },
+            evidence_owner={
+                "EV-CN1A": ("LD-1", "CN1A"),
+                "EV-CN2A": ("LD-2", "CN2A"),
+            },
+        )
+        self.assertEqual(len(categories), 1)
+        self.assertEqual(
+            [member["publication_number"] for member in members],
+            ["CN1A", "CN2A"],
+        )
+        self.assertEqual(
+            [insight["evidence_id"] for insight in insights],
+            ["EV-CN1A", "EV-CN2A"],
+        )
+        self.assertTrue(categories[0]["content_hash"])
+
+    def test_cross_patent_or_incomplete_evidence_fails_closed(self) -> None:
+        company_profile = profile("A", ["CN1A", "CN2A"])
+        with self.assertRaisesRegex(ValueError, "another patent"):
+            _prepare_profile_rows(
+                company_id="CO-A",
+                profile=company_profile,
+                document_by_publication={
+                    "CN1A": "LD-1",
+                    "CN2A": "LD-2",
+                },
+                evidence_owner={
+                    "EV-CN1A": ("LD-X", "EP9A1"),
+                    "EV-CN2A": ("LD-2", "CN2A"),
+                },
+            )
+        incomplete = company_profile.model_copy(
+            update={
+                "technology_categories": [
+                    company_profile.technology_categories[0].model_copy(
+                        update={"evidence_ids": ["EV-CN1A"]}
+                    )
+                ]
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "must contribute"):
+            _prepare_profile_rows(
+                company_id="CO-A",
+                profile=incomplete,
+                document_by_publication={
+                    "CN1A": "LD-1",
+                    "CN2A": "LD-2",
+                },
+                evidence_owner={
+                    "EV-CN1A": ("LD-1", "CN1A"),
+                    "EV-CN2A": ("LD-2", "CN2A"),
+                },
+            )
+
+
+class _CompanyProfileConnection:
+    def __init__(self):
+        self.categories = []
+        self.members = []
+        self.insights = []
+        self.profile = None
+        self.manifest = None
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        if normalized.startswith("SELECT run_id FROM landscape_runs"):
+            return _Cursor([{"run_id": params[0]}])
+        if normalized.startswith("SELECT company_id FROM landscape_companies"):
+            return _Cursor([{"company_id": "CO_A"}])
+        if normalized.startswith("SELECT c.document_id,c.publication_number"):
+            return _Cursor(
+                [
+                    {"document_id": "LD-1", "publication_number": "CN1A"},
+                    {"document_id": "LD-2", "publication_number": "CN2A"},
+                ]
+            )
+        if normalized.startswith("SELECT e.evidence_id"):
+            return _Cursor(
+                [
+                    {
+                        "evidence_id": "EV-CN1A",
+                        "document_id": "LD-1",
+                        "publication_number": "CN1A",
+                    },
+                    {
+                        "evidence_id": "EV-CN2A",
+                        "document_id": "LD-2",
+                        "publication_number": "CN2A",
+                    },
+                ]
+            )
+        if normalized.startswith("SELECT category_count"):
+            return _Cursor([self.manifest] if self.manifest else [])
+        if normalized.startswith("SELECT profile_json"):
+            return _Cursor([self.profile] if self.profile else [])
+        if normalized.startswith("SELECT category_id,name"):
+            return _Cursor(self.categories)
+        if normalized.startswith("SELECT category_id,document_id"):
+            return _Cursor(self.members)
+        if normalized.startswith("SELECT ie.insight_id"):
+            if " LIKE " in normalized:
+                raise AssertionError("company insight lookup must not use LIKE")
+            return _Cursor(self.insights)
+        if normalized.startswith("INSERT INTO landscape_company_categories"):
+            (
+                _run_id,
+                _company_id,
+                category_id,
+                name,
+                summary,
+                keywords_json,
+                content_hash,
+                _created_at,
+            ) = params
+            self.categories.append(
+                {
+                    "category_id": category_id,
+                    "name": name,
+                    "summary": summary,
+                    "keywords_json": keywords_json,
+                    "content_hash": content_hash,
+                }
+            )
+            return _Cursor()
+        if normalized.startswith(
+            "INSERT INTO landscape_company_category_members"
+        ):
+            (
+                _run_id,
+                _company_id,
+                category_id,
+                document_id,
+                publication_number,
+                _created_at,
+            ) = params
+            self.members.append(
+                {
+                    "category_id": category_id,
+                    "document_id": document_id,
+                    "publication_number": publication_number,
+                }
+            )
+            return _Cursor()
+        if normalized.startswith("INSERT INTO landscape_insight_evidence"):
+            (
+                _run_id,
+                insight_id,
+                evidence_id,
+                document_id,
+                _created_at,
+            ) = params
+            self.insights.append(
+                {
+                    "insight_id": insight_id,
+                    "evidence_id": evidence_id,
+                    "document_id": document_id,
+                }
+            )
+            return _Cursor()
+        if normalized.startswith("INSERT INTO landscape_company_profiles"):
+            _run_id, _company_id, profile_json, content_hash, _created_at = params
+            self.profile = {
+                "profile_json": profile_json,
+                "content_hash": content_hash,
+            }
+            return _Cursor()
+        if normalized.startswith(
+            "INSERT INTO landscape_company_analysis_manifests"
+        ):
+            (
+                _run_id,
+                _company_id,
+                category_count,
+                member_count,
+                content_hash,
+                _created_at,
+            ) = params
+            self.manifest = {
+                "category_count": category_count,
+                "member_count": member_count,
+                "content_hash": content_hash,
+            }
+            return _Cursor()
+        raise AssertionError(f"unexpected SQL: {normalized}")
+
+
+class LandscapePostgreSQLCompanyProfilePersistenceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.database = LandscapePostgreSQLDatabase(
+            "postgresql://test:test@localhost/test"
+        )
+        self.connection = _CompanyProfileConnection()
+
+        @contextmanager
+        def connect():
+            yield self.connection
+
+        self.database.connect = connect  # type: ignore[method-assign]
+
+    def test_profile_write_is_complete_and_idempotent_for_company_with_underscore(
+        self,
+    ) -> None:
+        company_profile = profile("A", ["CN1A", "CN2A"])
+
+        first = self.database.put_company_profile(
+            "run-1", company_id="CO_A", profile=company_profile
+        )
+        second = self.database.put_company_profile(
+            "run-1", company_id="CO_A", profile=company_profile
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(self.connection.categories), 1)
+        self.assertEqual(len(self.connection.members), 2)
+        self.assertEqual(len(self.connection.insights), 2)
+        self.assertEqual(self.connection.manifest["member_count"], 2)
+
+    def test_profile_replay_detects_granular_category_mutation(self) -> None:
+        company_profile = profile("A", ["CN1A", "CN2A"])
+        self.database.put_company_profile(
+            "run-1", company_id="CO_A", profile=company_profile
+        )
+        self.connection.categories[0]["summary"] = "bypassed mutation"
+
+        with self.assertRaisesRegex(ValueError, "immutable or corrupt"):
+            self.database.put_company_profile(
+                "run-1", company_id="CO_A", profile=company_profile
             )
 
 
