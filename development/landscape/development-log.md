@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-RETIRE-LEGACY-CLUSTER-028
+
+- 类型：公司趋势主链移除旧全局技术聚类执行依赖。
+- Graph：活动步骤从 `VERIFY_COVERAGE` 直接条件路由到 `BUILD_REPORT`，新 Run 不再执行 `CLUSTER_PATENTS`。
+- 完成门：进度、顺序与 Run 完成校验只要求公司趋势活动步骤成功。
+- 兼容：保留旧枚举、旧数据表与历史 Cluster Snapshot 读取；新 Run 没有旧 Stage Result 时报告仍可生成。
+- 涉及文件：Landscape Workflow、Execution Report 读取、Workflow 测试和两份追加式日志。
+- 验证：Workflow 聚焦 6 项、Landscape 全量 149 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：Report/Frontend 仍保留旧 Cluster 字段和展示兼容；有限 REPAIR 执行器尚未实现。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-TREND-REPORT-027
 
 - 类型：公司技术画像与跨公司趋势 Report Schema/Markdown/Frontend 发布。

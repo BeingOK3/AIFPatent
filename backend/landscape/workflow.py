@@ -27,7 +27,13 @@ class LandscapeWorkflowStep(StrEnum):
     BUILD_REPORT = "BUILD_REPORT"
 
 
-WORKFLOW_STEPS = tuple(LandscapeWorkflowStep)
+# CLUSTER_PATENTS remains a readable legacy step for historical runs, but new
+# company-trend workflows no longer execute or require it for completion.
+WORKFLOW_STEPS = tuple(
+    step
+    for step in LandscapeWorkflowStep
+    if step is not LandscapeWorkflowStep.CLUSTER_PATENTS
+)
 TERMINAL_STATUSES = {"COMPLETED", "COMPLETED_WITH_LIMITATIONS", "FAILED", "CANCELLED"}
 MAIN_TASK_KEY = "__main__"
 
@@ -368,8 +374,8 @@ class LandscapeWorkflow:
             LandscapeWorkflowStep.VERIFY_COVERAGE.value,
             self._route_coverage,
             {
-                "PASS": LandscapeWorkflowStep.CLUSTER_PATENTS.value,
-                "LIMITED": LandscapeWorkflowStep.CLUSTER_PATENTS.value,
+                "PASS": LandscapeWorkflowStep.BUILD_REPORT.value,
+                "LIMITED": LandscapeWorkflowStep.BUILD_REPORT.value,
             },
         )
         builder.add_edge(WORKFLOW_STEPS[-1].value, END)

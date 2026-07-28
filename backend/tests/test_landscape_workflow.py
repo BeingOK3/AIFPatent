@@ -10,6 +10,7 @@ from landscape.database import LandscapeDatabase
 from landscape.schemas import AnalysisMode, LandscapeScope
 from landscape.store import LandscapeRunStore
 from landscape.workflow import (
+    WORKFLOW_STEPS,
     LandscapeWorkflowHarness,
     LandscapeWorkflow,
     LandscapeWorkflowStep,
@@ -57,7 +58,7 @@ class LandscapeWorkflowHarnessTests(unittest.TestCase):
         self.harness.begin_run(run_id)
         with self.assertRaisesRegex(Exception, "out-of-order"):
             self.harness.start_step(run_id, LandscapeWorkflowStep.PLAN_SEARCH, {})
-        for step in LandscapeWorkflowStep:
+        for step in WORKFLOW_STEPS:
             attempt = self.harness.start_step(run_id, step, {"step": step.value})
             self.harness.complete_step(run_id, step, attempt, {"ok": True})
         self.assertTrue(self.harness.completion_issues(run_id))
@@ -153,7 +154,10 @@ class LandscapeWorkflowHarnessTests(unittest.TestCase):
         )
 
     def test_main_graph_routes_pass_audit_through_async_condition(self) -> None:
+        invoked_steps = []
+
         async def handler(run_id, step, _attempt):
+            invoked_steps.append(step)
             if step == LandscapeWorkflowStep.VERIFY_COVERAGE:
                 return {"decision": "PASS"}
             if step == LandscapeWorkflowStep.BUILD_REPORT:
@@ -178,6 +182,14 @@ class LandscapeWorkflowHarnessTests(unittest.TestCase):
         status = asyncio.run(workflow.execute(self.run["run_id"]))
 
         self.assertEqual(status, "COMPLETED")
+        self.assertNotIn(LandscapeWorkflowStep.CLUSTER_PATENTS, invoked_steps)
+        self.assertEqual(
+            invoked_steps[-2:],
+            [
+                LandscapeWorkflowStep.VERIFY_COVERAGE,
+                LandscapeWorkflowStep.BUILD_REPORT,
+            ],
+        )
         self.assertEqual(
             self.db.get_stage_result(
                 self.run["run_id"],

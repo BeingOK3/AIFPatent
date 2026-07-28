@@ -2,6 +2,20 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-main-graph-retire-legacy-cluster
+
+### 已完成
+
+- 新建公司趋势 Run 的活动步骤、进度和完成门不再包含旧 `CLUSTER_PATENTS`。
+- Coverage Audit 的 PASS/LIMITED 条件边直接进入 `BUILD_REPORT`，不再额外调用一次旧聚类模型。
+- 保留旧 Step 枚举、聚类持久化和报告读取能力，历史 Run 若已有 Cluster Snapshot 仍可恢复展示。
+- 新 Run 没有 Cluster Stage Result 时，Report 按公司画像与跨公司趋势正常生成。
+
+### 验证
+
+- Workflow 聚焦 6 项、Landscape 全量 149 项测试通过。
+- Python compileall 与 `git diff --check` 通过；无真实模型调用。
+
 ## 2026-07-28 — landscape-company-trend-report-v1-3
 
 ### 已完成

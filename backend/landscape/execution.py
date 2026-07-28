@@ -730,8 +730,17 @@ class LandscapeExecutionService:
         coverage = self.database.get_stage_result(run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value)["value"]["result"]["coverage"]
         analysis_raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.ANALYZE_PATENTS.value)["value"]
         analyses = {key: LandscapePatentAnalysis.model_validate(value) for key, value in analysis_raw["analyses"].items()}
-        cluster_raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.CLUSTER_PATENTS.value)["value"]
-        clusters = LandscapeClusterPlan.model_validate({"clusters": cluster_raw["clusters"]}) if cluster_raw["clusters"] else None
+        try:
+            cluster_raw = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.CLUSTER_PATENTS.value
+            )["value"]
+        except KeyError:
+            cluster_raw = {}
+        clusters = (
+            LandscapeClusterPlan.model_validate({"clusters": cluster_raw["clusters"]})
+            if cluster_raw.get("clusters")
+            else None
+        )
         profiles = (
             self.profile_repository.list_company_profiles(run_id)
             if self.profile_repository is not None
