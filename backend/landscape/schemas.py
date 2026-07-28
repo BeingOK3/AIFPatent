@@ -402,6 +402,19 @@ class CompanyTechnologyClassification(LandscapeModel):
         return self
 
 
+class CompanyTechnologyProfileNarrative(LandscapeModel):
+    """Model-owned prose; category identity and membership remain program-owned."""
+
+    overall_summary: str = Field(min_length=1, max_length=4000)
+    technology_directions: list[str] = Field(min_length=1, max_length=20)
+    limitations: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("technology_directions", "limitations")
+    @classmethod
+    def normalize_text_lists(cls, values: list[str]) -> list[str]:
+        return _normalized_unique_strings(values)
+
+
 class CompanyTechnologyProfile(LandscapeModel):
     """LLM output only; company ID and expected publications remain program-owned."""
 

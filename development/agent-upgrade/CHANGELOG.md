@@ -2,6 +2,22 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-company-technology-profiles
+
+### 已完成
+
+- 新增公司技术 Profile 聚合服务，将程序验证过的 Categories 与模型叙述分离。
+- 模型只返回整体总结、技术方向和限制；不接收或回显 company/category/publication/evidence ID、数量、日期或统计。
+- 程序原样装配分类并再次验证成员覆盖，模型无法修改 Category ID、公开号、Evidence 或分类总结。
+- 单件公司 Profile 直接从唯一分类确定性生成，不产生额外模型调用。
+- Prompt 明确禁止在公司 Profile 阶段声称增长、下降、加速或转向，时间趋势留给后续程序统计门。
+
+### 验证
+
+- 公司 Profile、分类和领域 Schema 聚焦测试 20 项通过。
+- Landscape 全量 115 项测试、Python compileall 与 `git diff --check` 通过。
+- 测试继续使用 Stub Model，无需真实 API Key。
+
 ## 2026-07-28 — landscape-company-technology-classification
 
 ### 已完成

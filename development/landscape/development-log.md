@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-PROFILE-013
+
+- 类型：公司分类结果与公司级技术方向叙述聚合。
+- 信任拆分：新增 `CompanyTechnologyProfileNarrative`，模型只能生成总结、方向、限制；程序控制 Categories、成员公开号与 Evidence。
+- 输入最小化：Profile Agent 不接收 company/category/publication/evidence ID、专利数、日期或程序统计，只消费验证后分类语义和逐件分析结论。
+- 硬门：最终 Profile 必须逐字段保留已验证 Categories，并继续恰好覆盖公司 Batch；任何成员或分类内容改写均拒绝。
+- 单件路径：直接用唯一分类生成 Profile，不调用模型；多件路径才执行结构化叙述 Agent。
+- 涉及文件：`backend/landscape/{schemas,company_profiles}.py`、公司 Profile 测试和两份追加式日志。
+- 验证：聚焦 20 项、Landscape 全量 115 项通过；compileall、`git diff --check` 通过；未使用真实模型 API。
+- 未完成：Profile 尚未持久化；下一工作单元构建跨公司、时间门控且证据约束的趋势。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-CLASSIFICATION-012
 
 - 类型：单公司内部、证据约束的技术分类。
