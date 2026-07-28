@@ -2,6 +2,19 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-one-round-autonomous-repair
+
+### 已完成
+
+- Coverage Audit 首轮允许产生 `REPAIR`，持久化 round 0 后执行唯一一次受限 Repair Plan，并立即以修复后的持久化视图生成 round 1 Audit。
+- Repair 成功进入 PASS；未补齐的缺口因达到上限进入 LIMITED；内部集合损坏仍 FAIL，不会进入修复。
+- 报告读取最终 Audit Stage Result，保留修复输出与完整 round 历史用于调试和留档。
+
+### 验证
+
+- Company Execution 聚焦 9 项、Landscape 全量 157 项测试通过。
+- `git diff --check` 通过；无真实模型调用。
+
 ## 2026-07-28 — landscape-bounded-repair-executor
 
 ### 已完成

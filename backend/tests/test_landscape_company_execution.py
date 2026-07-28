@@ -288,6 +288,22 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
         self.assertTrue(second["recovered"])
         self.assertEqual(len(self.repository.audits), 1)
 
+    def test_coverage_audit_executes_one_bounded_repair_then_reaudits(self):
+        self.service.scope = lambda _run_id: LandscapeScope(  # type: ignore[method-assign]
+            mode=AnalysisMode.TECHNOLOGY,
+            technology_direction="液冷",
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+        )
+        result = asyncio.run(self.service.verify_coverage("run-1"))
+
+        self.assertEqual(result["decision"], "PASS")
+        self.assertEqual(result["repair_round"], 1)
+        self.assertIsNotNone(result["repair"])
+        self.assertEqual(len(self.repository.audits), 2)
+        self.assertEqual(self.repository.audits[0].decision, "REPAIR")
+        self.assertEqual(self.repository.audits[1].decision, "PASS")
+
 
 if __name__ == "__main__":
     unittest.main()

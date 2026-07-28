@@ -525,18 +525,9 @@ class LandscapeExecutionService:
             or self.audit_repository is None
         ):
             raise RuntimeError("coverage audit requires all landscape repositories")
-        existing = self.audit_repository.list_coverage_audits(run_id)
-        if existing:
-            audit = existing[-1]
-            recovered = True
-            repair_round = len(existing) - 1
-        else:
-            candidates = self.candidate_repository.list_candidates(run_id)
-            assignments = self.company_repository.list_company_assignments(run_id)
-            documents = self.fetch_repository.list_fetched_documents(run_id)
+
+        def compute_audit(repair_round: int) -> LandscapeCoverageAudit:
             analyses = self.analysis_repository.list_patent_analyses(run_id)
-            profiles = self.profile_repository.list_company_profiles(run_id)
-            trends = self.trend_repository.list_cross_company_analysis(run_id)
             evidence = {
                 publication: {
                     reference.evidence_id
@@ -544,26 +535,47 @@ class LandscapeExecutionService:
                 }
                 for publication, analysis in analyses.items()
             }
-            repair_round = 0
-            audit = audit_company_trend_coverage(
+            return audit_company_trend_coverage(
                 eligible_publications=[
                     candidate["publication_number"]
-                    for candidate in candidates
+                    for candidate in self.candidate_repository.list_candidates(run_id)
                 ],
-                assignment_result=assignments,
-                fetched_publications=set(documents),
+                assignment_result=self.company_repository.list_company_assignments(run_id),
+                fetched_publications=set(
+                    self.fetch_repository.list_fetched_documents(run_id)
+                ),
                 analyses=analyses,
-                profiles=profiles,
-                trends=trends,
+                profiles=self.profile_repository.list_company_profiles(run_id),
+                trends=self.trend_repository.list_cross_company_analysis(run_id),
                 valid_evidence_ids_by_publication=evidence,
                 repair_round=repair_round,
-                max_repair_rounds=0,
+                max_repair_rounds=1,
             )
+
+        existing = self.audit_repository.list_coverage_audits(run_id)
+        if existing:
+            audit = existing[-1]
+            recovered = True
+            repair_round = len(existing) - 1
+        else:
+            repair_round = 0
+            audit = compute_audit(repair_round)
             self.audit_repository.put_coverage_audit(
                 run_id,
                 repair_round=repair_round,
                 audit=audit,
             )
+            if audit.decision == "REPAIR":
+                repair_round = 1
+                repair_result = await self.repair_gaps(
+                    run_id, audit=audit, repair_round=repair_round
+                )
+                audit = compute_audit(repair_round)
+                self.audit_repository.put_coverage_audit(
+                    run_id, repair_round=repair_round, audit=audit
+                )
+            else:
+                repair_result = None
             recovered = False
         if audit.decision == "FAIL":
             raise NonRetryableLandscapeWorkflowError(
@@ -577,6 +589,7 @@ class LandscapeExecutionService:
             "repair_targets": audit.repair_targets,
             "limitations": audit.limitations,
             "recovered": recovered,
+            "repair": repair_result if not recovered else None,
         }
 
     async def validate_scope(self, run_id: str) -> dict[str, Any]:

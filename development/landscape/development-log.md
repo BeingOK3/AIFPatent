@@ -2,6 +2,14 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-ONE-ROUND-AUTONOMOUS-REPAIR-035
+
+- 类型：一次性受控自主修复与再审计闭环。
+- 流程：round 0 Audit=REPAIR 追加保存 → Repair Executor → round 1 从最新 Repository/repair snapshot 重算并追加保存。
+- 上限：固定一轮；修复不足自动 LIMITED，集合/归属损坏仍 FAIL，避免无界重试或掩盖问题。
+- 验证：测试覆盖无 Profile 的真实 REPAIR→PASS 轨迹和两条不可变 Audit 历史；Landscape 全量 157 项通过。
+- 未完成：Graph 仍将该闭环封装在 VERIFY 节点内；下一工作单元将其显式拆为 `REPAIR_GAPS` LangGraph 条件节点以提高运行可视性。
+
 ## 2026-07-28 — LANDSCAPE-BOUNDED-REPAIR-EXECUTOR-034
 
 - 类型：有限修复计划的定向执行器。
