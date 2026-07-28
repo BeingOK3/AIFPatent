@@ -1,0 +1,32 @@
+{
+  "schema_version": "landscape-agent-fixture/1.0.0",
+  "cases": [
+    {
+      "case_id": "BASE-01",
+      "description": "Complete seven-patent run with five company buckets.",
+      "initial_state": {
+        "run_id": "00000000-0000-4000-8000-000000000001",
+        "repair_round": 0,
+        "max_repair_rounds": 1,
+        "audit_decision": "PENDING"
+      },
+      "expected_company_sends": ["CO-HUAWEI","CO-VERTIV","CO-META","CO-METALLURGY","UNKNOWN"],
+      "expected_route": [
+        "VALIDATE_SCOPE",
+        "PLAN_SEARCH",
+        "SEARCH_PUBLICATIONS",
+        "FILTER_AND_DEDUPLICATE",
+        "NORMALIZE_COMPANIES",
+        "FETCH_ELIGIBLE_DOCUMENTS",
+        "ANALYZE_ELIGIBLE_PATENTS",
+        "PREPARE_COMPANY_BATCHES",
+        "ANALYZE_COMPANY",
+        "REDUCE_COMPANY_ANALYSES",
+        "ANALYZE_CROSS_COMPANY_TRENDS",
+        "VERIFY_COVERAGE",
+        "BUILD_REPORT"
+      ],
+      "expected_audit_decision": "PASS"
+    }
+  ]
+}

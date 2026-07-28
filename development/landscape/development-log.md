@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-TREND-FIXTURE-002
+
+- 类型：公司技术趋势 Agent 离线模拟基线。
+- 实现：新增 `BASE-01` 的 Scope、12 条 Provider Hit、7 件详情与逐件分析、公司别名/归属、公司 Profile、趋势、Graph 路径和 Expected 输出。
+- 契约：固定 `R=12`、`E=8`、`U=F=A=T=7`；Huawei/Vertiv 各 2 件，Meta/Metallurgy/UNKNOWN 各 1 件；单季度数据不得输出增长或下降。
+- 测试设施：新增深层只读 JSON/JSONL Loader，路径必须位于 Fixture 根目录，不允许静默跳过空行。
+- 涉及文件：`backend/tests/fixtures/landscape_agent/`、`backend/tests/landscape_agent_fixture_loader.py`、`backend/tests/test_landscape_agent_fixtures.py` 和两份追加式日志。
+- 验证：Fixture 契约测试 7 项通过；`git diff --check` 通过。
+- 未完成：本提交只冻结输入和 Oracle，不修改生产检索、Schema 或 Graph。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-TREND-SPEC-001
 
 - 类型：公司技术趋势 Agent 待审查开发规格。

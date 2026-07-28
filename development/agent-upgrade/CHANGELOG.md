@@ -2,6 +2,20 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-company-trend-fixtures
+
+### 已完成
+
+- 新增 `BASE-01` 离线数据集，冻结 12 条原始命中、8 条合格命中、7 件按公开号去重专利及五个公司分组。
+- 增加固定 Provider Hit、详情、公司别名与归属、逐件分析、公司 Profile、趋势、Graph 路径和 Expected 输出。
+- 新增深层只读 Fixture Loader，拒绝目录逃逸、错误文件类型、空 JSONL 行和非对象记录。
+- 新增 Fixture 契约测试，校验 `U/F/A/T`、公司分组、证据引用、公司 fan-out 和单时间桶禁止方向性趋势。
+
+### 验证
+
+- `PYTHONPATH=backend backend/.venv/bin/python -m unittest backend.tests.test_landscape_agent_fixtures -v`
+- `git diff --check`
+
 ## 2026-07-28 — landscape-company-trend-agent-spec
 
 ### 范围
