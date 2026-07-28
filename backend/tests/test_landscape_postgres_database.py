@@ -16,6 +16,8 @@ from landscape.postgres_database import (
 from landscape.schemas import (
     CompanyAssignment,
     CompetitorInput,
+    CrossCompanyTrendAnalysis,
+    LandscapeCoverageAudit,
     LandscapeScope,
     LandscapeEvidenceRef,
     LandscapePatentAnalysis,
@@ -557,6 +559,127 @@ class LandscapePostgreSQLAnalysisReadTests(unittest.TestCase):
         row["content_hash"] = "corrupt"
         with self.assertRaisesRegex(ValueError, "hash mismatch"):
             database.list_patent_analyses("run-1")
+
+
+class _ResultConnection:
+    def __init__(self):
+        self.snapshot = None
+        self.trends = []
+        self.audits = {}
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        if normalized.startswith("SELECT run_id FROM landscape_runs"):
+            return _Cursor([{"run_id": params[0]}])
+        if normalized.startswith("SELECT analysis_json,trend_count"):
+            return _Cursor([self.snapshot] if self.snapshot else [])
+        if normalized.startswith("SELECT trend_id,trend_json"):
+            return _Cursor(sorted(self.trends, key=lambda row: row["trend_id"]))
+        if normalized.startswith("INSERT INTO landscape_cross_company_trends"):
+            _run_id, trend_id, trend_json, content_hash, _created_at = params
+            self.trends.append(
+                {
+                    "trend_id": trend_id,
+                    "trend_json": trend_json,
+                    "content_hash": content_hash,
+                }
+            )
+            return _Cursor()
+        if normalized.startswith("INSERT INTO landscape_cross_company_analyses"):
+            _run_id, analysis_json, trend_count, content_hash, _created_at = params
+            self.snapshot = {
+                "analysis_json": analysis_json,
+                "trend_count": trend_count,
+                "content_hash": content_hash,
+            }
+            return _Cursor()
+        if normalized.startswith("SELECT decision,audit_json"):
+            row = self.audits.get(params[1])
+            return _Cursor([row] if row else [])
+        if normalized.startswith("INSERT INTO landscape_coverage_audits"):
+            (
+                _run_id,
+                repair_round,
+                decision,
+                audit_json,
+                content_hash,
+                _created_at,
+            ) = params
+            self.audits[repair_round] = {
+                "repair_round": repair_round,
+                "decision": decision,
+                "audit_json": audit_json,
+                "content_hash": content_hash,
+            }
+            return _Cursor()
+        if normalized.startswith("SELECT repair_round,decision"):
+            return _Cursor(
+                [self.audits[key] for key in sorted(self.audits)]
+            )
+        raise AssertionError(f"unexpected SQL: {normalized}")
+
+
+class LandscapePostgreSQLResultSnapshotTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.database = LandscapePostgreSQLDatabase(
+            "postgresql://test:test@localhost/test"
+        )
+        self.connection = _ResultConnection()
+
+        @contextmanager
+        def connect():
+            yield self.connection
+
+        self.database.connect = connect  # type: ignore[method-assign]
+
+    def test_zero_trend_analysis_is_a_durable_idempotent_result(self) -> None:
+        analysis = CrossCompanyTrendAnalysis(
+            overall_summary="仅一家公司，无法跨公司比较。",
+            limitations=["至少需要两家公司。"],
+        )
+        self.database.put_cross_company_analysis("run-1", analysis)
+        self.database.put_cross_company_analysis("run-1", analysis)
+
+        self.assertEqual(self.connection.snapshot["trend_count"], 0)
+        self.assertEqual(self.connection.trends, [])
+        self.assertEqual(
+            self.database.list_cross_company_analysis("run-1"),
+            analysis,
+        )
+        changed = analysis.model_copy(
+            update={"overall_summary": "changed"}
+        )
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.database.put_cross_company_analysis("run-1", changed)
+
+    def test_audit_rounds_are_append_only_and_read_in_order(self) -> None:
+        first = LandscapeCoverageAudit(
+            decision="REPAIR",
+            coverage_ratio=0.5,
+            missing_publications=["CN2A"],
+            repair_targets=["ANALYZE:CN2A"],
+        )
+        second = LandscapeCoverageAudit(
+            decision="PASS",
+            coverage_ratio=1,
+        )
+        self.database.put_coverage_audit(
+            "run-1", repair_round=0, audit=first
+        )
+        self.database.put_coverage_audit(
+            "run-1", repair_round=1, audit=second
+        )
+        self.database.put_coverage_audit(
+            "run-1", repair_round=0, audit=first
+        )
+        self.assertEqual(
+            self.database.list_coverage_audits("run-1"),
+            [first, second],
+        )
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.database.put_coverage_audit(
+                "run-1", repair_round=0, audit=second
+            )
 
 
 if __name__ == "__main__":

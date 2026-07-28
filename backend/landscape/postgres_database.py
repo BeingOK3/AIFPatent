@@ -13,6 +13,8 @@ from .company_assignment import CompanyAssignmentResult
 from .database import LandscapeDatabase, assert_no_secrets, canonical_json, now_ms
 from .schemas import (
     CompanyAssignment,
+    CrossCompanyTrendAnalysis,
+    LandscapeCoverageAudit,
     LandscapePatentAnalysis,
     LandscapeScope,
     NormalizedCompany,
@@ -730,6 +732,186 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             analyses[row["publication_number"]] = analysis
         return analyses
 
+    def put_cross_company_analysis(
+        self,
+        run_id: str,
+        analysis: CrossCompanyTrendAnalysis,
+    ) -> CrossCompanyTrendAnalysis:
+        value = analysis.model_dump(mode="json")
+        assert_no_secrets(value)
+        encoded = canonical_json(value)
+        content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        expected_trends = sorted(
+            (
+                _trend_storage_row(trend.model_dump(mode="json"))
+                for trend in analysis.trends
+            ),
+            key=lambda row: row["trend_id"],
+        )
+        with self.connect() as connection:
+            _lock_landscape_run(connection, run_id)
+            snapshot = connection.execute(
+                """
+                SELECT analysis_json,trend_count,content_hash
+                FROM landscape_cross_company_analyses
+                WHERE run_id = %s
+                """,
+                (run_id,),
+            ).fetchone()
+            trend_rows = connection.execute(
+                """
+                SELECT trend_id,trend_json,content_hash
+                FROM landscape_cross_company_trends
+                WHERE run_id = %s
+                ORDER BY trend_id
+                """,
+                (run_id,),
+            ).fetchall()
+            stored_trends = [
+                _trend_storage_row(_json_value(row["trend_json"]))
+                for row in trend_rows
+            ]
+            if snapshot is not None:
+                stored_value = _json_value(snapshot["analysis_json"])
+                if (
+                    snapshot["trend_count"] != len(expected_trends)
+                    or snapshot["content_hash"] != content_hash
+                    or canonical_json(stored_value) != encoded
+                    or stored_trends != expected_trends
+                ):
+                    raise ValueError(
+                        "landscape cross-company analysis is immutable or corrupt"
+                    )
+                return analysis
+            if trend_rows:
+                raise ValueError(
+                    "landscape cross-company analysis is partial or corrupt"
+                )
+            created_at = now_ms()
+            for trend in expected_trends:
+                connection.execute(
+                    """
+                    INSERT INTO landscape_cross_company_trends(
+                        run_id,trend_id,trend_json,content_hash,created_at
+                    ) VALUES(%s,%s,%s::jsonb,%s,%s)
+                    """,
+                    (
+                        run_id,
+                        trend["trend_id"],
+                        trend["trend_json"],
+                        trend["content_hash"],
+                        created_at,
+                    ),
+                )
+            connection.execute(
+                """
+                INSERT INTO landscape_cross_company_analyses(
+                    run_id,analysis_json,trend_count,content_hash,created_at
+                ) VALUES(%s,%s::jsonb,%s,%s,%s)
+                """,
+                (run_id, encoded, len(expected_trends), content_hash, created_at),
+            )
+        return analysis
+
+    def list_cross_company_analysis(
+        self, run_id: str
+    ) -> CrossCompanyTrendAnalysis | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT analysis_json,trend_count,content_hash
+                FROM landscape_cross_company_analyses
+                WHERE run_id = %s
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        value = _json_value(row["analysis_json"])
+        encoded = canonical_json(value)
+        if hashlib.sha256(encoded.encode("utf-8")).hexdigest() != row["content_hash"]:
+            raise ValueError("landscape cross-company analysis hash mismatch")
+        analysis = CrossCompanyTrendAnalysis.model_validate(value)
+        if len(analysis.trends) != row["trend_count"]:
+            raise ValueError("landscape cross-company analysis trend count mismatch")
+        return analysis
+
+    def put_coverage_audit(
+        self,
+        run_id: str,
+        *,
+        repair_round: int,
+        audit: LandscapeCoverageAudit,
+    ) -> LandscapeCoverageAudit:
+        if repair_round < 0:
+            raise ValueError("repair round cannot be negative")
+        value = audit.model_dump(mode="json")
+        assert_no_secrets(value)
+        encoded = canonical_json(value)
+        content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        with self.connect() as connection:
+            _lock_landscape_run(connection, run_id)
+            existing = connection.execute(
+                """
+                SELECT decision,audit_json,content_hash
+                FROM landscape_coverage_audits
+                WHERE run_id = %s AND repair_round = %s
+                """,
+                (run_id, repair_round),
+            ).fetchone()
+            if existing is not None:
+                stored = canonical_json(_json_value(existing["audit_json"]))
+                if (
+                    existing["decision"] != audit.decision
+                    or existing["content_hash"] != content_hash
+                    or stored != encoded
+                ):
+                    raise ValueError(
+                        "landscape coverage audit round is immutable"
+                    )
+                return audit
+            connection.execute(
+                """
+                INSERT INTO landscape_coverage_audits(
+                    run_id,repair_round,decision,audit_json,content_hash,created_at
+                ) VALUES(%s,%s,%s,%s::jsonb,%s,%s)
+                """,
+                (
+                    run_id,
+                    repair_round,
+                    audit.decision,
+                    encoded,
+                    content_hash,
+                    now_ms(),
+                ),
+            )
+        return audit
+
+    def list_coverage_audits(
+        self, run_id: str
+    ) -> list[LandscapeCoverageAudit]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT repair_round,decision,audit_json,content_hash
+                FROM landscape_coverage_audits
+                WHERE run_id = %s
+                ORDER BY repair_round
+                """,
+                (run_id,),
+            ).fetchall()
+        audits: list[LandscapeCoverageAudit] = []
+        for row in rows:
+            value = _json_value(row["audit_json"])
+            encoded = canonical_json(value)
+            if hashlib.sha256(encoded.encode("utf-8")).hexdigest() != row["content_hash"]:
+                raise ValueError("landscape coverage audit hash mismatch")
+            audit = LandscapeCoverageAudit.model_validate(value)
+            if audit.decision != row["decision"]:
+                raise ValueError("landscape coverage audit decision mismatch")
+            audits.append(audit)
+        return audits
+
 
 def _json_value(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
@@ -760,6 +942,24 @@ def _assignment_projection(row: dict[str, Any]) -> dict[str, Any]:
         "confidence": row["confidence"],
         "content_hash": row["content_hash"],
     }
+
+
+def _trend_storage_row(value: dict[str, Any]) -> dict[str, Any]:
+    encoded = canonical_json(value)
+    return {
+        "trend_id": value["trend_id"],
+        "trend_json": encoded,
+        "content_hash": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+    }
+
+
+def _lock_landscape_run(connection: Any, run_id: str) -> None:
+    row = connection.execute(
+        "SELECT run_id FROM landscape_runs WHERE run_id = %s FOR UPDATE",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"unknown landscape run: {run_id}")
 
 
 def _require_candidate_identity(

@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-TREND-AUDIT-PERSISTENCE-017
+
+- 类型：跨公司 Analysis 与逐轮 Coverage Audit 的 PostgreSQL 原生 Repository。
+- 趋势事务：Run 行锁后同时写 `landscape_cross_company_trends` 与 Analysis Snapshot；零趋势也写 Snapshot。
+- 恢复：Snapshot JSON、trend_count、内容哈希和逐 Trend 行必须完全一致；相同输入幂等返回，半套或变化结果 fail closed。
+- 审计历史：每个 repair round 只写一次；同轮同内容可重放，不同内容拒绝覆盖，读取按轮次排序并校验哈希/Decision。
+- 涉及文件：`backend/landscape/postgres_database.py`、PostgreSQL Repository 测试和两份追加式日志。
+- 验证：Repository 12 项、Landscape 全量 125 项通过；compileall、`git diff --check` 通过；零模型调用。
+- 未完成：公司 Profile 的 Categories/Members/Profile/Manifest 多表原子写入仍待下一工作单元实现。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-RESULT-MANIFESTS-016
 
 - 类型：公司分析、跨公司结果与 Coverage Audit 的 PostgreSQL 完成标记。

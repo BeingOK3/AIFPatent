@@ -2,6 +2,22 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-trend-audit-persistence
+
+### 已完成
+
+- 新增跨公司 Analysis 的 PostgreSQL 原生写入与读取，快照和逐 Trend 行在同一事务内提交。
+- 合法零趋势 Analysis 也拥有持久化完成快照，可在恢复时直接跳过模型。
+- 同内容重放幂等；快照、Trend 行或内容哈希不一致时拒绝覆盖并报告损坏。
+- Coverage Audit 按 `(run_id, repair_round)` 追加保存，同一轮结果不可变，不同轮次保留完整决策历史。
+- 所有写入先锁定 Run 行，未知 Run 明确失败。
+
+### 验证
+
+- Landscape PostgreSQL Repository 12 项测试通过。
+- Landscape 全量 125 项测试、Python compileall 与 `git diff --check` 通过。
+- 本提交不调用模型；公司 Profile 多表持久化留在下一独立提交。
+
 ## 2026-07-28 — landscape-company-result-manifests
 
 ### 已完成
