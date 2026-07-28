@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-TREND-SPEC-001
+
+- 类型：公司技术趋势 Agent 待审查开发规格。
+- 实态依据：当前 8 节点 Graph 为固定直线；候选和精读分别受 `candidate_limit`、`analysis_limit` 截断；旧聚类 Prompt 明确不按公司分类。
+- 决策草案：持久化完整去重合格集合，确定性完成公司归属，在公司内进行证据约束技术分类，再生成跨公司方向和满足时间门槛的趋势。
+- Graph 草案：新增公司级 `Send`、顺序无关 Reducer、覆盖审计、PASS/REPAIR/LIMITED/FAIL 条件边和有限修复。
+- 开发纪律：审查通过前不改生产代码；通过后每个小功能独立提交，提交同时包含实现、测试、Fixture 和开发日志。
+- 涉及文件：`development/agent-upgrade/05-landscape-company-trend-agent-spec.md`、两处文档索引、Agent 升级 Changelog 和本日志。
+- 验证：`git diff --check` 通过；规格文档共 14 个一级开发章节；敏感字段模式扫描无命中；业务实现和模拟 Fixture 尚未开始。
+
 ## 2026-07-22 — LANDSCAPE-DESIGN-001
 
 - 类型：独立专利态势分析 MVP 技术基线。

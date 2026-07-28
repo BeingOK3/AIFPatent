@@ -29,3 +29,4 @@
 - `competitor-alias-empty-result-repair.md`：友商多别名被错误组合为申请人过滤条件所导致空结果的修复设计。
 - `serpapi-provider-design.md`：已落地的 SerpAPI 检索、详情、凭证和配额边界。
 - `network-provider-incident.md`：网络与 Provider 故障诊断及修复记录。
+- `../agent-upgrade/05-landscape-company-trend-agent-spec.md`：公司归属、公司内技术分类、跨公司趋势和动态 Agent Graph 的待审查升级规格。
