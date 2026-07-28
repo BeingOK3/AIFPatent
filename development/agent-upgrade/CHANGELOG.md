@@ -2,6 +2,20 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-company-trend-schemas
+
+### 已完成
+
+- 新增公司身份、逐专利公司归属、公司技术分类/Profile、跨公司趋势和覆盖审计的严格 Pydantic 契约。
+- 模型输出不回显公司 ID、预期专利数和程序统计；这些事实由调用方持有，避免模型修改控制数据。
+- 增加 UNKNOWN fail-closed、分类成员唯一、趋势引用唯一、时间窗口有序和 Audit 决策一致性校验。
+- 趋势方向支持观察类和变化类标签，但时间桶充分性仍留给后续上下文 Validator 判断。
+
+### 验证
+
+- 公司趋势 Schema、Fixture、旧 Landscape Schema 和旧聚类共 30 项测试通过。
+- Python compileall 与 `git diff --check` 通过。
+
 ## 2026-07-28 — landscape-company-trend-fixtures
 
 ### 已完成

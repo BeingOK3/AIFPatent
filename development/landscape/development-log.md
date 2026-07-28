@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-TREND-SCHEMA-003
+
+- 类型：公司技术趋势领域与模型输出契约。
+- 实现：新增 `NormalizedCompany`、`CompanyAssignment`、公司技术分类/Profile、跨公司 Trend/Analysis、TimeBasis 和 CoverageAudit。
+- 边界：LLM Profile 不回显 company ID 和计数，Trend Analysis 不回显程序时间统计；外部全集、公司归属和证据归属由后续上下文 Validator 校验。
+- 硬门：UNKNOWN 身份一致、confirmed alias 必须有匹配依据、公司内主分类不可重复、Trend 引用不可重复、PASS 必须满覆盖且无缺陷、REPAIR 必须有目标。
+- 涉及文件：`backend/landscape/schemas.py`、`backend/tests/test_landscape_company_trend_schemas.py` 和两份追加式日志。
+- 验证：新旧 Landscape Schema、Fixture 和聚类共 30 项通过；compileall、`git diff --check` 通过。
+- 未完成：尚未注册新的模型服务，也未实现依赖 `U` 和证据仓储的上下文校验。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-TREND-FIXTURE-002
 
 - 类型：公司技术趋势 Agent 离线模拟基线。

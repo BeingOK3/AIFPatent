@@ -3,7 +3,7 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -251,3 +251,251 @@ class LandscapeCluster(LandscapeModel):
 
 class LandscapeClusterPlan(LandscapeModel):
     clusters: list[LandscapeCluster] = Field(min_length=1, max_length=8)
+
+
+CompanyId = Annotated[
+    str,
+    Field(pattern=r"^(?:CO-[A-Za-z0-9._-]+|UNKNOWN)$"),
+]
+PublicationNumber = Annotated[str, Field(min_length=2, max_length=100)]
+EvidenceId = Annotated[str, Field(pattern=r"^EV-[A-Za-z0-9._-]+$")]
+
+
+def _normalized_unique_strings(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        value = " ".join(raw.split())
+        key = value.casefold()
+        if value and key not in seen:
+            seen.add(key)
+            result.append(value)
+    return result
+
+
+class NormalizedCompany(LandscapeModel):
+    """One deterministic company identity; model suggestions are validated elsewhere."""
+
+    company_id: CompanyId
+    canonical_name: str = Field(min_length=1, max_length=200)
+    aliases: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("aliases")
+    @classmethod
+    def normalize_aliases(cls, values: list[str]) -> list[str]:
+        return _normalized_unique_strings(values)
+
+    @model_validator(mode="after")
+    def unknown_identity_is_explicit(self) -> "NormalizedCompany":
+        if self.company_id == "UNKNOWN":
+            if self.canonical_name != "UNKNOWN" or self.aliases:
+                raise ValueError(
+                    "UNKNOWN company must use canonical_name UNKNOWN and have no aliases"
+                )
+        elif self.canonical_name == "UNKNOWN":
+            raise ValueError("only the UNKNOWN company may use canonical_name UNKNOWN")
+        return self
+
+
+class CompanyAssignment(LandscapeModel):
+    """Program-owned primary assignment for exactly one eligible publication."""
+
+    publication_number: PublicationNumber
+    primary_company_id: CompanyId
+    observed_assignee: str | None = Field(default=None, max_length=200)
+    matched_alias: str | None = Field(default=None, max_length=200)
+    co_assignees: list[str] = Field(default_factory=list, max_length=20)
+    status: Literal["CONFIRMED_ALIAS", "UNKNOWN", "REVIEW_REQUIRED"]
+
+    @field_validator("observed_assignee", "matched_alias")
+    @classmethod
+    def blank_optional_text_is_none(cls, value: str | None) -> str | None:
+        return value or None
+
+    @field_validator("co_assignees")
+    @classmethod
+    def normalize_co_assignees(cls, values: list[str]) -> list[str]:
+        return _normalized_unique_strings(values)
+
+    @model_validator(mode="after")
+    def status_matches_assignment(self) -> "CompanyAssignment":
+        if self.status == "CONFIRMED_ALIAS":
+            if self.primary_company_id == "UNKNOWN":
+                raise ValueError("confirmed alias assignment cannot target UNKNOWN")
+            if self.observed_assignee is None or self.matched_alias is None:
+                raise ValueError(
+                    "confirmed alias assignment requires observed_assignee and matched_alias"
+                )
+        else:
+            if self.primary_company_id != "UNKNOWN":
+                raise ValueError(
+                    "unknown or review-required assignment must target UNKNOWN"
+                )
+            if self.status == "UNKNOWN" and self.matched_alias is not None:
+                raise ValueError("unknown assignment cannot include matched_alias")
+        return self
+
+
+class CompanyTechnologyCategory(LandscapeModel):
+    category_id: str = Field(pattern=r"^TC-[A-Za-z0-9._-]+$")
+    name: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=2000)
+    keywords: list[str] = Field(default_factory=list, max_length=30)
+    publication_numbers: list[PublicationNumber] = Field(min_length=1)
+    evidence_ids: list[EvidenceId] = Field(min_length=1, max_length=200)
+
+    @field_validator("keywords")
+    @classmethod
+    def normalize_keywords(cls, values: list[str]) -> list[str]:
+        return _normalized_unique_strings(values)
+
+    @model_validator(mode="after")
+    def memberships_are_unique(self) -> "CompanyTechnologyCategory":
+        if len(self.publication_numbers) != len(set(self.publication_numbers)):
+            raise ValueError("category publication numbers must be unique")
+        if len(self.evidence_ids) != len(set(self.evidence_ids)):
+            raise ValueError("category evidence IDs must be unique")
+        return self
+
+
+class CompanyTechnologyProfile(LandscapeModel):
+    """LLM output only; company ID and expected publications remain program-owned."""
+
+    overall_summary: str = Field(min_length=1, max_length=4000)
+    technology_directions: list[str] = Field(min_length=1, max_length=20)
+    technology_categories: list[CompanyTechnologyCategory] = Field(
+        min_length=1, max_length=20
+    )
+    limitations: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("technology_directions", "limitations")
+    @classmethod
+    def normalize_text_lists(cls, values: list[str]) -> list[str]:
+        return _normalized_unique_strings(values)
+
+    @model_validator(mode="after")
+    def categories_form_one_partition(self) -> "CompanyTechnologyProfile":
+        category_ids = [
+            category.category_id for category in self.technology_categories
+        ]
+        if len(category_ids) != len(set(category_ids)):
+            raise ValueError("company technology category IDs must be unique")
+        publications = [
+            publication
+            for category in self.technology_categories
+            for publication in category.publication_numbers
+        ]
+        if len(publications) != len(set(publications)):
+            raise ValueError(
+                "a publication may appear in only one company technology category"
+            )
+        return self
+
+
+class TrendTimeBasis(LandscapeModel):
+    start: date
+    end: date
+    bucket: Literal["MONTH", "QUARTER"]
+
+    @model_validator(mode="after")
+    def dates_are_ordered(self) -> "TrendTimeBasis":
+        if self.end < self.start:
+            raise ValueError("trend time basis end must be >= start")
+        return self
+
+
+class CrossCompanyTrend(LandscapeModel):
+    trend_id: str = Field(pattern=r"^TR-[A-Za-z0-9._-]+$")
+    name: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=3000)
+    direction: Literal[
+        "EMERGING",
+        "GROWING",
+        "DECLINING",
+        "SHIFTING",
+        "ACCELERATING",
+        "STABLE",
+        "UNCERTAIN",
+    ]
+    company_ids: list[CompanyId] = Field(min_length=2, max_length=50)
+    publication_numbers: list[PublicationNumber] = Field(min_length=2)
+    evidence_ids: list[EvidenceId] = Field(min_length=1, max_length=500)
+    time_basis: TrendTimeBasis
+
+    @model_validator(mode="after")
+    def references_are_unique(self) -> "CrossCompanyTrend":
+        for label, values in (
+            ("company IDs", self.company_ids),
+            ("publication numbers", self.publication_numbers),
+            ("evidence IDs", self.evidence_ids),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"trend {label} must be unique")
+        return self
+
+
+class CrossCompanyTrendAnalysis(LandscapeModel):
+    """LLM output only; time buckets and company count remain program-owned."""
+
+    overall_summary: str = Field(min_length=1, max_length=4000)
+    common_directions: list[str] = Field(default_factory=list, max_length=20)
+    differentiated_directions: list[str] = Field(default_factory=list, max_length=20)
+    trends: list[CrossCompanyTrend] = Field(default_factory=list, max_length=20)
+    limitations: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator(
+        "common_directions",
+        "differentiated_directions",
+        "limitations",
+    )
+    @classmethod
+    def normalize_text_lists(cls, values: list[str]) -> list[str]:
+        return _normalized_unique_strings(values)
+
+    @model_validator(mode="after")
+    def trend_ids_are_unique(self) -> "CrossCompanyTrendAnalysis":
+        trend_ids = [trend.trend_id for trend in self.trends]
+        if len(trend_ids) != len(set(trend_ids)):
+            raise ValueError("cross-company trend IDs must be unique")
+        return self
+
+
+class LandscapeCoverageAudit(LandscapeModel):
+    decision: Literal["PASS", "REPAIR", "LIMITED", "FAIL"]
+    coverage_ratio: float = Field(ge=0, le=1)
+    invented_publications: list[PublicationNumber] = Field(
+        default_factory=list, max_length=500
+    )
+    duplicate_memberships: list[PublicationNumber] = Field(
+        default_factory=list, max_length=500
+    )
+    missing_publications: list[PublicationNumber] = Field(
+        default_factory=list, max_length=500
+    )
+    invalid_evidence_refs: list[EvidenceId] = Field(
+        default_factory=list, max_length=500
+    )
+    repair_targets: list[str] = Field(default_factory=list, max_length=500)
+    limitations: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("repair_targets", "limitations")
+    @classmethod
+    def normalize_text_lists(cls, values: list[str]) -> list[str]:
+        return _normalized_unique_strings(values)
+
+    @model_validator(mode="after")
+    def decision_matches_findings(self) -> "LandscapeCoverageAudit":
+        findings = (
+            self.invented_publications,
+            self.duplicate_memberships,
+            self.missing_publications,
+            self.invalid_evidence_refs,
+        )
+        if self.decision == "PASS":
+            if self.coverage_ratio != 1 or any(findings) or self.repair_targets:
+                raise ValueError(
+                    "PASS requires full coverage and no audit findings or repair targets"
+                )
+        elif self.decision == "REPAIR" and not self.repair_targets:
+            raise ValueError("REPAIR requires at least one repair target")
+        return self
