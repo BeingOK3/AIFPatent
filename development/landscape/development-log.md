@@ -2,6 +2,18 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-PERSISTENCE-008
+
+- 类型：公司 Registry、完整 PRIMARY 归属与集合 Manifest 的 PostgreSQL 持久化。
+- 原子性：Repository 先锁定 `landscape_runs` 行，校验 Assignment 恰好覆盖 canonical `U`，再在单事务内写公司、归属和 Manifest。
+- 幂等性：同内容重放零新增；Manifest、公司行或归属行存在数量/内容不一致时拒绝覆盖。读取路径重新计算集合哈希，空集合也有明确完成标志。
+- 信任边界：Execution 只把原始 Run Scope 传给公司归属；模型检索别名不能进入 Registry。候选安全门超限前仍会留下完整 `U` 及归属审计。
+- 字段语义：`USER_CONFIRMED_REGISTRY`、`NORMALIZED_OBSERVED_NAME`、`UNRESOLVED` 显式区分来源；confidence 仅表示确定性解析状态。共同申请人缺少 company ID 时拒绝静默丢失。
+- 迁移：新增 `071_landscape_company_assignment_manifest.sql`，并接入已有卷的显式迁移链与 Landscape 启动版本门。
+- 涉及文件：PostgreSQL Repository、Execution/Runtime、`071`、迁移工具、执行/Repository/Schema/基础设施测试及两份追加式日志。
+- 验证：Landscape 103 项、Schema 与部署迁移 25 项通过；compileall、`git diff --check` 通过。
+- 未完成：未运行真实 PostgreSQL 并发/回滚集成测试；下一工作单元实现完整 `U` 的可恢复详情抓取。
+
 ## 2026-07-28 — LANDSCAPE-SEARCH-ALIAS-TRUST-007
 
 - 类型：检索扩展别名与业务授权别名的信任边界修复。

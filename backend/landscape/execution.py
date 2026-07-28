@@ -12,6 +12,7 @@ from idea.providers.base import FetchRequest, FetchedDocument, ProviderResult, P
 
 from .analysis import LandscapeAnalysisService
 from .clustering import LandscapeClusteringError, LandscapeClusteringService
+from .company_assignment import CompanyAssignmentResult, assign_companies
 from .database import LandscapeDatabase
 from .planning import (
     CompetitorAliasService,
@@ -41,6 +42,16 @@ class LandscapeCandidateRepository(Protocol):
     ) -> list[dict[str, Any]]: ...
 
 
+class LandscapeCompanyRepository(Protocol):
+    def put_company_assignments(
+        self,
+        run_id: str,
+        *,
+        scope: LandscapeScope,
+        result: CompanyAssignmentResult,
+    ) -> CompanyAssignmentResult: ...
+
+
 class LandscapeExecutionService:
     def __init__(
         self,
@@ -53,6 +64,7 @@ class LandscapeExecutionService:
         analysis_concurrency: int,
         report_service: LandscapeReportService,
         candidate_repository: "LandscapeCandidateRepository | None" = None,
+        company_repository: "LandscapeCompanyRepository | None" = None,
     ):
         self.database = database
         self.store = store
@@ -67,6 +79,7 @@ class LandscapeExecutionService:
         self.directions = TechnicalDirectionService(model)
         self.report_service = report_service
         self.candidate_repository = candidate_repository
+        self.company_repository = company_repository
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.enrichment_stats: dict[str, dict[str, int]] = {}
@@ -222,6 +235,19 @@ class LandscapeExecutionService:
                     for rank, candidate in enumerate(result.candidates, start=1)
                 ],
             )
+        company_result = assign_companies(
+            result.candidates,
+            scope,
+            user_confirmed_competitors=(
+                scope.competitors if scope.competitors else None
+            ),
+        )
+        if self.company_repository is not None:
+            self.company_repository.put_company_assignments(
+                run_id,
+                scope=scope,
+                result=company_result,
+            )
         if result.coverage.candidate_limit_exceeded:
             raise LandscapeCandidateLimitExceededError(
                 unique_candidate_count=result.coverage.unique_candidate_count,
@@ -230,6 +256,13 @@ class LandscapeExecutionService:
         return {
             "result": result.model_dump(mode="json"),
             "enrichment": self.enrichment_stats.get(run_id, {}),
+            "company_assignment": {
+                "company_count": len(company_result.companies),
+                "assignment_count": len(company_result.assignments),
+                "company_ids": [
+                    company.company_id for company in company_result.companies
+                ],
+            },
         }
 
     async def fetch_details(self, run_id: str) -> dict[str, Any]:

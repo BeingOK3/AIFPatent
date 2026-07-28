@@ -14,6 +14,9 @@ REPORT_HYBRID_SCHEMA_PATH = Path("deploy/rag/postgres-init/055_report_hybrid_sch
 LANDSCAPE_COMPANY_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/070_landscape_company_analysis.sql"
 )
+LANDSCAPE_COMPANY_MANIFEST_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/071_landscape_company_assignment_manifest.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -27,6 +30,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.report_hybrid_sql = REPORT_HYBRID_SCHEMA_PATH.read_text(encoding="utf-8")
         self.landscape_company_sql = LANDSCAPE_COMPANY_SCHEMA_PATH.read_text(
             encoding="utf-8"
+        )
+        self.landscape_company_manifest_sql = (
+            LANDSCAPE_COMPANY_MANIFEST_SCHEMA_PATH.read_text(encoding="utf-8")
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -55,6 +61,21 @@ class PostgreSQLSchemaTests(unittest.TestCase):
 
     def test_schema_has_no_data_destructive_commands(self) -> None:
         upper = self.sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_company_assignment_manifest_freezes_empty_and_nonempty_sets(self) -> None:
+        sql = self.landscape_company_manifest_sql
+        self.assertIn(
+            "CREATE TABLE IF NOT EXISTS landscape_company_assignment_manifests",
+            sql,
+        )
+        self.assertIn("company_count INTEGER NOT NULL", sql)
+        self.assertIn("assignment_count INTEGER NOT NULL", sql)
+        self.assertIn("content_hash TEXT NOT NULL", sql)
+        self.assertIn("'071_landscape_company_assignment_manifest'", sql)
+        upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
         self.assertNotIn("DELETE FROM", upper)

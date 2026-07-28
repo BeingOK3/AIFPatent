@@ -176,6 +176,7 @@ class RagInfrastructureTests(unittest.TestCase):
         self.assertIn("055_report_hybrid_schema.sql", migrate)
         self.assertIn("060_unified_runtime_schema.sql", migrate)
         self.assertIn("070_landscape_company_analysis.sql", migrate)
+        self.assertIn("071_landscape_company_assignment_manifest.sql", migrate)
 
     def test_up_migrates_between_dependency_and_application_start(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

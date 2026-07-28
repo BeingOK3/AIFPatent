@@ -2,6 +2,22 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-company-assignment-persistence
+
+### 已完成
+
+- 将确定性公司 Registry 与逐专利 PRIMARY 归属接入 `FILTER_AND_SELECT`，候选全集写入后立即使用原始 Run Scope 完成归属。
+- PostgreSQL 采用 Run 行锁和单事务批量写入；首次写入后，同内容可幂等重放，内容变化、半套数据或旁路篡改均 fail closed。
+- 新增 `071_landscape_company_assignment_manifest`，以数量和集合哈希冻结公司归属，包括公司和归属均为空的合法结果。
+- 冻结数据库映射：用户竞争者、技术模式规范名称与 UNKNOWN 使用不同 `resolution_source`；confidence 是确定性解析标志，不作为概率。
+- 现有领域契约无法把共同申请人无损映射为 company ID，因此发现非空 `co_assignees` 时明确拒绝持久化。
+
+### 验证
+
+- Landscape 全量 103 项测试通过；PostgreSQL Schema 与部署迁移 25 项测试通过。
+- Python compileall 与 `git diff --check` 通过。
+- 本提交未启动真实 PostgreSQL 容器；并发锁、事务回滚和真实迁移仍留在阶段集成门验证。
+
 ## 2026-07-28 — landscape-search-alias-trust-boundary
 
 ### 已完成

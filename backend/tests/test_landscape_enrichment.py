@@ -64,6 +64,15 @@ class CandidateCaptureRepository:
         return candidates
 
 
+class CompanyCaptureRepository:
+    def __init__(self):
+        self.calls = []
+
+    def put_company_assignments(self, run_id, *, scope, result):
+        self.calls.append((run_id, scope, result))
+        return result
+
+
 class LandscapeEnrichmentTests(unittest.TestCase):
     def test_model_alias_expands_search_but_cannot_authorize_filtering(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -71,6 +80,7 @@ class LandscapeEnrichmentTests(unittest.TestCase):
             database = LandscapeDatabase(root / "landscape.db")
             database.initialize()
             store = LandscapeRunStore(root / "runs")
+            company_repository = CompanyCaptureRepository()
             service = LandscapeExecutionService(
                 database=database,
                 store=store,
@@ -79,11 +89,15 @@ class LandscapeEnrichmentTests(unittest.TestCase):
                 provider_timeout_seconds={},
                 analysis_concurrency=1,
                 report_service=LandscapeReportService(database, store),
+                company_repository=company_repository,
             )
             scope = LandscapeScope(
                 mode=AnalysisMode.COMPETITOR,
                 competitors=[
-                    CompetitorInput(name="Huawei", aliases=["华为"])
+                    CompetitorInput(
+                        name="Huawei",
+                        aliases=["华为", "华为技术有限公司"],
+                    )
                 ],
                 publication_start=date(2026, 4, 1),
                 publication_end=date(2026, 6, 30),
@@ -116,7 +130,7 @@ class LandscapeEnrichmentTests(unittest.TestCase):
 
             self.assertEqual(
                 service.search_scope(run_id).competitors[0].aliases,
-                ["华为", "Model Search Alias"],
+                ["华为", "华为技术有限公司", "Model Search Alias"],
             )
             database.put_stage_result(
                 run_id,
@@ -167,6 +181,15 @@ class LandscapeEnrichmentTests(unittest.TestCase):
             self.assertEqual(
                 filtered["coverage"]["company_patent_counts"][0]["company"],
                 "Huawei",
+            )
+            _, assignment_scope, assignment_result = company_repository.calls[0]
+            self.assertEqual(
+                assignment_scope.competitors[0].aliases,
+                ["华为", "华为技术有限公司"],
+            )
+            self.assertEqual(
+                assignment_result.assignments[0].primary_company_id,
+                "CO-HUAWEI",
             )
 
     def test_empty_search_and_filtered_empty_have_distinct_limitations(self) -> None:
@@ -243,6 +266,7 @@ class LandscapeEnrichmentTests(unittest.TestCase):
             database.initialize()
             store = LandscapeRunStore(root / "runs")
             repository = CandidateCaptureRepository()
+            company_repository = CompanyCaptureRepository()
             service = LandscapeExecutionService(
                 database=database,
                 store=store,
@@ -252,6 +276,7 @@ class LandscapeEnrichmentTests(unittest.TestCase):
                 analysis_concurrency=1,
                 report_service=LandscapeReportService(database, store),
                 candidate_repository=repository,
+                company_repository=company_repository,
             )
             scope = LandscapeScope(
                 mode=AnalysisMode.TECHNOLOGY,
@@ -341,6 +366,10 @@ class LandscapeEnrichmentTests(unittest.TestCase):
             )
             self.assertEqual(
                 len({candidate["publication_number"] for candidate in candidates}),
+                11,
+            )
+            self.assertEqual(
+                len(company_repository.calls[0][2].assignments),
                 11,
             )
 
