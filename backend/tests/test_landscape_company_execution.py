@@ -60,6 +60,15 @@ class _CompanyExecutionRepository:
         return profile
 
 
+class _CompanyFanoutRecorder:
+    def __init__(self):
+        self.calls = []
+
+    async def execute(self, run_id, company_ids):
+        self.calls.append((run_id, list(company_ids)))
+        return list(company_ids)
+
+
 class LandscapeCompanyExecutionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.model = _CompanyExecutionModel()
@@ -114,6 +123,21 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "cover the batch exactly"):
             asyncio.run(self.service.analyze_company("run-1", "CO-HUAWEI"))
         self.assertEqual(len(self.model.calls), calls_before_resume)
+
+    def test_main_company_stage_dispatches_only_nonempty_analysis_batches(self):
+        fanout = _CompanyFanoutRecorder()
+        self.service.bind_company_fanout(fanout)
+
+        result = asyncio.run(self.service.analyze_companies("run-1"))
+
+        self.assertEqual(
+            fanout.calls,
+            [("run-1", ["CO-HUAWEI"])],
+        )
+        self.assertEqual(result["company_count"], 1)
+        self.assertEqual(result["completed_company_ids"], ["CO-HUAWEI"])
+        with self.assertRaisesRegex(RuntimeError, "already bound"):
+            self.service.bind_company_fanout(fanout)
 
 
 if __name__ == "__main__":

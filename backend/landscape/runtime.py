@@ -15,6 +15,7 @@ from idea.providers import (
 )
 
 from .database import LandscapeDatabase
+from .company_workflow import LandscapeCompanyFanout
 from .execution import LandscapeExecutionService
 from .postgres_database import LandscapePostgreSQLDatabase
 from .reporting import LandscapeReportService
@@ -162,6 +163,11 @@ def build_landscape_runtime(
         analysis_repository=database,
         profile_repository=database,
     )
+    company_fanout = LandscapeCompanyFanout(
+        harness=harness,
+        execution=execution,
+    )
+    execution.bind_company_fanout(company_fanout)
     workflow = LandscapeWorkflow(
         database=database,
         harness=harness,

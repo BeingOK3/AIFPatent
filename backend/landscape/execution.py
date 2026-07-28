@@ -108,6 +108,12 @@ class LandscapeCompanyProfileRepository(Protocol):
     ) -> CompanyTechnologyProfile: ...
 
 
+class LandscapeCompanyFanoutRunner(Protocol):
+    async def execute(
+        self, run_id: str, company_ids: list[str]
+    ) -> list[str]: ...
+
+
 class LandscapeExecutionService:
     def __init__(
         self,
@@ -124,6 +130,7 @@ class LandscapeExecutionService:
         fetch_repository: "LandscapeFetchRepository | None" = None,
         analysis_repository: "LandscapeAnalysisRepository | None" = None,
         profile_repository: "LandscapeCompanyProfileRepository | None" = None,
+        company_fanout: "LandscapeCompanyFanoutRunner | None" = None,
     ):
         self.database = database
         self.store = store
@@ -144,10 +151,18 @@ class LandscapeExecutionService:
         self.fetch_repository = fetch_repository
         self.analysis_repository = analysis_repository
         self.profile_repository = profile_repository
+        self.company_fanout = company_fanout
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.enrichment_stats: dict[str, dict[str, int]] = {}
         self.cluster_failures: dict[str, str] = {}
+
+    def bind_company_fanout(
+        self, company_fanout: LandscapeCompanyFanoutRunner
+    ) -> None:
+        if self.company_fanout is not None:
+            raise RuntimeError("company fan-out is already bound")
+        self.company_fanout = company_fanout
 
     async def analyze_company(
         self,
@@ -209,10 +224,31 @@ class LandscapeExecutionService:
             LandscapeWorkflowStep.FILTER_AND_SELECT: self.filter_and_select,
             LandscapeWorkflowStep.FETCH_DETAILS: self.fetch_details,
             LandscapeWorkflowStep.ANALYZE_PATENTS: self.analyze_patents,
+            LandscapeWorkflowStep.ANALYZE_COMPANIES: self.analyze_companies,
             LandscapeWorkflowStep.CLUSTER_PATENTS: self.cluster_patents,
             LandscapeWorkflowStep.BUILD_REPORT: self.build_report,
         }
         return await handlers[step](run_id)
+
+    async def analyze_companies(self, run_id: str) -> dict[str, Any]:
+        if (
+            self.company_repository is None
+            or self.analysis_repository is None
+            or self.company_fanout is None
+        ):
+            raise RuntimeError(
+                "company fan-out requires assignment, analysis and fan-out services"
+            )
+        assignments = self.company_repository.list_company_assignments(run_id)
+        analyses = self.analysis_repository.list_patent_analyses(run_id)
+        batches = build_company_analysis_batches(assignments, analyses)
+        company_ids = [batch.company_id for batch in batches]
+        completed = await self.company_fanout.execute(run_id, company_ids)
+        return {
+            "company_count": len(company_ids),
+            "company_ids": company_ids,
+            "completed_company_ids": completed,
+        }
 
     async def validate_scope(self, run_id: str) -> dict[str, Any]:
         scope = self.scope(run_id)

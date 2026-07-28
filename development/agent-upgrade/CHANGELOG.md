@@ -2,6 +2,20 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-main-graph-company-stage
+
+### 已完成
+
+- 主 Workflow 在 `ANALYZE_PATENTS` 后新增 `ANALYZE_COMPANIES` 节点，并纳入顺序、attempt、进度和完成门。
+- 主节点从 PostgreSQL Assignment 与成功 Patent Analysis 重建公司批次，只分发拥有成功分析的非空公司。
+- Runtime 显式构造并绑定公司 LangGraph fan-out；Execution Service 防止重复绑定。
+- 主节点输出只保存 company IDs 和计数，公司 Profile 继续由各 keyed 子任务写入 PostgreSQL。
+
+### 验证
+
+- 公司主节点/fan-out/Harness 聚焦 12 项、Landscape 全量 146 项测试通过。
+- Python compileall 与 `git diff --check` 通过；无真实模型调用。
+
 ## 2026-07-28 — landscape-company-langgraph-fanout
 
 ### 已完成

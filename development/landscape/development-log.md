@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-MAIN-GRAPH-COMPANY-STAGE-024
+
+- 类型：公司 `Send` 子图接入生产主 Workflow。
+- 顺序：主步骤新增 `ANALYZE_COMPANIES`，位于全量 Patent Analysis 之后、旧 Cluster/Report 之前。
+- 输入：每次从 PostgreSQL 冻结 Assignment 和成功 Analysis 重建 Batch，只有非空 Batch 进入 fan-out。
+- Runtime：构建 Execution 后创建 `LandscapeCompanyFanout` 并单次绑定，避免循环构造和隐式全局状态。
+- 输出：主 Stage Result 只记录公司数量、目标 IDs 和完成 IDs；Profile/Evidence 仍留在业务表。
+- 涉及文件：Workflow Enum、Execution 主节点、Runtime 接线、公司执行测试和两份追加式日志。
+- 验证：聚焦 12 项、Landscape 全量 146 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：旧 `CLUSTER_PATENTS` 与旧报告仍保留；下一工作单元接入跨公司趋势与 Coverage Audit 后替换旧路径。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-LANGGRAPH-FANOUT-023
 
 - 类型：公司级 LangGraph `Send` 动态并行与 keyed 恢复。
