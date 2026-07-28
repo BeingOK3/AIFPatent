@@ -47,14 +47,11 @@ class LandscapeFrontendContractTests(unittest.TestCase):
         self.assertIn("getUTCFullYear", self.javascript)
         self.assertIn("getUTCDate", self.javascript)
 
-    def test_v2_report_renders_company_counts_cluster_metadata_and_family_status(self) -> None:
+    def test_company_trend_report_renders_company_data_and_hides_legacy_clusters(self) -> None:
         for fragment in (
             "company_patent_counts",
             "各公司专利族数量",
             "统计口径：时间与友商条件过滤后",
-            "cluster.members",
-            "member.competitor",
-            "member.filing_date",
             "patent.family_status",
             "item.family_footprint",
             "analysis_selection",
@@ -65,6 +62,8 @@ class LandscapeFrontendContractTests(unittest.TestCase):
             "cross_company_analysis",
             "公司技术画像",
             "跨公司整体技术趋势",
+            "landscape-report/2.0.0",
+            "历史技术聚类",
         ):
             self.assertIn(fragment, self.javascript)
         self.assertNotIn("申请日趋势", self.javascript)

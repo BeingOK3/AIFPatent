@@ -2,6 +2,20 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-company-trend-report-v2
+
+### 已完成
+
+- 新 Run 的 Report Schema 升级为 `landscape-report/2.0.0`，删除 `clusters` 与 `summary.cluster_count`。
+- Report JSON/Markdown/CSV 的主叙事为公司专利族统计、公司技术画像、跨公司趋势和逐件证据化精读。
+- Execution Service 不再构造旧聚类模型或调用其 Prompt，`BUILD_REPORT` 不读取旧 Cluster Snapshot。
+- 前端不为新 2.0 报告展示技术聚类；历史 1.x 报告仅在自身含有旧数据时显示“历史技术聚类”。
+
+### 验证
+
+- Report/Frontend/Workflow 聚焦 13 项、Landscape 全量 149 项测试通过。
+- Python compileall 与 `git diff --check` 通过；无真实模型调用。
+
 ## 2026-07-28 — landscape-main-graph-retire-legacy-cluster
 
 ### 已完成

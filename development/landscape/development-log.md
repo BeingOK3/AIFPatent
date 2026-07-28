@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-TREND-REPORT-V2-029
+
+- 类型：公司趋势报告契约收口与旧聚类执行代码退场。
+- Schema：新 Report 固定为 `landscape-report/2.0.0`，不再产生 `clusters`/`cluster_count`；公司 Profile 和跨公司趋势成为唯一高阶归纳输出。
+- 执行：移除 Execution 中旧 Cluster 模型构造、Handler 映射、Prompt 调用和 Cluster failure limitation；旧 Cluster 表和历史 JSON 不删除。
+- 前端：2.0 报告不显示旧聚类；1.x 历史报告如自带 Cluster 数据，显示为“历史技术聚类”，不阻断阅读。
+- 涉及文件：Reporting、Execution、Landscape Frontend、Report/Frontend 测试和两份追加式日志。
+- 验证：聚焦 13 项、Landscape 全量 149 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：数据库中的旧 Cluster 表、schema 和独立旧聚类测试仍作为历史兼容物保留；有限 REPAIR 回环和真实端到端验收未完成。
+
 ## 2026-07-28 — LANDSCAPE-RETIRE-LEGACY-CLUSTER-028
 
 - 类型：公司趋势主链移除旧全局技术聚类执行依赖。

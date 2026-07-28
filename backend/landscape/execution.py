@@ -12,7 +12,6 @@ from idea.model_client import StructuredModelClient
 from idea.providers.base import FetchRequest, FetchedDocument, ProviderResult, ProviderRunner, SearchHit, SearchProvider
 
 from .analysis import LandscapeAnalysisService
-from .clustering import LandscapeClusteringError, LandscapeClusteringService
 from .company_assignment import CompanyAssignmentResult, assign_companies
 from .company_batches import build_company_analysis_batches
 from .company_classification import (
@@ -182,7 +181,6 @@ class LandscapeExecutionService:
         self.analysis = LandscapeAnalysisService(
             model, database, concurrency=analysis_concurrency
         )
-        self.clustering = LandscapeClusteringService(model)
         self.aliases = CompetitorAliasService(model)
         self.directions = TechnicalDirectionService(model)
         self.company_classifier = CompanyTechnologyClassificationService(model)
@@ -200,7 +198,6 @@ class LandscapeExecutionService:
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.enrichment_stats: dict[str, dict[str, int]] = {}
-        self.cluster_failures: dict[str, str] = {}
 
     def bind_company_fanout(
         self, company_fanout: LandscapeCompanyFanoutRunner
@@ -274,7 +271,6 @@ class LandscapeExecutionService:
                 self.analyze_cross_company_trends
             ),
             LandscapeWorkflowStep.VERIFY_COVERAGE: self.verify_coverage,
-            LandscapeWorkflowStep.CLUSTER_PATENTS: self.cluster_patents,
             LandscapeWorkflowStep.BUILD_REPORT: self.build_report,
         }
         return await handlers[step](run_id)
@@ -704,43 +700,13 @@ class LandscapeExecutionService:
             "failures": failures,
         }
 
-    async def cluster_patents(self, run_id: str) -> dict[str, Any]:
-        raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.ANALYZE_PATENTS.value)["value"]
-        from .schemas import LandscapePatentAnalysis
-
-        analyses = {key: LandscapePatentAnalysis.model_validate(value) for key, value in raw["analyses"].items()}
-        if not analyses:
-            self.cluster_failures[run_id] = "没有成功精读文献，无法形成技术聚类。"
-            return {"clusters": [], "failure": self.cluster_failures[run_id]}
-        docs = self.documents.get(run_id, {})
-        metadata = {publication: {"title": document.title, "abstract": document.abstract_text} for publication, document in docs.items()}
-        try:
-            plan = await self.clustering.cluster(analyses, metadata)
-        except LandscapeClusteringError as exc:
-            self.cluster_failures[run_id] = str(exc)
-            return {"clusters": [], "failure": str(exc)}
-        clusters = plan.model_dump(mode="json")["clusters"]
-        self.database.put_clusters(run_id, clusters, {publication: document_id(publication) for publication in analyses})
-        return {"clusters": clusters}
-
     async def build_report(self, run_id: str) -> dict[str, Any]:
-        from .schemas import LandscapeClusterPlan, LandscapePatentAnalysis
+        from .schemas import LandscapePatentAnalysis
 
         run = self.database.get_run(run_id)
         coverage = self.database.get_stage_result(run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value)["value"]["result"]["coverage"]
         analysis_raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.ANALYZE_PATENTS.value)["value"]
         analyses = {key: LandscapePatentAnalysis.model_validate(value) for key, value in analysis_raw["analyses"].items()}
-        try:
-            cluster_raw = self.database.get_stage_result(
-                run_id, LandscapeWorkflowStep.CLUSTER_PATENTS.value
-            )["value"]
-        except KeyError:
-            cluster_raw = {}
-        clusters = (
-            LandscapeClusterPlan.model_validate({"clusters": cluster_raw["clusters"]})
-            if cluster_raw.get("clusters")
-            else None
-        )
         profiles = (
             self.profile_repository.list_company_profiles(run_id)
             if self.profile_repository is not None
@@ -757,7 +723,6 @@ class LandscapeExecutionService:
             coverage=coverage,
             documents=self.documents.get(run_id, {}),
             analyses=analyses,
-            clusters=clusters,
             failures=analysis_raw["failures"],
             limitations=limitations,
             searched_competitor_aliases=self.report_alias_output(run_id),
@@ -805,8 +770,6 @@ class LandscapeExecutionService:
                 )
         except KeyError:
             pass
-        if run_id in self.cluster_failures:
-            limitations.append({"code": "CLUSTER_FAILURE", "message": self.cluster_failures[run_id]})
         try:
             plan = self.database.get_stage_result(run_id, LandscapeWorkflowStep.PLAN_SEARCH.value)["value"]
             if plan.get("alias_resolution_error"):

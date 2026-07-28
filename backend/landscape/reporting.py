@@ -12,7 +12,6 @@ from .database import LandscapeDatabase
 from .schemas import (
     CompanyTechnologyProfile,
     CrossCompanyTrendAnalysis,
-    LandscapeClusterPlan,
     LandscapePatentAnalysis,
 )
 from .store import LandscapeRunStore, sha256_file
@@ -24,7 +23,6 @@ def build_report(
     coverage: dict[str, Any],
     documents: dict[str, FetchedDocument],
     analyses: dict[str, LandscapePatentAnalysis],
-    clusters: LandscapeClusterPlan | None,
     failures: dict[str, str],
     limitations: list[dict[str, Any]],
     searched_competitor_aliases: list[dict[str, Any]] | None = None,
@@ -57,24 +55,8 @@ def build_report(
             }
         )
     patents.sort(key=lambda item: (item["publication_date"] or "", item["publication_number"]), reverse=True)
-    patent_by_publication = {
-        patent["publication_number"]: patent for patent in patents
-    }
-    aliases = searched_competitor_aliases or []
-    enriched_clusters = []
-    for cluster in clusters.clusters if clusters else []:
-        cluster_dict = cluster.model_dump(mode="json")
-        cluster_dict["members"] = [
-            _cluster_member(
-                publication,
-                patent_by_publication.get(publication),
-                aliases,
-            )
-            for publication in cluster.publication_numbers
-        ]
-        enriched_clusters.append(cluster_dict)
     return {
-        "schema_version": "landscape-report/1.3.0",
+        "schema_version": "landscape-report/2.0.0",
         "run_id": run["run_id"],
         "scope": run["scope_json"],
         "model": run["model"],
@@ -95,13 +77,11 @@ def build_report(
             "failed_analysis_count": len(failures),
             "company_patent_counts": coverage.get("company_patent_counts", []),
             "publication_jurisdictions": dict(sorted(publication_jurisdictions.items())),
-            "cluster_count": len(clusters.clusters) if clusters else 0,
             "company_profile_count": len(company_profiles or {}),
             "trend_count": len(cross_company_analysis.trends)
             if cross_company_analysis
             else 0,
         },
-        "clusters": enriched_clusters,
         "company_profiles": [
             {
                 "company_id": company_id,
@@ -129,7 +109,6 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- 唯一合格专利族：{summary.get('family_count', summary['candidate_count'])}",
         f"- 合格公开文本：{summary.get('publication_count', summary['candidate_count'])}",
         f"- 成功精读专利族：{summary['analyzed_count']}",
-        f"- 技术聚类：{summary['cluster_count']}",
         "",
         "## 公司专利族数量",
         "",
@@ -186,29 +165,6 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.extend(f"- {country}：{count}" for country, count in jurisdictions.items())
     if not jurisdictions:
         lines.append("- 无可用公开号法域数据")
-    lines.extend(["", "## 技术聚类", ""])
-    for cluster in report["clusters"]:
-        lines.extend(
-            [
-                f"### {cluster['name']}",
-                "",
-                cluster["summary"],
-                "",
-            ]
-        )
-        for member in cluster.get("members", []):
-            lines.append(
-                "- {publication_number}｜{company}｜申请日 {filing_date}".format(
-                    publication_number=member["publication_number"],
-                    company=member.get("competitor")
-                    or member.get("current_assignee")
-                    or "未知权利人",
-                    filing_date=member.get("filing_date") or "未知",
-                )
-            )
-        lines.append("")
-    if not report["clusters"]:
-        lines.extend(["- 未形成聚类", ""])
     lines.extend(["## 逐件精读", ""])
     for patent in report["patents"]:
         analysis = patent["analysis"]
@@ -328,53 +284,6 @@ class LandscapeReportService:
 def _jurisdiction(publication_number: str) -> str | None:
     match = re.match(r"^([A-Z]{2})", publication_number.upper())
     return match.group(1) if match else None
-
-
-def _cluster_member(
-    publication: str,
-    patent: dict[str, Any] | None,
-    aliases: list[dict[str, Any]],
-) -> dict[str, Any]:
-    patent = patent or {}
-    assignee = patent.get("current_assignee")
-    return {
-        "publication_number": publication,
-        "competitor": _matched_competitor(assignee, aliases),
-        "current_assignee": assignee,
-        "filing_date": patent.get("filing_date"),
-    }
-
-
-def _matched_competitor(
-    assignee: str | None, aliases: list[dict[str, Any]]
-) -> str | None:
-    normalized_assignee = _normalized_company(assignee)
-    if not normalized_assignee:
-        return None
-    for item in aliases:
-        names = [
-            item.get("primary_name"),
-            *item.get("aliases", []),
-            *item.get("searched_aliases", []),
-        ]
-        for name in names:
-            normalized_name = _normalized_company(name)
-            if not normalized_name:
-                continue
-            if any("\u3400" <= char <= "\u9fff" for char in normalized_name):
-                matched = normalized_name in normalized_assignee
-            else:
-                matched = re.search(
-                    rf"(?<![a-z0-9]){re.escape(normalized_name)}(?![a-z0-9])",
-                    normalized_assignee,
-                )
-            if matched:
-                return str(item.get("primary_name") or name)
-    return None
-
-
-def _normalized_company(value: str | None) -> str:
-    return " ".join((value or "").casefold().split())
 
 
 def _family_status(document: FetchedDocument) -> dict[str, Any]:

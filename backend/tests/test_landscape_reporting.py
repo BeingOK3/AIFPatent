@@ -5,15 +5,13 @@ import unittest
 from idea.providers.base import FetchedDocument
 from landscape.reporting import build_report, render_markdown, render_patents_csv
 from landscape.schemas import (
-    LandscapeCluster,
-    LandscapeClusterPlan,
     LandscapeEvidenceRef,
     LandscapePatentAnalysis,
 )
 
 
 class LandscapeReportingTests(unittest.TestCase):
-    def test_v2_report_uses_unique_company_counts_and_enriches_cluster_and_family(self) -> None:
+    def test_company_trend_report_uses_unique_company_counts_and_family_details(self) -> None:
         document = FetchedDocument(
             provider="serpapi_google_patents",
             publication_number="US123A1",
@@ -58,16 +56,6 @@ class LandscapeReportingTests(unittest.TestCase):
                 )
             ],
         )
-        clusters = LandscapeClusterPlan(
-            clusters=[
-                LandscapeCluster(
-                    cluster_id="CL-1",
-                    name="Cold plate",
-                    summary="Direct-to-chip cooling.",
-                    publication_numbers=["US123A1"],
-                )
-            ]
-        )
         coverage = {
             "unique_candidate_count": 3,
             "unique_family_count": 3,
@@ -90,7 +78,6 @@ class LandscapeReportingTests(unittest.TestCase):
             coverage=coverage,
             documents={"US123A1": document},
             analyses={"US123A1": analysis},
-            clusters=clusters,
             failures={},
             limitations=[],
             searched_competitor_aliases=[
@@ -103,13 +90,13 @@ class LandscapeReportingTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(report["schema_version"], "landscape-report/1.3.0")
+        self.assertEqual(report["schema_version"], "landscape-report/2.0.0")
         self.assertNotIn("filing_date_trend", report["summary"])
+        self.assertNotIn("cluster_count", report["summary"])
+        self.assertNotIn("clusters", report)
         self.assertEqual(report["summary"]["family_count"], 3)
         self.assertEqual(report["summary"]["publication_count"], 5)
         self.assertEqual(report["summary"]["company_patent_counts"], coverage["company_patent_counts"])
-        self.assertEqual(report["clusters"][0]["members"][0]["competitor"], "Example Corp")
-        self.assertEqual(report["clusters"][0]["members"][0]["filing_date"], "2025-02-01")
         family = report["patents"][0]["family_status"]
         self.assertEqual(family["data_status"], "PARTIAL")
         self.assertEqual(family["overall_legal_status"], "MIXED")
@@ -119,8 +106,10 @@ class LandscapeReportingTests(unittest.TestCase):
 
         markdown = render_markdown(report)
         self.assertIn("## 公司专利族数量", markdown)
+        self.assertIn("## 公司技术画像", markdown)
+        self.assertIn("## 跨公司整体技术趋势", markdown)
         self.assertNotIn("申请日趋势", markdown)
-        self.assertIn("US123A1｜Example Corp｜申请日 2025-02-01", markdown)
+        self.assertNotIn("## 技术聚类", markdown)
         self.assertIn("全族总体状态：MIXED", markdown)
         csv_content = render_patents_csv(report)
         self.assertIn("family_overall_legal_status", csv_content)
