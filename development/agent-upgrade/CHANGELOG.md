@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-company-execution-recovery
+
+### 已完成
+
+- Execution Service 新增单公司分析入口，从持久化 Assignment 与 Patent Analysis 重新构造确定性公司批次。
+- 多专利公司依次执行技术分类和公司 Profile；结果经既有硬校验后交给 PostgreSQL Profile Repository 原子保存。
+- 重启时优先读取已完成 Profile，成功恢复不再调用分类或 Profile 模型。
+- 恢复结果仍会与当前公司批次、公开号和 Evidence 重新校验；缺件、串件或损坏结果 fail closed。
+- 生产 Runtime 显式注入 PostgreSQL Profile Repository。
+
+### 验证
+
+- 公司执行/恢复聚焦 3 项、Landscape 全量 135 项测试通过。
+- Python compileall 与 `git diff --check` 通过；测试使用脚本模型，无 API Key。
+
 ## 2026-07-28 — landscape-keyed-step-harness
 
 ### 已完成

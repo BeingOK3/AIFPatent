@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-EXECUTION-RECOVERY-021
+
+- 类型：单公司分类、Profile、PostgreSQL 持久化与恢复跳过的执行边界。
+- 输入：每次从 Repository 读取冻结 Assignment 和成功 Patent Analysis，重新构造稳定 Company Batch，不依赖进程内全文状态。
+- 执行：未完成公司调用 Classification 与 Profile 服务，随后通过 `put_company_profile` 原子写入分类、成员、证据、快照和 Manifest。
+- 恢复：已存在 Profile 时零模型调用，但仍按当前 Batch 重验成员和 Evidence；不一致直接拒绝。
+- Runtime：生产构建显式将同一个 PostgreSQL Repository 注入 Assignment/Analysis/Profile 接口。
+- 涉及文件：`backend/landscape/execution.py`、Runtime 注入、公司执行恢复测试和两份追加式日志。
+- 验证：聚焦 3 项、Landscape 全量 135 项通过；compileall、`git diff --check` 通过；测试模型无网络与 API Key。
+- 未完成：该入口尚未由 LangGraph `Send` 调度；下一工作单元实现公司 fan-out、keyed step 日志和 Reducer。
+
 ## 2026-07-28 — LANDSCAPE-KEYED-STEP-HARNESS-020
 
 - 类型：Workflow Harness 的 keyed attempt 与恢复行为。

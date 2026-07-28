@@ -13,6 +13,12 @@ from idea.providers.base import FetchRequest, FetchedDocument, ProviderResult, P
 from .analysis import LandscapeAnalysisService
 from .clustering import LandscapeClusteringError, LandscapeClusteringService
 from .company_assignment import CompanyAssignmentResult, assign_companies
+from .company_batches import build_company_analysis_batches
+from .company_classification import (
+    CompanyTechnologyClassificationService,
+    validate_company_technology_classification,
+)
+from .company_profiles import CompanyTechnologyProfileService
 from .database import LandscapeDatabase
 from .planning import (
     CompetitorAliasService,
@@ -22,7 +28,13 @@ from .planning import (
     scope_with_alias_plan,
 )
 from .reporting import LandscapeReportService, build_report
-from .schemas import LandscapePatentAnalysis, LandscapeQueryPlan, LandscapeScope
+from .schemas import (
+    CompanyTechnologyClassification,
+    CompanyTechnologyProfile,
+    LandscapePatentAnalysis,
+    LandscapeQueryPlan,
+    LandscapeScope,
+)
 from .search import (
     LandscapeCandidateLimitExceededError,
     execute_provider_queries,
@@ -47,6 +59,8 @@ class LandscapeCompanyRepository(Protocol):
         scope: LandscapeScope,
         result: CompanyAssignmentResult,
     ) -> CompanyAssignmentResult: ...
+
+    def list_company_assignments(self, run_id: str) -> CompanyAssignmentResult: ...
 
 
 class LandscapeFetchRepository(Protocol):
@@ -79,6 +93,20 @@ class LandscapeAnalysisRepository(Protocol):
     ) -> dict[str, LandscapePatentAnalysis]: ...
 
 
+class LandscapeCompanyProfileRepository(Protocol):
+    def list_company_profiles(
+        self, run_id: str
+    ) -> dict[str, CompanyTechnologyProfile]: ...
+
+    def put_company_profile(
+        self,
+        run_id: str,
+        *,
+        company_id: str,
+        profile: CompanyTechnologyProfile,
+    ) -> CompanyTechnologyProfile: ...
+
+
 class LandscapeExecutionService:
     def __init__(
         self,
@@ -94,6 +122,7 @@ class LandscapeExecutionService:
         company_repository: "LandscapeCompanyRepository | None" = None,
         fetch_repository: "LandscapeFetchRepository | None" = None,
         analysis_repository: "LandscapeAnalysisRepository | None" = None,
+        profile_repository: "LandscapeCompanyProfileRepository | None" = None,
     ):
         self.database = database
         self.store = store
@@ -106,15 +135,68 @@ class LandscapeExecutionService:
         self.clustering = LandscapeClusteringService(model)
         self.aliases = CompetitorAliasService(model)
         self.directions = TechnicalDirectionService(model)
+        self.company_classifier = CompanyTechnologyClassificationService(model)
+        self.company_profiler = CompanyTechnologyProfileService(model)
         self.report_service = report_service
         self.candidate_repository = candidate_repository
         self.company_repository = company_repository
         self.fetch_repository = fetch_repository
         self.analysis_repository = analysis_repository
+        self.profile_repository = profile_repository
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.enrichment_stats: dict[str, dict[str, int]] = {}
         self.cluster_failures: dict[str, str] = {}
+
+    async def analyze_company(
+        self,
+        run_id: str,
+        company_id: str,
+    ) -> dict[str, Any]:
+        if (
+            self.company_repository is None
+            or self.analysis_repository is None
+            or self.profile_repository is None
+        ):
+            raise RuntimeError(
+                "company analysis requires assignment, analysis and profile repositories"
+            )
+        assignment_result = self.company_repository.list_company_assignments(
+            run_id
+        )
+        analyses = self.analysis_repository.list_patent_analyses(run_id)
+        batches = build_company_analysis_batches(assignment_result, analyses)
+        batch = next(
+            (candidate for candidate in batches if candidate.company_id == company_id),
+            None,
+        )
+        if batch is None:
+            raise ValueError(f"unknown or empty company analysis batch: {company_id}")
+
+        existing = self.profile_repository.list_company_profiles(run_id)
+        profile = existing.get(company_id)
+        recovered = profile is not None
+        if profile is not None:
+            validate_company_technology_classification(
+                batch,
+                CompanyTechnologyClassification(
+                    technology_categories=profile.technology_categories
+                ),
+            )
+        else:
+            classification = await self.company_classifier.classify(batch)
+            profile = await self.company_profiler.build(batch, classification)
+            self.profile_repository.put_company_profile(
+                run_id,
+                company_id=company_id,
+                profile=profile,
+            )
+        return {
+            "company_id": company_id,
+            "publication_count": len(batch.items),
+            "category_count": len(profile.technology_categories),
+            "recovered": recovered,
+        }
 
     async def handle_step(
         self, run_id: str, step: LandscapeWorkflowStep, attempt: int

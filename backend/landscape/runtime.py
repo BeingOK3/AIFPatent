@@ -160,6 +160,7 @@ def build_landscape_runtime(
         company_repository=database,
         fetch_repository=database,
         analysis_repository=database,
+        profile_repository=database,
     )
     workflow = LandscapeWorkflow(
         database=database,
