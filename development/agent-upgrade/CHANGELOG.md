@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-company-langgraph-fanout
+
+### 已完成
+
+- 新增独立公司分析 LangGraph 子图，通过 `Send` 为稳定排序后的每个 company ID 创建动态任务。
+- 每个分支以 company ID 作为 PostgreSQL `task_key`，调用已接入的公司 Classification/Profile 执行边界。
+- 成功任务恢复时直接跳过；单分支失败保留其他公司的成功结果，重启只推进失败分支的新 attempt。
+- Graph State 只聚合完成 company ID，不保存分类、Profile、全文或 Evidence 大对象。
+- 定位并规避 LangGraph 1.2.x 的短事件循环兼容问题：异步图的条件路由必须同样使用 async callable。
+
+### 验证
+
+- fan-out 聚焦 3 项、Landscape 全量 145 项测试通过。
+- Python compileall 与 `git diff --check` 通过；脚本执行器无模型 API Key。
+
 ## 2026-07-28 — landscape-family-aware-ranking
 
 ### 已完成

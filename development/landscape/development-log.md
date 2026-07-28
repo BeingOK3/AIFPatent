@@ -2,6 +2,18 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-LANGGRAPH-FANOUT-023
+
+- 类型：公司级 LangGraph `Send` 动态并行与 keyed 恢复。
+- 调度：输入 company IDs 必须唯一并稳定排序；每个 `Send` 只携带 run/company 控制坐标。
+- 持久化：分支使用 `ANALYZE_COMPANY + company_id` 记录 attempt，业务结果仍只写 PostgreSQL Profile Repository。
+- 恢复：SUCCEEDED 分支零执行跳过；失败分支单独递增 attempt，其他公司结果不回滚、不覆盖。
+- State：使用 reducer 聚合 `completed_company_ids`，不复制 Profile、Evidence 或专利全文。
+- 兼容：LangGraph 1.2.9 的 async Graph 条件路由改为 async callable，避免短事件循环等待同步路由线程。
+- 涉及文件：`backend/landscape/company_workflow.py`、fan-out 恢复测试和两份追加式日志。
+- 验证：聚焦 3 项、Landscape 全量 145 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：公司子图尚未接入主 Graph；下一工作单元替换旧 Cluster 路径并串联趋势与 Audit。
+
 ## 2026-07-28 — LANDSCAPE-FAMILY-IDENTITY-RANKING-022
 
 - 类型：过滤后专利身份组、稳定代表项和场景化排序口径。
