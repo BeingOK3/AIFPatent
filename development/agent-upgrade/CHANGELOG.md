@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-complete-resumable-analysis
+
+### 已完成
+
+- `ANALYZE_PATENTS` 的目标集合改为全部成功抓取文档 `F`，彻底移除 `analysis_limit` 切片。
+- 生产恢复路径直接从 PostgreSQL 重建完整 `FetchedDocument`，不再为恢复分析重新请求 Provider。
+- 新增已持久化分析读取与内容哈希/公开号校验；重试时只调用尚未成功分析的文档，并合并既有结果。
+- 若分析记录引用 `F` 之外的公开号则 fail closed，阶段输出显式给出目标数、已分析数、恢复数和完整性。
+
+### 验证
+
+- 分析恢复与 PostgreSQL 读取聚焦测试 16 项通过。
+- Landscape 全量 106 项测试、Python compileall 与 `git diff --check` 通过。
+- 单件模型失败仍作为明确覆盖缺口返回，后续由覆盖审计与有限修复策略处理。
+
 ## 2026-07-28 — landscape-resumable-complete-fetch
 
 ### 已完成

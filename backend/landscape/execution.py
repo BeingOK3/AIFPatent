@@ -22,7 +22,7 @@ from .planning import (
     scope_with_alias_plan,
 )
 from .reporting import LandscapeReportService, build_report
-from .schemas import LandscapeQueryPlan, LandscapeScope
+from .schemas import LandscapePatentAnalysis, LandscapeQueryPlan, LandscapeScope
 from .search import (
     LandscapeCandidateLimitExceededError,
     execute_provider_queries,
@@ -73,6 +73,12 @@ class LandscapeFetchRepository(Protocol):
     ) -> None: ...
 
 
+class LandscapeAnalysisRepository(Protocol):
+    def list_patent_analyses(
+        self, run_id: str
+    ) -> dict[str, LandscapePatentAnalysis]: ...
+
+
 class LandscapeExecutionService:
     def __init__(
         self,
@@ -87,6 +93,7 @@ class LandscapeExecutionService:
         candidate_repository: "LandscapeCandidateRepository | None" = None,
         company_repository: "LandscapeCompanyRepository | None" = None,
         fetch_repository: "LandscapeFetchRepository | None" = None,
+        analysis_repository: "LandscapeAnalysisRepository | None" = None,
     ):
         self.database = database
         self.store = store
@@ -103,6 +110,7 @@ class LandscapeExecutionService:
         self.candidate_repository = candidate_repository
         self.company_repository = company_repository
         self.fetch_repository = fetch_repository
+        self.analysis_repository = analysis_repository
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.enrichment_stats: dict[str, dict[str, int]] = {}
@@ -345,25 +353,47 @@ class LandscapeExecutionService:
         scope = self.scope(run_id)
         docs = self.documents.get(run_id)
         if docs is None:
-            fetch_result = self.database.get_stage_result(
-                run_id, LandscapeWorkflowStep.FETCH_DETAILS.value
-            )["value"]
-            fetched_publications = set(fetch_result.get("fetched_publications", []))
-            selected = [
-                hit
-                for hit in self.selected_hits(run_id)
-                if hit.publication_number in fetched_publications
-            ][: scope.budget.analysis_limit]
-            docs, _ = await self._fetch_documents(run_id, selected)
+            if self.fetch_repository is not None:
+                docs = self.fetch_repository.list_fetched_documents(run_id)
+            else:
+                fetch_result = self.database.get_stage_result(
+                    run_id, LandscapeWorkflowStep.FETCH_DETAILS.value
+                )["value"]
+                fetched_publications = set(
+                    fetch_result.get("fetched_publications", [])
+                )
+                selected = [
+                    hit
+                    for hit in self.selected_hits(run_id)
+                    if hit.publication_number in fetched_publications
+                ]
+                docs, _ = await self._fetch_documents(run_id, selected)
             self.documents[run_id] = docs
+        analyses = (
+            self.analysis_repository.list_patent_analyses(run_id)
+            if self.analysis_repository is not None
+            else {}
+        )
+        outside_fetched = sorted(set(analyses) - set(docs))
+        if outside_fetched:
+            raise ValueError(
+                "persisted analyses reference documents outside fetched set: "
+                + ", ".join(outside_fetched)
+            )
         plan = self.load_plan(run_id)
         direction_terms = plan.direction_terms or ([scope.technology_direction] if scope.technology_direction else [])
-        analyses, failures = await self.analysis.analyze_many(
+        pending = [
+            (document_id(publication), document)
+            for publication, document in sorted(docs.items())
+            if publication not in analyses
+        ]
+        new_analyses, failures = await self.analysis.analyze_many(
             run_id=run_id,
-            documents=[(document_id(publication), document) for publication, document in docs.items()],
+            documents=pending,
             direction_terms=direction_terms,
         )
-        for publication in analyses:
+        analyses.update(new_analyses)
+        for publication in new_analyses:
             self.database.put_document(
                 run_id,
                 document_id=document_id(publication),
@@ -371,7 +401,17 @@ class LandscapeExecutionService:
                 status="ANALYZED",
                 metadata=_document_metadata(docs[publication]),
             )
-        return {"analyses": {key: value.model_dump(mode="json") for key, value in analyses.items()}, "failures": failures}
+        return {
+            "target_count": len(docs),
+            "resumed_analysis_count": len(analyses) - len(new_analyses),
+            "analyzed_count": len(analyses),
+            "complete": len(analyses) == len(docs),
+            "analyses": {
+                key: value.model_dump(mode="json")
+                for key, value in sorted(analyses.items())
+            },
+            "failures": failures,
+        }
 
     async def cluster_patents(self, run_id: str) -> dict[str, Any]:
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.ANALYZE_PATENTS.value)["value"]

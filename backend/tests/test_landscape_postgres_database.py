@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import unittest
+import hashlib
 from contextlib import contextmanager
 from datetime import date
 
 from idea.providers.base import FetchedDocument
 from landscape.company_assignment import CompanyAssignmentResult
+from landscape.database import canonical_json
 from landscape.postgres_database import (
     LandscapePostgreSQLDatabase,
     _prepare_candidate_rows,
@@ -15,6 +17,8 @@ from landscape.schemas import (
     CompanyAssignment,
     CompetitorInput,
     LandscapeScope,
+    LandscapeEvidenceRef,
+    LandscapePatentAnalysis,
     NormalizedCompany,
 )
 
@@ -512,6 +516,47 @@ class LandscapePostgreSQLFetchTests(unittest.TestCase):
                 publication_number="CN1A",
                 document=changed,
             )
+
+
+class LandscapePostgreSQLAnalysisReadTests(unittest.TestCase):
+    def test_analysis_read_validates_hash_and_publication_identity(self) -> None:
+        database = LandscapePostgreSQLDatabase(
+            "postgresql://test:test@localhost/test"
+        )
+        analysis = LandscapePatentAnalysis(
+            publication_number="CN1A",
+            prior_art="现有方案",
+            core_invention_points=["核心改进"],
+            evidence_refs=[
+                LandscapeEvidenceRef(
+                    evidence_id="EV-CN1A",
+                    supports=["prior_art", "core_invention_point"],
+                )
+            ],
+        )
+        encoded = canonical_json(analysis.model_dump(mode="json"))
+        row = {
+            "publication_number": "CN1A",
+            "analysis_json": encoded,
+            "content_hash": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+        }
+
+        @contextmanager
+        def connect():
+            class Connection:
+                def execute(self, _sql, _params=()):
+                    return _Cursor([row])
+
+            yield Connection()
+
+        database.connect = connect  # type: ignore[method-assign]
+        self.assertEqual(
+            database.list_patent_analyses("run-1"),
+            {"CN1A": analysis},
+        )
+        row["content_hash"] = "corrupt"
+        with self.assertRaisesRegex(ValueError, "hash mismatch"):
+            database.list_patent_analyses("run-1")
 
 
 if __name__ == "__main__":

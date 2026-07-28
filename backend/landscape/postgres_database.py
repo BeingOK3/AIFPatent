@@ -11,7 +11,12 @@ from idea.providers.base import FetchedDocument
 
 from .company_assignment import CompanyAssignmentResult
 from .database import LandscapeDatabase, assert_no_secrets, canonical_json, now_ms
-from .schemas import CompanyAssignment, LandscapeScope, NormalizedCompany
+from .schemas import (
+    CompanyAssignment,
+    LandscapePatentAnalysis,
+    LandscapeScope,
+    NormalizedCompany,
+)
 
 
 def _prepare_candidate_rows(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -697,6 +702,33 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
                     """,
                     (message, now_ms(), run_id, document_id),
                 )
+
+    def list_patent_analyses(
+        self, run_id: str
+    ) -> dict[str, LandscapePatentAnalysis]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT publication_number,analysis_json,content_hash
+                FROM landscape_patent_analyses
+                WHERE run_id = %s
+                ORDER BY publication_number
+                """,
+                (run_id,),
+            ).fetchall()
+        analyses: dict[str, LandscapePatentAnalysis] = {}
+        for row in rows:
+            value = _json_value(row["analysis_json"])
+            encoded = canonical_json(value)
+            if hashlib.sha256(encoded.encode("utf-8")).hexdigest() != row["content_hash"]:
+                raise ValueError(
+                    f"landscape patent analysis hash mismatch: {row['publication_number']}"
+                )
+            analysis = LandscapePatentAnalysis.model_validate(value)
+            if analysis.publication_number != row["publication_number"]:
+                raise ValueError("patent analysis publication identity mismatch")
+            analyses[row["publication_number"]] = analysis
+        return analyses
 
 
 def _json_value(value: Any) -> Any:

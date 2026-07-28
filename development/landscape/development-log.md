@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPLETE-ANALYSIS-010
+
+- 类型：成功抓取集合 `F` 的完整、可恢复逐件精读。
+- 集合：分析目标严格等于 PostgreSQL 可重建的全部 `FETCHED` 文档，不读取 `analysis_limit`，不再重抓全文。
+- 恢复：读取已有 `landscape_patent_analyses` 并校验 JSON 哈希与公开号身份，只把差集发送给单专利 Analyzer；既有与新增结果稳定合并。
+- 硬门：持久化 Analysis 若引用 `F` 外专利立即失败；输出记录 `target_count`、`resumed_analysis_count`、`analyzed_count` 和 `complete`。
+- 涉及文件：Execution/Runtime、PostgreSQL Repository、执行与 Repository 测试及两份追加式日志。
+- 验证：聚焦 16 项、Landscape 全量 106 项通过；compileall、`git diff --check` 通过。
+- 未完成：模型失败仍形成 `F-A` 覆盖缺口；公司批次、覆盖审计和有限修复将在后续工作单元处理。
+
 ## 2026-07-28 — LANDSCAPE-RESUMABLE-FETCH-009
 
 - 类型：完整 `U` 的可恢复专利详情抓取。

@@ -19,6 +19,8 @@ from landscape.schemas import (
     CompetitorAliasPlan,
     CompetitorAliasResolution,
     CompetitorInput,
+    LandscapeEvidenceRef,
+    LandscapePatentAnalysis,
     LandscapeScope,
 )
 from landscape.search import LandscapeCandidateLimitExceededError
@@ -91,6 +93,28 @@ class FetchCaptureRepository:
         self, _run_id, *, document_id, publication_number, error_message
     ):
         self.failures[publication_number] = error_message
+
+
+class AnalysisCaptureRepository:
+    def __init__(self, analyses=None):
+        self.analyses = dict(analyses or {})
+
+    def list_patent_analyses(self, _run_id):
+        return dict(self.analyses)
+
+
+def _analysis(publication_number: str) -> LandscapePatentAnalysis:
+    return LandscapePatentAnalysis(
+        publication_number=publication_number,
+        prior_art="现有方案",
+        core_invention_points=["核心改进"],
+        evidence_refs=[
+            LandscapeEvidenceRef(
+                evidence_id=f"EV-{publication_number}",
+                supports=["prior_art", "core_invention_point"],
+            )
+        ],
+    )
 
 
 class LandscapeEnrichmentTests(unittest.TestCase):
@@ -522,6 +546,90 @@ class LandscapeEnrichmentTests(unittest.TestCase):
             self.assertEqual(resumed["resumed_fetched_count"], 4)
             self.assertEqual(len(resumed["fetched_publications"]), 5)
             self.assertTrue(resumed["complete"])
+
+    def test_analysis_covers_all_f_and_resumes_persisted_results(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = LandscapeDatabase(root / "landscape.db")
+            database.initialize()
+            store = LandscapeRunStore(root / "runs")
+            existing = {"US1A1": _analysis("US1A1")}
+            analysis_repository = AnalysisCaptureRepository(existing)
+            service = LandscapeExecutionService(
+                database=database,
+                store=store,
+                model=StructuredModelClient(load_config().model),
+                providers=[],
+                provider_timeout_seconds={},
+                analysis_concurrency=1,
+                report_service=LandscapeReportService(database, store),
+                analysis_repository=analysis_repository,
+            )
+            scope = LandscapeScope(
+                technology_direction="液冷",
+                publication_start=date(2026, 4, 1),
+                publication_end=date(2026, 6, 30),
+                budget=AnalysisBudget(
+                    candidate_limit=10,
+                    analysis_limit=1,
+                    per_query_limit=10,
+                ),
+            )
+            run = database.create_run(
+                scope=scope,
+                model="fixture",
+                workflow_version="1.0.0",
+                prompt_version="1.0.0",
+            )
+            run_id = run["run_id"]
+            database.put_stage_result(
+                run_id,
+                "PLAN_SEARCH",
+                {
+                    "plan": {
+                        "direction_terms": ["液冷"],
+                        "direction_english_terms": ["liquid cooling"],
+                        "queries": [
+                            {
+                                "query_text": "液冷",
+                                "language": "zh",
+                                "rationale": "fixture",
+                            }
+                        ],
+                    },
+                    "competitor_aliases": [],
+                },
+            )
+            service.documents[run_id] = {
+                f"US{index}A1": FetchedDocument(
+                    provider="fixture",
+                    publication_number=f"US{index}A1",
+                    title=f"Patent {index}",
+                    url=f"https://example.test/{index}",
+                )
+                for index in range(1, 4)
+            }
+            analyzed_batches = []
+
+            async def analyze_many(*, run_id, documents, direction_terms):
+                analyzed_batches.append(
+                    [document.publication_number for _, document in documents]
+                )
+                return {
+                    document.publication_number: _analysis(
+                        document.publication_number
+                    )
+                    for _, document in documents
+                }, {}
+
+            service.analysis.analyze_many = analyze_many
+            result = asyncio.run(service.analyze_patents(run_id))
+
+            self.assertEqual(analyzed_batches, [["US2A1", "US3A1"]])
+            self.assertEqual(result["target_count"], 3)
+            self.assertEqual(result["resumed_analysis_count"], 1)
+            self.assertEqual(result["analyzed_count"], 3)
+            self.assertTrue(result["complete"])
 
 
 if __name__ == "__main__":
