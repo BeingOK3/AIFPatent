@@ -2,6 +2,13 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-GRAPH-REPAIR-GAPS-037
+
+- 类型：显式 LangGraph 修复条件节点。
+- Graph：`VERIFY_COVERAGE(REPAIR) → REPAIR_GAPS(keyed task) → PASS/LIMITED → BUILD_REPORT`；Repair 节点输出下一轮审计决策，不携带全文或模型凭证。
+- 报告：当前审计值取 immutable Audit history 的最后一轮，确保修复后 PASS/LIMITED 与 UI 一致。
+- 验证：Landscape 全量 157 项、compileall、`git diff --check` 通过。
+
 ## 2026-07-28 — LANDSCAPE-REPORT-REPAIR-HISTORY-036
 
 - 类型：自主修复轨迹报告化。

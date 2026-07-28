@@ -303,6 +303,7 @@ class LandscapeExecutionService:
                 self.analyze_cross_company_trends
             ),
             LandscapeWorkflowStep.VERIFY_COVERAGE: self.verify_coverage,
+            LandscapeWorkflowStep.REPAIR_GAPS: self.repair_coverage_gaps,
             LandscapeWorkflowStep.BUILD_REPORT: self.build_report,
         }
         return await handlers[step](run_id)
@@ -514,7 +515,9 @@ class LandscapeExecutionService:
             "trend_rebuilt": trend_result is not None,
         }
 
-    async def verify_coverage(self, run_id: str) -> dict[str, Any]:
+    async def verify_coverage(
+        self, run_id: str, *, force_recheck: bool = False
+    ) -> dict[str, Any]:
         if (
             self.candidate_repository is None
             or self.company_repository is None
@@ -553,29 +556,18 @@ class LandscapeExecutionService:
             )
 
         existing = self.audit_repository.list_coverage_audits(run_id)
-        if existing:
+        if existing and not force_recheck:
             audit = existing[-1]
             recovered = True
             repair_round = len(existing) - 1
         else:
-            repair_round = 0
+            repair_round = len(existing)
             audit = compute_audit(repair_round)
             self.audit_repository.put_coverage_audit(
                 run_id,
                 repair_round=repair_round,
                 audit=audit,
             )
-            if audit.decision == "REPAIR":
-                repair_round = 1
-                repair_result = await self.repair_gaps(
-                    run_id, audit=audit, repair_round=repair_round
-                )
-                audit = compute_audit(repair_round)
-                self.audit_repository.put_coverage_audit(
-                    run_id, repair_round=repair_round, audit=audit
-                )
-            else:
-                repair_result = None
             recovered = False
         if audit.decision == "FAIL":
             raise NonRetryableLandscapeWorkflowError(
@@ -589,8 +581,21 @@ class LandscapeExecutionService:
             "repair_targets": audit.repair_targets,
             "limitations": audit.limitations,
             "recovered": recovered,
-            "repair": repair_result if not recovered else None,
+            "repair": None,
         }
+
+    async def repair_coverage_gaps(self, run_id: str) -> dict[str, Any]:
+        if self.audit_repository is None:
+            raise RuntimeError("repair execution requires coverage audit repository")
+        history = self.audit_repository.list_coverage_audits(run_id)
+        if not history or history[-1].decision != "REPAIR":
+            raise ValueError("repair requires latest audit decision REPAIR")
+        repair_round = len(history)
+        repair = await self.repair_gaps(
+            run_id, audit=history[-1], repair_round=repair_round
+        )
+        verification = await self.verify_coverage(run_id, force_recheck=True)
+        return {**verification, "repair": repair}
 
     async def validate_scope(self, run_id: str) -> dict[str, Any]:
         scope = self.scope(run_id)
@@ -901,12 +906,22 @@ class LandscapeExecutionService:
             if self.trend_repository is not None
             else None
         )
-        try:
-            company_trend_coverage = self.database.get_stage_result(
-                run_id, LandscapeWorkflowStep.VERIFY_COVERAGE.value
-            )["value"]
-        except KeyError:
-            company_trend_coverage = None
+        audit_history = (
+            self.audit_repository.list_coverage_audits(run_id)
+            if self.audit_repository is not None
+            else []
+        )
+        company_trend_coverage = (
+            {
+                "decision": audit_history[-1].decision,
+                "coverage_ratio": audit_history[-1].coverage_ratio,
+                "repair_round": len(audit_history) - 1,
+                "repair_targets": audit_history[-1].repair_targets,
+                "limitations": audit_history[-1].limitations,
+            }
+            if audit_history
+            else None
+        )
         company_trend_coverage_history = (
             [
                 {
@@ -916,9 +931,7 @@ class LandscapeExecutionService:
                     "repair_targets": audit.repair_targets,
                     "limitations": audit.limitations,
                 }
-                for index, audit in enumerate(
-                    self.audit_repository.list_coverage_audits(run_id)
-                )
+                for index, audit in enumerate(audit_history)
             ]
             if self.audit_repository is not None
             else []

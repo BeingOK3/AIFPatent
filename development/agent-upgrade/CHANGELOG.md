@@ -2,6 +2,18 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-graph-repair-gaps-routing
+
+### 已完成
+
+- 主 LangGraph 新增独立 `REPAIR_GAPS` 条件节点：VERIFY 输出 REPAIR 时进入 durable keyed repair task，再按新 Audit 的 PASS/LIMITED 路由报告。
+- Repair task 不进入固定主步骤完成门，避免 PASS Run 被不必要的可选任务阻塞。
+- 最终报告的当前 Coverage Audit 改为读取 Audit 历史最新快照，避免显示 repair 前的 REPAIR 结论。
+
+### 验证
+
+- Landscape 全量 157 项测试通过；Python compileall 与 `git diff --check` 通过。
+
 ## 2026-07-28 — landscape-report-repair-history
 
 ### 已完成

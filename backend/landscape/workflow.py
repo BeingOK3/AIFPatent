@@ -23,6 +23,7 @@ class LandscapeWorkflowStep(StrEnum):
     ANALYZE_COMPANIES = "ANALYZE_COMPANIES"
     ANALYZE_CROSS_COMPANY_TRENDS = "ANALYZE_CROSS_COMPANY_TRENDS"
     VERIFY_COVERAGE = "VERIFY_COVERAGE"
+    REPAIR_GAPS = "REPAIR_GAPS"
     CLUSTER_PATENTS = "CLUSTER_PATENTS"
     BUILD_REPORT = "BUILD_REPORT"
 
@@ -32,7 +33,10 @@ class LandscapeWorkflowStep(StrEnum):
 WORKFLOW_STEPS = tuple(
     step
     for step in LandscapeWorkflowStep
-    if step is not LandscapeWorkflowStep.CLUSTER_PATENTS
+    if step not in {
+        LandscapeWorkflowStep.CLUSTER_PATENTS,
+        LandscapeWorkflowStep.REPAIR_GAPS,
+    }
 )
 TERMINAL_STATUSES = {"COMPLETED", "COMPLETED_WITH_LIMITATIONS", "FAILED", "CANCELLED"}
 MAIN_TASK_KEY = "__main__"
@@ -55,6 +59,7 @@ class LandscapeWorkflowState(TypedDict):
     last_completed_step: str | None
     completed_steps: int
     audit_decision: NotRequired[str]
+    repair_round: NotRequired[int]
 
 
 StepHandler = Callable[[str, LandscapeWorkflowStep, int], Awaitable[dict[str, Any]]]
@@ -365,6 +370,11 @@ class LandscapeWorkflow:
         )
         for step in WORKFLOW_STEPS:
             builder.add_node(step.value, self._node(step), retry_policy=retry)
+        builder.add_node(
+            LandscapeWorkflowStep.REPAIR_GAPS.value,
+            self._repair_node,
+            retry_policy=retry,
+        )
         builder.add_edge(START, WORKFLOW_STEPS[0].value)
         for current, following in zip(WORKFLOW_STEPS, WORKFLOW_STEPS[1:]):
             if current == LandscapeWorkflowStep.VERIFY_COVERAGE:
@@ -372,6 +382,15 @@ class LandscapeWorkflow:
             builder.add_edge(current.value, following.value)
         builder.add_conditional_edges(
             LandscapeWorkflowStep.VERIFY_COVERAGE.value,
+            self._route_coverage,
+            {
+                "PASS": LandscapeWorkflowStep.BUILD_REPORT.value,
+                "LIMITED": LandscapeWorkflowStep.BUILD_REPORT.value,
+                "REPAIR": LandscapeWorkflowStep.REPAIR_GAPS.value,
+            },
+        )
+        builder.add_conditional_edges(
+            LandscapeWorkflowStep.REPAIR_GAPS.value,
             self._route_coverage,
             {
                 "PASS": LandscapeWorkflowStep.BUILD_REPORT.value,
@@ -384,11 +403,48 @@ class LandscapeWorkflow:
     @staticmethod
     async def _route_coverage(state: LandscapeWorkflowState) -> str:
         decision = state.get("audit_decision")
-        if decision not in {"PASS", "LIMITED"}:
+        if decision not in {"PASS", "REPAIR", "LIMITED"}:
             raise NonRetryableLandscapeWorkflowError(
                 f"unsupported coverage route: {decision}"
             )
         return decision
+
+    async def _repair_node(self, state: LandscapeWorkflowState) -> dict[str, Any]:
+        """Run the durable repair task outside the linear main-step sequence."""
+        run_id = state["run_id"]
+        audit_round = int(state.get("repair_round", 0)) + 1
+        task_key = f"repair-round-{audit_round}"
+        latest = self.harness.latest_task(
+            run_id, LandscapeWorkflowStep.REPAIR_GAPS, task_key=task_key
+        )
+        if latest is not None and latest["status"] == "SUCCEEDED":
+            output = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.VERIFY_COVERAGE.value
+            )["value"]
+            return {"audit_decision": output["decision"], "repair_round": audit_round}
+        attempt = self.harness.start_step(
+            run_id,
+            LandscapeWorkflowStep.REPAIR_GAPS,
+            {"repair_round": audit_round},
+            task_key=task_key,
+        )
+        try:
+            output = await asyncio.wait_for(
+                self.step_handler(run_id, LandscapeWorkflowStep.REPAIR_GAPS, attempt),
+                timeout=self.step_timeout_seconds,
+            )
+        except Exception as exc:
+            self.harness.fail_step(
+                run_id, LandscapeWorkflowStep.REPAIR_GAPS, attempt, exc, task_key=task_key
+            )
+            raise
+        self.harness.complete_step(
+            run_id, LandscapeWorkflowStep.REPAIR_GAPS, attempt, output, task_key=task_key
+        )
+        return {
+            "audit_decision": output["decision"],
+            "repair_round": output["repair_round"],
+        }
 
     def _node(self, step: LandscapeWorkflowStep):
         async def node(state: LandscapeWorkflowState) -> dict[str, Any]:
@@ -401,9 +457,11 @@ class LandscapeWorkflow:
                     "completed_steps": progress["completed_steps"],
                 }
                 if step == LandscapeWorkflowStep.VERIFY_COVERAGE:
-                    result["audit_decision"] = self.database.get_stage_result(
+                    audit = self.database.get_stage_result(
                         run_id, step.value
-                    )["value"]["decision"]
+                    )["value"]
+                    result["audit_decision"] = audit["decision"]
+                    result["repair_round"] = audit["repair_round"]
                 return result
             attempt = self.harness.start_step(run_id, step, {"input_hash": self.database.get_run(run_id)["input_hash"]})
             try:
@@ -422,6 +480,7 @@ class LandscapeWorkflow:
             }
             if step == LandscapeWorkflowStep.VERIFY_COVERAGE:
                 result["audit_decision"] = output["decision"]
+                result["repair_round"] = output.get("repair_round", 0)
             return result
 
         node.__name__ = f"run_{step.value.lower()}"

@@ -295,8 +295,10 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
             publication_start=date(2026, 4, 1),
             publication_end=date(2026, 6, 30),
         )
-        result = asyncio.run(self.service.verify_coverage("run-1"))
+        first = asyncio.run(self.service.verify_coverage("run-1"))
+        result = asyncio.run(self.service.repair_coverage_gaps("run-1"))
 
+        self.assertEqual(first["decision"], "REPAIR")
         self.assertEqual(result["decision"], "PASS")
         self.assertEqual(result["repair_round"], 1)
         self.assertIsNotNone(result["repair"])
