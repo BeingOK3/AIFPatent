@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-KEYED-STEP-HARNESS-020
+
+- 类型：Workflow Harness 的 keyed attempt 与恢复行为。
+- 接口：`start_step/complete_step/fail_step/latest_task` 接受显式 `task_key`；主流程默认 `__main__`，现有调用保持兼容。
+- 隔离：Attempt 数量、状态更新和完成读取均包含 task key；错误 key 不能完成另一分支。
+- 主从语义：只有 `__main__` 写 Stage Result、执行主流程顺序门和在重试耗尽时终止 Run；公司子任务由后续 Reducer/Audit 汇总。
+- 测试仓储：内嵌 SQLite Schema 仅用于无外部依赖的 Harness 测试，与 PostgreSQL `074` 保持列和唯一键一致。
+- 涉及文件：`backend/landscape/workflow.py`、测试仓储 Schema、Workflow 测试和两份追加式日志。
+- 验证：聚焦 13 项、Landscape 全量 132 项通过；compileall、`git diff --check` 通过；零模型调用。
+- 未完成：Graph 尚未调用 keyed 公司任务；下一工作单元接入公司批次、Profile Repository 与恢复跳过逻辑。
+
 ## 2026-07-28 — LANDSCAPE-KEYED-STEP-SCHEMA-019
 
 - 类型：公司/专利 fan-out 的 PostgreSQL Task Attempt 身份迁移。

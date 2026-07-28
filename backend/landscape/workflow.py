@@ -26,6 +26,7 @@ class LandscapeWorkflowStep(StrEnum):
 
 WORKFLOW_STEPS = tuple(LandscapeWorkflowStep)
 TERMINAL_STATUSES = {"COMPLETED", "COMPLETED_WITH_LIMITATIONS", "FAILED", "CANCELLED"}
+MAIN_TASK_KEY = "__main__"
 
 
 class LandscapeWorkflowError(RuntimeError):
@@ -84,39 +85,76 @@ class LandscapeWorkflowHarness:
             None,
         )
 
-    def start_step(self, run_id: str, step: LandscapeWorkflowStep, input_value: Any) -> int:
+    def start_step(
+        self,
+        run_id: str,
+        step: LandscapeWorkflowStep,
+        input_value: Any,
+        *,
+        task_key: str = MAIN_TASK_KEY,
+    ) -> int:
+        task_key = _validated_task_key(task_key)
         run = self.database.get_run(run_id)
         if run["status"] != "RUNNING":
             raise LandscapeWorkflowError(f"run is not RUNNING: {run['status']}")
-        expected = self.next_step(run_id)
-        if expected != step:
-            raise LandscapeWorkflowError(f"out-of-order step: expected {expected}, got {step}")
-        attempt = self._attempt_count(run_id, step) + 1
+        if task_key == MAIN_TASK_KEY:
+            expected = self.next_step(run_id)
+            if expected != step:
+                raise LandscapeWorkflowError(
+                    f"out-of-order step: expected {expected}, got {step}"
+                )
+        attempt = self._attempt_count(run_id, step, task_key) + 1
         if attempt > self.max_step_attempts:
             raise LandscapeWorkflowError("step attempt limit exceeded")
         encoded = canonical_json(input_value)
         with self.database.connect() as connection:
             connection.execute(
                 """
-                INSERT INTO landscape_steps(run_id,step_name,attempt,status,input_hash,started_at)
-                VALUES(?,?,?,?,?,?)
+                INSERT INTO landscape_steps(
+                    run_id,step_name,task_key,attempt,status,input_hash,started_at
+                ) VALUES(?,?,?,?,?,?,?)
                 """,
-                (run_id, step.value, attempt, "RUNNING", _hash(encoded), now_ms()),
+                (
+                    run_id,
+                    step.value,
+                    task_key,
+                    attempt,
+                    "RUNNING",
+                    _hash(encoded),
+                    now_ms(),
+                ),
             )
         return attempt
 
     def complete_step(
-        self, run_id: str, step: LandscapeWorkflowStep, attempt: int, output: dict[str, Any]
+        self,
+        run_id: str,
+        step: LandscapeWorkflowStep,
+        attempt: int,
+        output: dict[str, Any],
+        *,
+        task_key: str = MAIN_TASK_KEY,
     ) -> None:
+        task_key = _validated_task_key(task_key)
         encoded = canonical_json(output)
-        self.database.put_stage_result(run_id, step.value, output)
+        if task_key == MAIN_TASK_KEY:
+            self.database.put_stage_result(run_id, step.value, output)
         with self.database.connect() as connection:
             cursor = connection.execute(
                 """
                 UPDATE landscape_steps SET status='SUCCEEDED',output_hash=?,output_json=?,completed_at=?
-                WHERE run_id=? AND step_name=? AND attempt=? AND status='RUNNING'
+                WHERE run_id=? AND step_name=? AND task_key=?
+                  AND attempt=? AND status='RUNNING'
                 """,
-                (_hash(encoded), encoded, now_ms(), run_id, step.value, attempt),
+                (
+                    _hash(encoded),
+                    encoded,
+                    now_ms(),
+                    run_id,
+                    step.value,
+                    task_key,
+                    attempt,
+                ),
             )
             if cursor.rowcount != 1:
                 raise LandscapeWorkflowError("running step attempt not found")
@@ -127,18 +165,30 @@ class LandscapeWorkflowHarness:
         step: LandscapeWorkflowStep,
         attempt: int,
         error: Exception,
+        *,
+        task_key: str = MAIN_TASK_KEY,
     ) -> None:
+        task_key = _validated_task_key(task_key)
         with self.database.connect() as connection:
             cursor = connection.execute(
                 """
                 UPDATE landscape_steps SET status='FAILED',completed_at=?,error_code=?,error_message=?
-                WHERE run_id=? AND step_name=? AND attempt=? AND status='RUNNING'
+                WHERE run_id=? AND step_name=? AND task_key=?
+                  AND attempt=? AND status='RUNNING'
                 """,
-                (now_ms(), type(error).__name__, str(error)[:2000], run_id, step.value, attempt),
+                (
+                    now_ms(),
+                    type(error).__name__,
+                    str(error)[:2000],
+                    run_id,
+                    step.value,
+                    task_key,
+                    attempt,
+                ),
             )
             if cursor.rowcount != 1:
                 raise LandscapeWorkflowError("running step attempt not found")
-        if attempt >= self.max_step_attempts:
+        if task_key == MAIN_TASK_KEY and attempt >= self.max_step_attempts:
             self.database.set_run_status(
                 run_id, "FAILED", error_code=type(error).__name__, error_message=str(error)[:2000]
             )
@@ -192,11 +242,38 @@ class LandscapeWorkflowHarness:
             ],
         }
 
-    def _attempt_count(self, run_id: str, step: LandscapeWorkflowStep) -> int:
+    def latest_task(
+        self,
+        run_id: str,
+        step: LandscapeWorkflowStep,
+        *,
+        task_key: str,
+    ) -> dict[str, Any] | None:
+        task_key = _validated_task_key(task_key)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM landscape_steps
+                WHERE run_id=? AND step_name=? AND task_key=?
+                ORDER BY attempt DESC LIMIT 1
+                """,
+                (run_id, step.value, task_key),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def _attempt_count(
+        self,
+        run_id: str,
+        step: LandscapeWorkflowStep,
+        task_key: str = MAIN_TASK_KEY,
+    ) -> int:
         with self.database.connect() as connection:
             return connection.execute(
-                "SELECT COUNT(*) FROM landscape_steps WHERE run_id=? AND step_name=?",
-                (run_id, step.value),
+                """
+                SELECT COUNT(*) FROM landscape_steps
+                WHERE run_id=? AND step_name=? AND task_key=?
+                """,
+                (run_id, step.value, task_key),
             ).fetchone()[0]
 
     def _latest_steps(self, run_id: str) -> dict[str, dict[str, Any]]:
@@ -205,11 +282,11 @@ class LandscapeWorkflowHarness:
                 """
                 SELECT s.* FROM landscape_steps s JOIN (
                     SELECT step_name,MAX(attempt) attempt FROM landscape_steps
-                    WHERE run_id=? GROUP BY step_name
+                    WHERE run_id=? AND task_key=? GROUP BY step_name
                 ) latest ON latest.step_name=s.step_name AND latest.attempt=s.attempt
-                WHERE s.run_id=?
+                WHERE s.run_id=? AND s.task_key=?
                 """,
-                (run_id, run_id),
+                (run_id, MAIN_TASK_KEY, run_id, MAIN_TASK_KEY),
             ).fetchall()
         return {row["step_name"]: dict(row) for row in rows}
 
@@ -310,3 +387,13 @@ class LandscapeWorkflow:
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _validated_task_key(task_key: str) -> str:
+    if not isinstance(task_key, str) or task_key != task_key.strip():
+        raise LandscapeWorkflowError("task_key must be a trimmed string")
+    if not task_key or len(task_key) > 256:
+        raise LandscapeWorkflowError(
+            "task_key must contain between 1 and 256 characters"
+        )
+    return task_key

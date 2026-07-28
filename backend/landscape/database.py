@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS landscape_steps (
     step_id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL REFERENCES landscape_runs(run_id) ON DELETE CASCADE,
     step_name TEXT NOT NULL,
+    task_key TEXT NOT NULL DEFAULT '__main__',
     attempt INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL,
     input_hash TEXT,
@@ -64,7 +65,7 @@ CREATE TABLE IF NOT EXISTS landscape_steps (
     error_message TEXT,
     started_at INTEGER,
     completed_at INTEGER,
-    UNIQUE(run_id, step_name, attempt)
+    UNIQUE(run_id, step_name, task_key, attempt)
 );
 CREATE INDEX IF NOT EXISTS idx_landscape_steps_run ON landscape_steps(run_id, step_id);
 
@@ -652,7 +653,7 @@ class LandscapeDatabase:
         with self.connect() as connection:
             step_rows = connection.execute(
                 """
-                SELECT step_name,attempt,status,input_hash,output_hash,error_code,error_message,
+                SELECT step_name,task_key,attempt,status,input_hash,output_hash,error_code,error_message,
                        started_at,completed_at
                 FROM landscape_steps WHERE run_id=? ORDER BY step_id
                 """,

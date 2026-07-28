@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-keyed-step-harness
+
+### 已完成
+
+- Workflow Harness 的 start/complete/fail/latest 全部支持显式 `task_key`，默认主流程仍使用 `__main__`。
+- Attempt 计数按 `(run_id, step_name, task_key)` 隔离；不同公司可独立从 attempt 1 开始并分别恢复。
+- 主流程继续执行严格顺序与唯一 Stage Result；fan-out 子任务只写自身 Step 输出和业务结果，不争抢主流程 Stage Result。
+- 单个子任务重试耗尽不会提前终止整个 Run，保留给 Reducer 和 Coverage Audit 做全局判断。
+- SQLite 仅同步测试仓储的表契约，生产运行时仍以 PostgreSQL `074` 为事实源。
+
+### 验证
+
+- Workflow/测试仓储聚焦 13 项、Landscape 全量 132 项测试通过。
+- Python compileall 与 `git diff --check` 通过；无模型调用或 API Key。
+
 ## 2026-07-28 — landscape-keyed-step-schema
 
 ### 已完成

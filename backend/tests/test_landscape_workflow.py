@@ -76,6 +76,80 @@ class LandscapeWorkflowHarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "not RUNNING"):
             self.harness.start_step(run_id, LandscapeWorkflowStep.VALIDATE_SCOPE, {})
 
+    def test_keyed_attempts_are_isolated_and_resumable(self) -> None:
+        run_id = self.run["run_id"]
+        step = LandscapeWorkflowStep.ANALYZE_PATENTS
+        self.harness.begin_run(run_id)
+
+        company_a_attempt = self.harness.start_step(
+            run_id, step, {"company_id": "CO-A"}, task_key="CO-A"
+        )
+        company_b_attempt = self.harness.start_step(
+            run_id, step, {"company_id": "CO-B"}, task_key="CO-B"
+        )
+        self.assertEqual((company_a_attempt, company_b_attempt), (1, 1))
+
+        self.harness.complete_step(
+            run_id,
+            step,
+            company_a_attempt,
+            {"company_id": "CO-A"},
+            task_key="CO-A",
+        )
+        self.harness.fail_step(
+            run_id,
+            step,
+            company_b_attempt,
+            ConnectionError("temporary"),
+            task_key="CO-B",
+        )
+        company_b_retry = self.harness.start_step(
+            run_id, step, {"company_id": "CO-B"}, task_key="CO-B"
+        )
+        self.assertEqual(company_b_retry, 2)
+        self.harness.fail_step(
+            run_id,
+            step,
+            company_b_retry,
+            ConnectionError("still temporary"),
+            task_key="CO-B",
+        )
+
+        self.assertEqual(
+            self.harness.latest_task(run_id, step, task_key="CO-A")["status"],
+            "SUCCEEDED",
+        )
+        self.assertEqual(
+            self.harness.latest_task(run_id, step, task_key="CO-B")["attempt"],
+            2,
+        )
+        self.assertEqual(self.db.get_run(run_id)["status"], "RUNNING")
+        self.assertEqual(
+            self.harness.next_step(run_id),
+            LandscapeWorkflowStep.VALIDATE_SCOPE,
+        )
+        with self.assertRaises(KeyError):
+            self.db.get_stage_result(run_id, step.value)
+
+    def test_task_key_is_validated_and_completion_is_task_scoped(self) -> None:
+        run_id = self.run["run_id"]
+        step = LandscapeWorkflowStep.ANALYZE_PATENTS
+        self.harness.begin_run(run_id)
+        with self.assertRaisesRegex(Exception, "trimmed"):
+            self.harness.start_step(run_id, step, {}, task_key=" CO-A")
+
+        attempt = self.harness.start_step(
+            run_id, step, {}, task_key="CO-A"
+        )
+        with self.assertRaisesRegex(Exception, "not found"):
+            self.harness.complete_step(
+                run_id, step, attempt, {}, task_key="CO-B"
+            )
+        self.assertEqual(
+            self.harness.latest_task(run_id, step, task_key="CO-A")["status"],
+            "RUNNING",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
