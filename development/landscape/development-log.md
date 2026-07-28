@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COMPANY-CLASSIFICATION-012
+
+- 类型：单公司内部、证据约束的技术分类。
+- Agent 输入：公司显示名和本公司 Batch 的逐件 Analysis；不传 company ID、其他公司专利、搜索命中或程序统计。
+- 单件路径：确定性生成一个分类，零模型调用；多件路径使用 `landscape-company-technology-classifier` 的严格结构化输出。
+- 稳定性：程序按成员最小公开号排序并重新分配 `TC-<company>-NN`，不信任模型生成的业务标识。
+- 硬门：分类成员必须恰好覆盖公司 `A`，证据只能来自分类成员，且每件成员至少贡献一个 Evidence。
+- 涉及文件：`backend/landscape/{schemas,company_classification}.py`、公司分类测试和两份追加式日志。
+- 验证：聚焦 20 项、Landscape 全量 112 项通过；compileall、`git diff --check` 通过；未使用真实模型 API。
+- 未完成：分类尚未写入 PostgreSQL，也未聚合公司整体技术方向；下一工作单元构建 Company Profile。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-BATCHES-011
 
 - 类型：公司级 Agent fan-out 前的确定性批次。

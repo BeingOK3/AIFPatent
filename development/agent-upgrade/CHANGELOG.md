@@ -2,6 +2,22 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-company-technology-classification
+
+### 已完成
+
+- 新增单公司技术分类结构化 Agent，只消费一个确定性 Company Batch 内的逐件分析，不接触其他公司上下文。
+- 单件专利使用程序生成唯一分类，不调用模型；多件专利才调用结构化模型。
+- 模型返回后由程序重新生成稳定 Category ID，并强制分类成员恰好覆盖本公司 `A`。
+- 分类证据必须来自该分类成员专利，且每件成员专利至少贡献一个 Evidence；虚构公开号、跨专利证据和漏分均 fail closed。
+- 新增独立 `CompanyTechnologyClassification` 契约，将分类输出与下一步公司 Profile 聚合解耦。
+
+### 验证
+
+- 公司分类、批次和领域 Schema 聚焦测试 20 项通过。
+- Landscape 全量 112 项测试、Python compileall 与 `git diff --check` 通过。
+- 测试使用 Stub Model，无需或消耗真实大模型 API Key。
+
 ## 2026-07-28 — landscape-deterministic-company-batches
 
 ### 已完成

@@ -374,6 +374,34 @@ class CompanyTechnologyCategory(LandscapeModel):
         return self
 
 
+class CompanyTechnologyClassification(LandscapeModel):
+    """One company's model-proposed categories before program-owned profiling."""
+
+    technology_categories: list[CompanyTechnologyCategory] = Field(
+        min_length=1, max_length=20
+    )
+
+    @model_validator(mode="after")
+    def category_ids_and_memberships_are_unique(
+        self,
+    ) -> "CompanyTechnologyClassification":
+        category_ids = [
+            category.category_id for category in self.technology_categories
+        ]
+        if len(category_ids) != len(set(category_ids)):
+            raise ValueError("company technology category IDs must be unique")
+        publications = [
+            publication
+            for category in self.technology_categories
+            for publication in category.publication_numbers
+        ]
+        if len(publications) != len(set(publications)):
+            raise ValueError(
+                "a publication may appear in only one company technology category"
+            )
+        return self
+
+
 class CompanyTechnologyProfile(LandscapeModel):
     """LLM output only; company ID and expected publications remain program-owned."""
 
