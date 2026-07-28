@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +9,6 @@ from idea.agent_schemas import IdeaParserOutput, NoveltyResult, QueryPlannerOutp
 from idea.config import load_config
 from idea.database import Database
 from idea.execution import WorkflowExecutor
-from idea.model_client import RuntimeModelConfig, runtime_model_config
 from idea.providers import FetchedDocument
 from idea.retrieval import FetchResult, RetrievalResult
 from idea.run_store import RunStore
@@ -265,6 +263,7 @@ class WorkflowExecutorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
+        self.root = root
         self.db = Database(root / "idea.db")
         self.db.initialize()
         self.store = RunStore(root / "runs")
@@ -277,16 +276,10 @@ class WorkflowExecutorTests(unittest.TestCase):
             }
         )
         self.config = self.config.model_copy(update={"features": disabled_features})
-        self.graph_db = root / "langgraph.db"
-        storage = self.config.storage.model_copy(
-            update={"langgraph_database": self.graph_db}
-        )
         workflow = self.config.workflow.model_copy(
             update={"max_step_attempts": 2, "step_timeout_seconds": 5}
         )
-        self.config = self.config.model_copy(
-            update={"workflow": workflow, "storage": storage}
-        )
+        self.config = self.config.model_copy(update={"workflow": workflow})
         self.case = self.db.create_case("Execution")
 
     def tearDown(self) -> None:
@@ -477,11 +470,9 @@ class WorkflowExecutorTests(unittest.TestCase):
         stored = self.db.get_run(run["run_id"])
         self.assertEqual(stored["error_code"], "COMPLETION_GATE_FAILED")
 
-    def test_graph_has_fixed_nodes_and_checkpoint_never_contains_runtime_secret(self) -> None:
+    def test_graph_has_fixed_nodes_and_no_sqlite_checkpoint(self) -> None:
         run = self.create_run()
         executor = self.executor(run)
-        secret = "sentinel-runtime-secret-must-not-be-persisted"
-
         async def scenario():
             try:
                 graph = await executor.graph._compiled_graph()
@@ -491,14 +482,10 @@ class WorkflowExecutorTests(unittest.TestCase):
             finally:
                 await executor.aclose()
 
-        with runtime_model_config(
-            RuntimeModelConfig("https://runtime.test/v1", secret, "fixture-model")
-        ):
-            status, nodes = asyncio.run(scenario())
+        status, nodes = asyncio.run(scenario())
         self.assertEqual(status, "COMPLETED")
         self.assertTrue({step.value for step in WORKFLOW_STEPS}.issubset(nodes))
-        self.assertTrue(self.graph_db.is_file())
-        self.assertNotIn(secret.encode(), self.graph_db.read_bytes())
+        self.assertFalse((self.root / "langgraph.db").exists())
 
     def test_two_runs_execute_concurrently_on_independent_graph_threads(self) -> None:
         first = self.create_run()
@@ -515,11 +502,6 @@ class WorkflowExecutorTests(unittest.TestCase):
                 await executor.aclose()
 
         self.assertEqual(asyncio.run(scenario()), ["COMPLETED", "COMPLETED"])
-        with sqlite3.connect(self.graph_db) as connection:
-            thread_count = connection.execute(
-                "SELECT COUNT(DISTINCT thread_id) FROM checkpoints"
-            ).fetchone()[0]
-        self.assertEqual(thread_count, 2)
 
     def test_cancelling_graph_interrupts_active_node_and_run(self) -> None:
         run = self.create_run()

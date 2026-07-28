@@ -4,28 +4,14 @@
   "title": "AIFPatent system configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["app", "features", "model", "embedding", "rag", "storage", "workflow", "search", "outputs", "logging"],
+  "required": ["features", "model", "embedding", "rag", "storage", "workflow", "search"],
   "properties": {
     "$schema": {"type": "string"},
-    "app": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["host", "port"],
-      "properties": {
-        "host": {"type": "string", "minLength": 1},
-        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
-      }
-    },
     "features": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["idea", "deepdive", "pct", "value", "cfp", "patent_corpus", "initial_review_rag", "followup_rag"],
+      "required": ["patent_corpus", "initial_review_rag", "followup_rag"],
       "properties": {
-        "idea": {"const": true},
-        "deepdive": {"const": false},
-        "pct": {"const": false},
-        "value": {"const": false},
-        "cfp": {"const": false},
         "patent_corpus": {"type": "boolean"},
         "initial_review_rag": {"type": "boolean"},
         "followup_rag": {"type": "boolean"}
@@ -95,14 +81,11 @@
     "storage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["database", "langgraph_database", "runs_dir", "uploads_dir", "cache_dir", "document_store_dir", "cache", "history"],
+      "required": ["runs_dir", "uploads_dir", "cache_dir", "cache"],
       "properties": {
-        "database": {"type": "string", "minLength": 1},
-        "langgraph_database": {"type": "string", "minLength": 1},
         "runs_dir": {"type": "string", "minLength": 1},
         "uploads_dir": {"type": "string", "minLength": 1},
         "cache_dir": {"type": "string", "minLength": 1},
-        "document_store_dir": {"type": "string", "minLength": 1},
         "cache": {
           "type": "object",
           "additionalProperties": false,
@@ -112,15 +95,6 @@
             "low_watermark_bytes": {"type": "integer", "minimum": 0},
             "eviction_policy": {"const": "fifo"},
             "cleanup_after_write": {"type": "boolean"}
-          }
-        },
-        "history": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["auto_delete", "manual_delete_enabled"],
-          "properties": {
-            "auto_delete": {"const": false},
-            "manual_delete_enabled": {"const": true}
           }
         }
       }
@@ -164,27 +138,6 @@
           }
         }
       }
-    },
-    "outputs": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["always_save_markdown", "always_save_json", "generate_docx_by_default", "generate_xlsx_by_default"],
-      "properties": {
-        "always_save_markdown": {"const": true},
-        "always_save_json": {"const": true},
-        "generate_docx_by_default": {"type": "boolean"},
-        "generate_xlsx_by_default": {"type": "boolean"}
-      }
-    },
-    "logging": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["level", "log_full_user_input", "log_full_model_output"],
-      "properties": {
-        "level": {"enum": ["DEBUG", "INFO", "WARNING", "ERROR"]},
-        "log_full_user_input": {"type": "boolean"},
-        "log_full_model_output": {"type": "boolean"}
-      }
     }
   },
   "$defs": {
@@ -197,7 +150,7 @@
     "providers": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["serpapi_google_patents", "exa_mcp", "google_patents_local", "local_cache"],
+      "required": ["serpapi_google_patents", "exa_mcp", "google_patents_local"],
       "properties": {
         "serpapi_google_patents": {
           "type": "object",
@@ -251,8 +204,7 @@
             "trust_environment_proxy": {"type": "boolean"},
             "fallback_to_direct": {"type": "boolean"}
           }
-        },
-        "local_cache": {"$ref": "#/$defs/providerBase"}
+        }
       }
     },
     "searchMode": {

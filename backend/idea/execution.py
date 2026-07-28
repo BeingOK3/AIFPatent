@@ -77,7 +77,6 @@ class WorkflowExecutor:
         self.graph = LangGraphWorkflow(
             database=database,
             harness=harness,
-            checkpoint_path=config.storage.langgraph_database,
             step_handler=self._execute_step,
             fingerprint_builder=self._step_input_fingerprint,
             limitation_collector=self._collect_run_limitations,
@@ -247,11 +246,11 @@ class WorkflowExecutor:
                 )
             with self.database.connect() as connection:
                 reviewed = connection.execute(
-                    "SELECT COUNT(*) FROM run_documents WHERE run_id = ? AND deep_reviewed = 1",
+                    "SELECT COUNT(*) FROM run_documents WHERE run_id = ? AND deep_reviewed = TRUE",
                     (run_id,),
                 ).fetchone()[0]
                 pending = connection.execute(
-                    "SELECT COUNT(*) FROM run_documents WHERE run_id = ? AND deep_reviewed = 0",
+                    "SELECT COUNT(*) FROM run_documents WHERE run_id = ? AND deep_reviewed = FALSE",
                     (run_id,),
                 ).fetchone()[0]
             if pending:
@@ -373,7 +372,7 @@ class WorkflowExecutor:
             rows = connection.execute(
                 """SELECT d.* FROM run_documents rd
                 JOIN patent_documents d ON d.document_id = rd.document_id
-                WHERE rd.run_id = ? AND rd.deep_reviewed = 0 ORDER BY d.publication_number""",
+                WHERE rd.run_id = ? AND rd.deep_reviewed = FALSE ORDER BY d.publication_number""",
                 (run_id,),
             ).fetchall()
         documents = []
@@ -533,7 +532,7 @@ class WorkflowExecutor:
     def _clear_fetch_attempt(self, run_id: str) -> None:
         with self.database.connect() as connection:
             connection.execute(
-                "DELETE FROM run_documents WHERE run_id = ? AND deep_reviewed = 0", (run_id,)
+                "DELETE FROM run_documents WHERE run_id = ? AND deep_reviewed = FALSE", (run_id,)
             )
             connection.execute(
                 "DELETE FROM tool_calls WHERE run_id = ? AND step_name = 'NORMALIZE_AND_FETCH'",

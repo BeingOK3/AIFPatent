@@ -16,25 +16,13 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class AppSettings(StrictModel):
-    host: str = Field(min_length=1)
-    port: int = Field(ge=1, le=65535)
-
-
 class FeatureSettings(StrictModel):
-    idea: bool
-    deepdive: bool
-    pct: bool
-    value: bool
-    cfp: bool
     patent_corpus: bool
     initial_review_rag: bool
     followup_rag: bool
 
     @model_validator(mode="after")
-    def only_idea_is_available(self) -> "FeatureSettings":
-        if not self.idea or self.deepdive or self.pct or self.value or self.cfp:
-            raise ValueError("only the IDEA feature may be enabled during the rebuild")
+    def validate_dependencies(self) -> "FeatureSettings":
         if self.initial_review_rag and not self.patent_corpus:
             raise ValueError("initial review RAG requires the patent corpus")
         if self.followup_rag and not self.initial_review_rag:
@@ -91,20 +79,11 @@ class CacheSettings(StrictModel):
         return self
 
 
-class HistorySettings(StrictModel):
-    auto_delete: Literal[False]
-    manual_delete_enabled: Literal[True]
-
-
 class StorageSettings(StrictModel):
-    database: Path
-    langgraph_database: Path
     runs_dir: Path
     uploads_dir: Path
     cache_dir: Path
-    document_store_dir: Path
     cache: CacheSettings
-    history: HistorySettings
 
 
 class WorkflowSettings(StrictModel):
@@ -163,15 +142,10 @@ class GooglePatentsSettings(ProviderSettings):
         return self
 
 
-class LocalCacheProviderSettings(StrictModel):
-    enabled: bool
-
-
 class SearchProviders(StrictModel):
     serpapi_google_patents: SerpApiSettings
     exa_mcp: ExaSettings
     google_patents_local: GooglePatentsSettings
-    local_cache: LocalCacheProviderSettings
 
 
 class SearchMode(StrictModel):
@@ -209,22 +183,8 @@ class SearchSettings(StrictModel):
         return getattr(self.modes, name or self.default_mode)
 
 
-class OutputSettings(StrictModel):
-    always_save_markdown: Literal[True]
-    always_save_json: Literal[True]
-    generate_docx_by_default: bool
-    generate_xlsx_by_default: bool
-
-
-class LoggingSettings(StrictModel):
-    level: Literal["DEBUG", "INFO", "WARNING", "ERROR"]
-    log_full_user_input: bool
-    log_full_model_output: bool
-
-
 class AppConfig(StrictModel):
     schema_path: str | None = Field(default=None, alias="$schema")
-    app: AppSettings
     features: FeatureSettings
     model: ModelSettings
     embedding: EmbeddingSettings
@@ -232,8 +192,6 @@ class AppConfig(StrictModel):
     storage: StorageSettings
     workflow: WorkflowSettings
     search: SearchSettings
-    outputs: OutputSettings
-    logging: LoggingSettings
     source_path: Path = Field(exclude=True)
 
     def snapshot(self) -> dict:
@@ -289,12 +247,9 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     root = PROJECT_ROOT
     storage = config.storage.model_copy(
         update={
-            "database": _absolute(config.storage.database, root),
-            "langgraph_database": _absolute(config.storage.langgraph_database, root),
             "runs_dir": _absolute(config.storage.runs_dir, root),
             "uploads_dir": _absolute(config.storage.uploads_dir, root),
             "cache_dir": _absolute(config.storage.cache_dir, root),
-            "document_store_dir": _absolute(config.storage.document_store_dir, root),
         }
     )
     credentials_override = os.environ.get("AIFPATENT_PROVIDER_CREDENTIALS", "").strip()

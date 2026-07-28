@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from idea.providers import (
 
 from .database import LandscapeDatabase
 from .execution import LandscapeExecutionService
+from .postgres_database import LandscapePostgreSQLDatabase
 from .reporting import LandscapeReportService
 from .store import LandscapeRunStore
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -114,10 +116,13 @@ class LandscapeRuntime:
 def build_landscape_runtime(
     config: AppConfig, *, cache: CacheStore | None = None
 ) -> LandscapeRuntime:
-    database_path = config.storage.database.with_name("landscape.db")
-    checkpoint_path = config.storage.langgraph_database.with_name("landscape-checkpoints.db")
+    dsn = os.environ.get("AIFPATENT_POSTGRES_DSN", "").strip()
+    if not dsn:
+        raise RuntimeError(
+            "AIFPATENT_POSTGRES_DSN is required for Landscape PostgreSQL persistence"
+        )
     runs_dir = config.storage.runs_dir.parent / "landscape-runs"
-    database = LandscapeDatabase(database_path)
+    database = LandscapePostgreSQLDatabase(dsn)
     database.initialize()
     store = LandscapeRunStore(runs_dir)
     harness = LandscapeWorkflowHarness(
@@ -155,7 +160,6 @@ def build_landscape_runtime(
     workflow = LandscapeWorkflow(
         database=database,
         harness=harness,
-        checkpoint_path=checkpoint_path,
         step_handler=execution.handle_step,
         limitation_collector=execution.collect_limitations,
         step_timeout_seconds=config.workflow.step_timeout_seconds,

@@ -1,7 +1,7 @@
 FROM golang:1.24.8-bookworm AS builder
 
 ARG MINIO_VERSION=RELEASE.2025-10-15T17-29-55Z
-ARG GOPROXY=https://proxy.golang.org,direct
+ARG GOPROXY=https://mirrors.tencent.com/go/,direct
 ENV CGO_ENABLED=0
 ENV GOPROXY=${GOPROXY}
 

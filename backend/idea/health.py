@@ -37,7 +37,7 @@ class HealthService:
         started = time.monotonic()
         database = self._check_database()
         cache = self._check_cache()
-        langgraph = self._check_langgraph()
+        workflow_store = self._check_workflow_store()
         model = self._check_model_auth()
         embedding = self._check_embedding_auth()
         serpapi = self._check_serpapi_config()
@@ -52,9 +52,9 @@ class HealthService:
         online_providers = (serpapi, exa, google)
         provider_available = any(
             component.get("available", False) for component in online_providers
-        ) or self.config.search.providers.local_cache.enabled
+        )
         core_ok = (
-            database["ok"] and cache["ok"] and langgraph["ok"]
+            database["ok"] and cache["ok"] and workflow_store["ok"]
             and model["ok"] and embedding["ok"]
         )
         all_online = all(component["ok"] for component in online_providers)
@@ -73,7 +73,7 @@ class HealthService:
                     "source": str(self.config.source_path),
                 },
                 "database": database,
-                "langgraph_checkpointer": langgraph,
+                "workflow_store": workflow_store,
                 "model": model,
                 "embedding": embedding,
                 "serpapi_google_patents": serpapi,
@@ -111,21 +111,23 @@ class HealthService:
         except Exception as exc:
             return {"ok": False, "status": "error", "detail": type(exc).__name__}
 
-    def _check_langgraph(self) -> dict:
-        path = self.config.storage.langgraph_database
+    def _check_workflow_store(self) -> dict:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            descriptor, name = tempfile.mkstemp(prefix=".health-", dir=path.parent)
-            os.close(descriptor)
-            Path(name).unlink()
+            with self.database.connect() as connection:
+                connection.execute("SELECT 1 FROM workflow_runs LIMIT 1").fetchone()
             return {
                 "ok": True,
                 "status": "ready",
-                "path": str(path),
-                "thread_key": "run_id",
+                "backend": "postgresql",
+                "detail": "workflow state is stored in PostgreSQL",
             }
         except Exception as exc:
-            return {"ok": False, "status": "error", "detail": type(exc).__name__}
+            return {
+                "ok": False,
+                "status": "error",
+                "backend": "postgresql",
+                "detail": type(exc).__name__,
+            }
 
     def _check_model_auth(self) -> dict:
         return {

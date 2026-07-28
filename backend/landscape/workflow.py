@@ -4,10 +4,8 @@ import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
-from pathlib import Path
 from typing import Any, TypedDict
 
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
 
@@ -214,7 +212,6 @@ class LandscapeWorkflow:
         *,
         database: LandscapeDatabase,
         harness: LandscapeWorkflowHarness,
-        checkpoint_path: Path,
         step_handler: StepHandler,
         limitation_collector: LimitationCollector,
         step_timeout_seconds: int,
@@ -222,13 +219,11 @@ class LandscapeWorkflow:
     ):
         self.database = database
         self.harness = harness
-        self.checkpoint_path = checkpoint_path
         self.step_handler = step_handler
         self.limitation_collector = limitation_collector
         self.step_timeout_seconds = step_timeout_seconds
         self.max_step_attempts = max_step_attempts
         self._lock = asyncio.Lock()
-        self._saver_context = None
         self._graph = None
 
     async def execute(self, run_id: str) -> str:
@@ -240,8 +235,7 @@ class LandscapeWorkflow:
         graph = await self._compiled_graph()
         try:
             await graph.ainvoke(
-                {"run_id": run_id, "last_completed_step": None, "completed_steps": 0},
-                {"configurable": {"thread_id": run_id}},
+                {"run_id": run_id, "last_completed_step": None, "completed_steps": 0}
             )
             return self.harness.finish_run(run_id, self.limitation_collector(run_id))
         except asyncio.CancelledError:
@@ -257,10 +251,7 @@ class LandscapeWorkflow:
             return "FAILED"
 
     async def aclose(self) -> None:
-        if self._saver_context is not None:
-            await self._saver_context.__aexit__(None, None, None)
-            self._saver_context = None
-            self._graph = None
+        self._graph = None
 
     async def _compiled_graph(self):
         if self._graph is not None:
@@ -268,13 +259,7 @@ class LandscapeWorkflow:
         async with self._lock:
             if self._graph is not None:
                 return self._graph
-            self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-            self._saver_context = AsyncSqliteSaver.from_conn_string(str(self.checkpoint_path))
-            saver = await self._saver_context.__aenter__()
-            await saver.setup()
-            self._graph = self._build_graph().compile(
-                checkpointer=saver, name="aifpatent-landscape-workflow"
-            )
+            self._graph = self._build_graph().compile(name="aifpatent-landscape-workflow")
             return self._graph
 
     def _build_graph(self) -> StateGraph:

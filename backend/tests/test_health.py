@@ -19,10 +19,7 @@ class HealthServiceTests(unittest.TestCase):
         root = Path(self.temp.name)
         self.root = root
         raw = json.loads(Path("config/ai4patent.json").read_text(encoding="utf-8"))
-        raw["storage"]["database"] = str(root / "idea.db")
-        raw["storage"]["langgraph_database"] = str(root / "langgraph.db")
         raw["storage"]["cache_dir"] = str(root / "cache")
-        raw["storage"]["document_store_dir"] = str(root / "cache" / "documents")
         raw["storage"]["runs_dir"] = str(root / "runs")
         raw["storage"]["uploads_dir"] = str(root / "uploads")
         credentials = root / "provider-credentials.json"
@@ -36,8 +33,12 @@ class HealthServiceTests(unittest.TestCase):
         config_path = root / "config.json"
         config_path.write_text(json.dumps(raw), encoding="utf-8")
         self.config = load_config(config_path)
-        self.db = Database(self.config.storage.database)
+        self.db = Database(root / "idea.db")
         self.db.initialize()
+        with self.db.connect() as connection:
+            connection.execute(
+                "CREATE TABLE workflow_runs(run_id TEXT PRIMARY KEY, status TEXT NOT NULL)"
+            )
         self.cache = CacheStore(
             self.config.storage.cache_dir,
             self.db,
@@ -78,7 +79,7 @@ class HealthServiceTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["components"]["database"]["ok"])
         self.assertTrue(result["components"]["cache"]["ok"])
-        self.assertEqual(result["components"]["langgraph_checkpointer"]["thread_key"], "run_id")
+        self.assertTrue(result["components"]["workflow_store"]["ok"])
         self.assertEqual(result["components"]["model"]["credential_source"], "per_run")
         self.assertEqual(result["components"]["model"]["status"], "runtime_required")
         self.assertEqual(result["components"]["embedding"]["status"], "disabled")

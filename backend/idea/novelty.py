@@ -137,7 +137,7 @@ class NoveltyService:
                 SELECT d.document_id,d.publication_number,d.publication_date
                 FROM run_documents rd
                 JOIN patent_documents d ON d.document_id = rd.document_id
-                WHERE rd.run_id = ? AND rd.deep_reviewed = 1
+                WHERE rd.run_id = ? AND rd.deep_reviewed = TRUE
                   AND rd.screening_status = 'ANALYZED'
                 ORDER BY d.publication_number,d.document_id
                 """,

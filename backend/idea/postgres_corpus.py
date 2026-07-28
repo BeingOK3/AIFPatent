@@ -201,7 +201,12 @@ class PostgreSQLCorpusVersionRepository(Repository[str, CorpusVersion]):
 
 
 class PostgreSQLCorpusPrerequisiteRepository:
-    """Bridge current SQLite run/document identities into PostgreSQL before Corpus writes."""
+    """Validate run/document identities before Corpus writes.
+
+    The legacy implementation copied SQLite rows into PostgreSQL.  After the
+    direct cut-over the source repository is already PostgreSQL, so this class
+    only validates prerequisites and preserves the old offline migration path.
+    """
 
     def __init__(
         self,
@@ -275,6 +280,23 @@ class PostgreSQLCorpusPrerequisiteRepository:
     async def prepare(self, run_id: str, document_ids: tuple[str, ...]) -> None:
         if not document_ids or len(set(document_ids)) != len(document_ids):
             raise PostgreSQLCorpusError("Corpus prerequisites require unique document IDs")
+        if getattr(self.database, "dsn", None):
+            with self.database.connect() as connection:
+                run = connection.execute(
+                    "SELECT 1 FROM idea_runs WHERE run_id = ?", (run_id,)
+                ).fetchone()
+                rows = connection.execute(
+                    """
+                    SELECT document_id FROM patent_documents
+                    WHERE document_id IN ({})
+                    """.format(",".join("?" for _ in document_ids)),
+                    document_ids,
+                ).fetchall()
+            if run is None or {str(row["document_id"]) for row in rows} != set(document_ids):
+                raise PostgreSQLCorpusError(
+                    "PostgreSQL run/document prerequisites are incomplete for Corpus persistence"
+                )
+            return
         cases, runs, documents, run_documents = self._source_rows(run_id, document_ids)
         connection = await self._connection()
         try:
@@ -394,7 +416,13 @@ class PostgreSQLCorpusPrerequisiteRepository:
             await connection.close()
 
     async def sync_run_status(self, run_id: str) -> bool:
-        """Copy only mutable Run lifecycle fields after SQLite reaches a new state."""
+        """Keep the legacy bridge hook harmless after the PostgreSQL cut-over."""
+        if getattr(self.database, "dsn", None):
+            try:
+                self.database.get_run(run_id)
+            except KeyError:
+                return False
+            return True
         run = self.database.get_run(run_id)
         connection = await self._connection()
         try:

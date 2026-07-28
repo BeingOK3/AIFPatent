@@ -8,7 +8,7 @@ AIFPatent 当前 `develop` 版本提供可直接运行的首次报告 RAG 闭环
 
 - 固定 11 步 LangGraph Workflow、不可变 Case/Run、重试、取消、审计和 Manifest；
 - 默认通过 SerpAPI Google Patents 检索和抓取全文，保留显式启用的 Google Patents 直连与 Exa MCP 回退，并执行候选去重和最少 10 篇深读门禁；
-- PostgreSQL Corpus Version/Chunk、MinIO 正文对象、Redis 基础设施；
+- PostgreSQL 统一业务数据库（IDEA、Landscape、Corpus、追问和工作流）、MinIO 正文对象；
 - PostgreSQL FTS/`pg_trgm` 词法检索，严格限制在源 Run 的冻结 Version；
 - 每个 `F_i × D_j` 检索审计，强制摘要、全部独立权利要求和父权利要求链；
 - 在文档分析前生成的确定性 Context Manifest，DeepSeek 只使用其中的 `C#` 证据；
@@ -37,7 +37,7 @@ cd AIFPatent
 ./start.sh
 ```
 
-首次启动会检查至少 5GiB 可用空间，创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env` 和 `config/provider-credentials.local.json`，先启动 PostgreSQL/Redis/MinIO 并执行幂等迁移，再启动 app、创建 Corpus Bucket 并等待健康检查。`rag.env` 只有本机基础设施随机凭证，不含模型密钥。
+首次启动会检查至少 5GiB 可用空间，创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env` 和 `config/provider-credentials.local.json`，先启动 PostgreSQL/MinIO 并执行幂等迁移，再启动 app、创建 Corpus Bucket 并等待健康检查。`rag.env` 只有本机基础设施随机凭证，不含模型密钥。
 
 SerpAPI Key 只写入本地私密 JSON；GitHub 只保留模板：
 

@@ -22,7 +22,6 @@ REQUIRED_KEYS = (
     "AIFPATENT_POSTGRES_DB",
     "AIFPATENT_POSTGRES_USER",
     "AIFPATENT_POSTGRES_PASSWORD",
-    "AIFPATENT_REDIS_PASSWORD",
     "AIFPATENT_MINIO_ROOT_USER",
     "AIFPATENT_MINIO_ROOT_PASSWORD",
 )
@@ -42,8 +41,6 @@ def _new_environment() -> str:
         "AIFPATENT_POSTGRES_USER": "aifpatent",
         "AIFPATENT_POSTGRES_PASSWORD": _random_secret(),
         "AIFPATENT_POSTGRES_PORT": "5432",
-        "AIFPATENT_REDIS_PASSWORD": _random_secret(),
-        "AIFPATENT_REDIS_PORT": "6379",
         "AIFPATENT_MINIO_ROOT_USER": "aifpatent",
         "AIFPATENT_MINIO_ROOT_PASSWORD": _random_secret(),
         "AIFPATENT_MINIO_API_PORT": "9000",
@@ -52,8 +49,8 @@ def _new_environment() -> str:
         "AIFPATENT_S3_REGION": "us-east-1",
         "AIFPATENT_MINIO_VERSION": "RELEASE.2025-10-15T17-29-55Z",
         "AIFPATENT_APP_PORT": "8001",
-        "AIFPATENT_PIP_INDEX_URL": "https://pypi.org/simple",
-        "AIFPATENT_GOPROXY": "https://proxy.golang.org,direct",
+        "AIFPATENT_PIP_INDEX_URL": "https://mirrors.cloud.tencent.com/pypi/simple",
+        "AIFPATENT_GOPROXY": "https://mirrors.tencent.com/go/,direct",
     }
     return "".join(f"{key}={value}\n" for key, value in values.items())
 
@@ -156,7 +153,6 @@ def _docker_command(action: str) -> list[str]:
             "--no-build",
             "--wait",
             "postgres",
-            "redis",
             "object-store",
         ],
         "up-app": ["up", "--detach", "--no-build", "--wait", "app"],
@@ -172,6 +168,8 @@ def _docker_command(action: str) -> list[str]:
             "sh",
             "-ec",
             'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
+            "-f /docker-entrypoint-initdb.d/010_core_schema.sql && "
+            'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
             "-f /docker-entrypoint-initdb.d/020_corpus_schema.sql && "
             'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
             "-f /docker-entrypoint-initdb.d/030_lexical_schema.sql && "
@@ -182,7 +180,9 @@ def _docker_command(action: str) -> list[str]:
             'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
             "-f /docker-entrypoint-initdb.d/050_followup_schema.sql && "
             'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
-            "-f /docker-entrypoint-initdb.d/055_report_hybrid_schema.sql",
+            "-f /docker-entrypoint-initdb.d/055_report_hybrid_schema.sql && "
+            'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
+            "-f /docker-entrypoint-initdb.d/060_unified_runtime_schema.sql",
         ],
         "ensure-bucket": [
             "exec",
@@ -225,7 +225,10 @@ def _build_command(service: str) -> list[str]:
             "PIP_INDEX_URL="
             + os.environ.get(
                 "AIFPATENT_PIP_INDEX_URL",
-                values.get("AIFPATENT_PIP_INDEX_URL", "https://pypi.org/simple"),
+                values.get(
+                    "AIFPATENT_PIP_INDEX_URL",
+                    "https://mirrors.cloud.tencent.com/pypi/simple",
+                ),
             ),
         ]
     elif service == "object-store":
@@ -239,7 +242,10 @@ def _build_command(service: str) -> list[str]:
             "GOPROXY="
             + os.environ.get(
                 "AIFPATENT_GOPROXY",
-                values.get("AIFPATENT_GOPROXY", "https://proxy.golang.org,direct"),
+                values.get(
+                    "AIFPATENT_GOPROXY",
+                    "https://mirrors.tencent.com/go/,direct",
+                ),
             ),
         ]
     else:
@@ -325,7 +331,7 @@ def run(action: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Manage the local PostgreSQL/Redis/S3-compatible RAG dependencies."
+        description="Manage the local PostgreSQL/S3-compatible RAG dependencies."
     )
     parser.add_argument("action", choices=("init", "up", "down", "status", "check", "migrate"))
     return parser

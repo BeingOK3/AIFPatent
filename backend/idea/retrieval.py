@@ -677,7 +677,8 @@ class RetrievalService:
                 document_id = existing["document_id"]
                 if document.family_id:
                     connection.execute(
-                        "INSERT OR IGNORE INTO patent_families(family_id,source) VALUES(?,?)",
+                        "INSERT INTO patent_families(family_id,source) VALUES(?,?) "
+                        "ON CONFLICT (family_id) DO NOTHING",
                         (document.family_id, document.provider),
                     )
                 connection.execute(
@@ -709,7 +710,8 @@ class RetrievalService:
                 document_id = str(uuid.uuid4())
                 if document.family_id:
                     connection.execute(
-                        "INSERT OR IGNORE INTO patent_families(family_id,source) VALUES(?,?)",
+                        "INSERT INTO patent_families(family_id,source) VALUES(?,?) "
+                        "ON CONFLICT (family_id) DO NOTHING",
                         (document.family_id, document.provider),
                     )
                 connection.execute(
@@ -751,10 +753,16 @@ class RetrievalService:
                 )
             connection.execute(
                 """
-                INSERT OR REPLACE INTO run_documents(
+                INSERT INTO run_documents(
                     run_id,document_id,relevance,relevance_score,screening_status,
                     deep_reviewed,found_by_json,query_ids_json
                 ) VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT (run_id, document_id) DO UPDATE SET
+                    relevance = EXCLUDED.relevance,
+                    relevance_score = EXCLUDED.relevance_score,
+                    screening_status = EXCLUDED.screening_status,
+                    found_by_json = EXCLUDED.found_by_json,
+                    query_ids_json = EXCLUDED.query_ids_json
                 """,
                 (
                     run_id,
@@ -762,7 +770,7 @@ class RetrievalService:
                     None,
                     None,
                     "FETCHED",
-                    0,
+                    False,
                     canonical_json(merged_hit.found_by),
                     canonical_json(merged_hit.query_ids),
                 ),
