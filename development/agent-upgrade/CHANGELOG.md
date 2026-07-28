@@ -2,6 +2,22 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-coverage-evidence-audit
+
+### 已完成
+
+- 新增纯程序 Coverage Audit，统一验证 `T ⊆ A ⊆ F ⊆ U`、PRIMARY 公司分区、分类覆盖和趋势引用。
+- 程序计算覆盖率、虚构公开号、重复/错公司成员、缺失专利和非法 Evidence，不接受模型审计结论。
+- 缺口按阶段生成 `FETCH/ANALYZE/CLASSIFY/PROFILE/TREND` 精确修复目标。
+- 修复轮次未耗尽时路由 `REPAIR`，耗尽后诚实降级 `LIMITED`；虚构专利、集合逆序或 PRIMARY 分区损坏直接 `FAIL`。
+- 空 U 可得到确定性满覆盖结果，避免除零或把“没有结果”误报为分析失败。
+
+### 验证
+
+- Coverage Audit、趋势与领域 Schema 聚焦测试 22 项通过。
+- Landscape 全量 123 项测试、Python compileall 与 `git diff --check` 通过。
+- Audit 为纯代码逻辑，无需真实模型 API Key。
+
 ## 2026-07-28 — landscape-evidence-bound-company-trends
 
 ### 已完成

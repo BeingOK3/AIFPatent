@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-COVERAGE-AUDIT-015
+
+- 类型：`U/F/A/T` 集合、公司成员与 Evidence 完整性审计。
+- 集合硬门：验证 `T ⊆ A ⊆ F ⊆ U`，PRIMARY Assignment 必须恰好覆盖 U；虚构引用、集合逆序或归属损坏直接 FAIL。
+- 覆盖：程序计算 `|U∩T|/|U|`、缺失、重复/错公司成员和无效 Evidence；空 U 的覆盖率定义为 1。
+- 修复路由：按缺口来源生成 `FETCH/ANALYZE/CLASSIFY/PROFILE/TREND:<target>`，未超轮次返回 REPAIR，超限返回 LIMITED 并清空修复任务。
+- 证据：Category/Trend Evidence 必须属于引用专利，且每件成员专利至少贡献一个自身 Evidence。
+- 涉及文件：`backend/landscape/coverage_audit.py`、Coverage Audit 测试和两份追加式日志。
+- 验证：聚焦 22 项、Landscape 全量 123 项通过；compileall、`git diff --check` 通过；零模型调用。
+- 未完成：Profile/Trend/Audit 仍未接 PostgreSQL 与 Workflow；下一工作单元建立幂等持久化边界。
+
 ## 2026-07-28 — LANDSCAPE-CROSS-COMPANY-TRENDS-014
 
 - 类型：证据约束、时间门控的跨公司整体技术方向。
