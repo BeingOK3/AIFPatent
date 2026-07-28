@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-CANONICAL-CANDIDATES-004
+
+- 类型：去重合格全集 `U` 的 PostgreSQL 持久化基座。
+- 迁移：新增 `070_landscape_company_analysis.sql`，一次建齐候选、公司、文档归属、公司分类/Profile、跨公司趋势和洞察证据表，避免已登记迁移后再修改同名文件。
+- Repository：新增 `put_candidates/list_candidates`，要求公开号与 normalized key 一致、排名从 1 连续、决策为 ELIGIBLE；完整集合相同可重放，不同内容拒绝覆盖。
+- 安全：候选 Metadata 递归拒绝敏感字段；洞察证据以 Run 复合外键绑定，不能引用其他 Run 的 Evidence。
+- 部署：已有卷显式迁移链增加 `070`，Landscape 初始化要求最新迁移存在。
+- 涉及文件：`070` SQL、`backend/landscape/postgres_database.py`、迁移工具和 PostgreSQL/基础设施测试及两份追加式日志。
+- 验证：相关数据库与迁移测试 42 项通过；compileall、`git diff --check` 通过。
+- 未完成：尚未在真实 PostgreSQL 执行 `070`；生产搜索流程尚未写入 canonical candidates。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-TREND-SCHEMA-003
 
 - 类型：公司技术趋势领域与模型输出契约。

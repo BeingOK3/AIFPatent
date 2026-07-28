@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-canonical-candidate-persistence
+
+### 已完成
+
+- 新增 PostgreSQL `070_landscape_company_analysis`，一次建立候选全集、公司归属、公司分类/Profile、跨公司趋势和洞察证据的持久化边界。
+- 新增 canonical candidate 集合的 PostgreSQL 原生写入与读取：整组原子写入、规范公开号、连续排名、内容哈希、幂等重放和不可变冲突拒绝。
+- 候选元数据写入前拒绝敏感字段；洞察证据使用 `(run_id, evidence_id)` 复合外键，禁止跨 Run 串证据。
+- 将 `070` 接入已有数据卷的显式迁移命令，Landscape 启动门提升为必须存在 `070`。
+
+### 验证
+
+- Candidate Repository、PostgreSQL Schema、迁移命令、Adapter 和旧 Landscape Database 共 42 项测试通过。
+- Python compileall 与 `git diff --check` 通过。
+- 本切片未启动真实 PostgreSQL 容器；真实迁移留在阶段集成门执行。
+
 ## 2026-07-28 — landscape-company-trend-schemas
 
 ### 已完成

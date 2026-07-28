@@ -11,6 +11,9 @@ REPORT_RETRIEVAL_SCHEMA_PATH = Path("deploy/rag/postgres-init/035_report_retriev
 REPORT_CITATION_SCHEMA_PATH = Path("deploy/rag/postgres-init/040_report_citation_schema.sql")
 FOLLOWUP_SCHEMA_PATH = Path("deploy/rag/postgres-init/050_followup_schema.sql")
 REPORT_HYBRID_SCHEMA_PATH = Path("deploy/rag/postgres-init/055_report_hybrid_schema.sql")
+LANDSCAPE_COMPANY_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/070_landscape_company_analysis.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -22,6 +25,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.report_citation_sql = REPORT_CITATION_SCHEMA_PATH.read_text(encoding="utf-8")
         self.followup_sql = FOLLOWUP_SCHEMA_PATH.read_text(encoding="utf-8")
         self.report_hybrid_sql = REPORT_HYBRID_SCHEMA_PATH.read_text(encoding="utf-8")
+        self.landscape_company_sql = LANDSCAPE_COMPANY_SCHEMA_PATH.read_text(
+            encoding="utf-8"
+        )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
         self.assertIn("BEGIN;", self.sql)
@@ -145,6 +151,33 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertNotIn("DROP TABLE", sql.upper())
         self.assertNotIn("TRUNCATE", sql.upper())
         self.assertNotIn("DELETE FROM", sql.upper())
+
+    def test_landscape_company_schema_is_complete_versioned_and_non_destructive(self) -> None:
+        sql = self.landscape_company_sql
+        for table in (
+            "landscape_candidates",
+            "landscape_companies",
+            "landscape_document_companies",
+            "landscape_company_categories",
+            "landscape_company_category_members",
+            "landscape_company_profiles",
+            "landscape_cross_company_trends",
+            "landscape_insight_evidence",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("UNIQUE(run_id, publication_number)", sql)
+        self.assertIn("UNIQUE(run_id, normalized_key)", sql)
+        self.assertIn("metadata_json JSONB NOT NULL", sql)
+        self.assertIn(
+            "REFERENCES landscape_evidence(run_id, evidence_id)",
+            " ".join(sql.split()),
+        )
+        self.assertIn("'070_landscape_company_analysis'", sql)
+        self.assertIn("ON CONFLICT (version) DO NOTHING", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
 
 
 if __name__ == "__main__":

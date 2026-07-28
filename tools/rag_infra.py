@@ -182,7 +182,9 @@ def _docker_command(action: str) -> list[str]:
             'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
             "-f /docker-entrypoint-initdb.d/055_report_hybrid_schema.sql && "
             'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
-            "-f /docker-entrypoint-initdb.d/060_unified_runtime_schema.sql",
+            "-f /docker-entrypoint-initdb.d/060_unified_runtime_schema.sql && "
+            'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
+            "-f /docker-entrypoint-initdb.d/070_landscape_company_analysis.sql",
         ],
         "ensure-bucket": [
             "exec",
