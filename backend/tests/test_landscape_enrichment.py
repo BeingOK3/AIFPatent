@@ -13,7 +13,14 @@ from idea.providers.base import FetchRequest, FetchedDocument, ProviderResult, S
 from landscape.database import LandscapeDatabase
 from landscape.execution import LandscapeExecutionService, coverage_limitations
 from landscape.reporting import LandscapeReportService
-from landscape.schemas import AnalysisBudget, AnalysisMode, LandscapeScope
+from landscape.schemas import (
+    AnalysisBudget,
+    AnalysisMode,
+    CompetitorAliasPlan,
+    CompetitorAliasResolution,
+    CompetitorInput,
+    LandscapeScope,
+)
 from landscape.search import LandscapeCandidateLimitExceededError
 from landscape.store import LandscapeRunStore
 
@@ -58,6 +65,110 @@ class CandidateCaptureRepository:
 
 
 class LandscapeEnrichmentTests(unittest.TestCase):
+    def test_model_alias_expands_search_but_cannot_authorize_filtering(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = LandscapeDatabase(root / "landscape.db")
+            database.initialize()
+            store = LandscapeRunStore(root / "runs")
+            service = LandscapeExecutionService(
+                database=database,
+                store=store,
+                model=StructuredModelClient(load_config().model),
+                providers=[],
+                provider_timeout_seconds={},
+                analysis_concurrency=1,
+                report_service=LandscapeReportService(database, store),
+            )
+            scope = LandscapeScope(
+                mode=AnalysisMode.COMPETITOR,
+                competitors=[
+                    CompetitorInput(name="Huawei", aliases=["华为"])
+                ],
+                publication_start=date(2026, 4, 1),
+                publication_end=date(2026, 6, 30),
+            )
+            run = database.create_run(
+                scope=scope,
+                model="fixture",
+                workflow_version="1.0.0",
+                prompt_version="1.0.0",
+            )
+            run_id = run["run_id"]
+
+            async def resolve_aliases(_competitors):
+                return CompetitorAliasPlan(
+                    competitors=[
+                        CompetitorAliasResolution(
+                            primary_name="Huawei",
+                            aliases=["Model Search Alias"],
+                            source="MODEL_INFERRED",
+                        )
+                    ]
+                )
+
+            service.aliases.resolve = resolve_aliases
+            plan_result = asyncio.run(service.plan_search(run_id))
+            query_text = plan_result["plan"]["queries"][0]["query_text"]
+            self.assertIn('"华为"', query_text)
+            self.assertIn('"Model Search Alias"', query_text)
+            database.put_stage_result(run_id, "PLAN_SEARCH", plan_result)
+
+            self.assertEqual(
+                service.search_scope(run_id).competitors[0].aliases,
+                ["华为", "Model Search Alias"],
+            )
+            database.put_stage_result(
+                run_id,
+                "SEARCH_PUBLICATIONS",
+                {
+                    "results": [
+                        ProviderResult(
+                            provider="fixture",
+                            operation="search",
+                            request_id="LQ-1",
+                            status="SUCCESS",
+                            duration_ms=0,
+                            hits=[
+                                SearchHit(
+                                    provider="fixture",
+                                    provider_rank=1,
+                                    title="inferred alias hit",
+                                    url="https://example.test/US1A1",
+                                    publication_number="US1A1",
+                                    publication_date="2026-05-01",
+                                    assignee="Model Search Alias Ltd",
+                                ),
+                                SearchHit(
+                                    provider="fixture",
+                                    provider_rank=2,
+                                    title="confirmed alias hit",
+                                    url="https://example.test/CN2A",
+                                    publication_number="CN2A",
+                                    publication_date="2026-05-02",
+                                    assignee="华为技术有限公司",
+                                ),
+                            ],
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+
+            filtered = asyncio.run(service.filter_and_select(run_id))["result"]
+
+            self.assertEqual(
+                [item["publication_number"] for item in filtered["candidates"]],
+                ["CN2A"],
+            )
+            self.assertEqual(
+                filtered["coverage"]["excluded_counts"],
+                {"COMPETITOR_NOT_CONFIRMED": 1},
+            )
+            self.assertEqual(
+                filtered["coverage"]["company_patent_counts"][0]["company"],
+                "Huawei",
+            )
+
     def test_empty_search_and_filtered_empty_have_distinct_limitations(self) -> None:
         empty = coverage_limitations(
             {

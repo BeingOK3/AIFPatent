@@ -120,7 +120,10 @@ class LandscapePlanningTests(unittest.TestCase):
             validate_query_plan_scope(plan, scope)
 
     def test_alias_plan_cannot_change_or_cross_competitor_entities(self) -> None:
-        inputs = [CompetitorInput(name="Huawei"), CompetitorInput(name="Samsung")]
+        inputs = [
+            CompetitorInput(name="Huawei", aliases=["华为"]),
+            CompetitorInput(name="Samsung"),
+        ]
         valid = CompetitorAliasPlan(
             competitors=[
                 CompetitorAliasResolution(
@@ -151,6 +154,35 @@ class LandscapePlanningTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(CompetitorAliasError, "collides"):
             validate_alias_plan(collision, inputs)
+
+    def test_search_scope_preserves_confirmed_aliases_and_adds_inferred_aliases(self) -> None:
+        scope = LandscapeScope(
+            competitors=[
+                CompetitorInput(
+                    name="Huawei",
+                    aliases=["华为", "Huawei Technologies"],
+                )
+            ],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 7, 1),
+        )
+        plan = CompetitorAliasPlan(
+            competitors=[
+                CompetitorAliasResolution(
+                    primary_name="Huawei",
+                    aliases=["Huawei Technologies", "华为技术"],
+                    source="MODEL_INFERRED",
+                )
+            ]
+        )
+
+        search_scope = scope_with_alias_plan(scope, plan)
+
+        self.assertEqual(
+            search_scope.competitors[0].aliases,
+            ["华为", "Huawei Technologies", "华为技术"],
+        )
+        self.assertEqual(scope.competitors[0].aliases, ["华为", "Huawei Technologies"])
 
     def test_alias_failure_falls_back_to_primary_names(self) -> None:
         fallback = fallback_alias_plan([CompetitorInput(name="Huawei")])

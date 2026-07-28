@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-search-alias-trust-boundary
+
+### 已完成
+
+- 将用户确认别名与模型推断别名拆分为两种信任级别：前者可参与硬过滤和公司归属，后者只能扩展 Provider 查询。
+- 搜索范围显式命名为 `search_scope`，保留用户别名并稳定去重合并模型推断别名。
+- `FILTER_AND_SELECT`、公司统计、详情选择及后续公司归属统一读取不可变的原始 Run Scope。
+- 增加端到端回归：模型别名可以进入查询，但仅命中模型别名的专利必须被 `COMPETITOR_NOT_CONFIRMED` 排除。
+
+### 验证
+
+- 规划、执行与检索聚焦测试 26 项通过；Landscape 全量 99 项通过。
+- Python compileall 与 `git diff --check` 通过。
+- 本提交不修改数据库或 Graph；公司归属持久化在下一独立切片实现。
+
 ## 2026-07-28 — landscape-deterministic-company-assignment
 
 ### 已完成

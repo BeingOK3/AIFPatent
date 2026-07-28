@@ -2,6 +2,16 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-SEARCH-ALIAS-TRUST-007
+
+- 类型：检索扩展别名与业务授权别名的信任边界修复。
+- 搜索：`search_scope` 保留用户确认别名，并加入模型推断别名作为 Provider 检索提示。
+- 硬门：严格过滤、公司统计、详情选择和公司归属只读取原始持久化 Scope；模型别名不能授权专利进入 `U`，也不能创建公司身份。
+- 回归：新增集成用例证明查询同时包含两类别名，但仅模型别名命中的专利以 `COMPETITOR_NOT_CONFIRMED` 排除，用户别名命中正常进入 Huawei 分组。
+- 涉及文件：`backend/landscape/{planning,execution}.py`、规划/执行测试和两份追加式日志。
+- 验证：聚焦 26 项、Landscape 全量 99 项测试通过；compileall、`git diff --check` 通过。
+- 未完成：本提交不写 PostgreSQL 公司表；确定性公司归属的原子持久化在下一工作单元完成。
+
 ## 2026-07-28 — LANDSCAPE-DETERMINISTIC-COMPANY-006
 
 - 类型：完整集合 `U` 的确定性公司归属与完整性校验。

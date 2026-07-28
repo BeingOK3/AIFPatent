@@ -105,11 +105,11 @@ class LandscapeExecutionService:
             except Exception as exc:
                 alias_plan = fallback_alias_plan(scope.competitors)
                 alias_error = f"{type(exc).__name__}: {str(exc)[:500]}"
-            effective_scope = scope_with_alias_plan(scope, alias_plan)
+            search_scope = scope_with_alias_plan(scope, alias_plan)
         else:
             alias_plan = None
-            effective_scope = scope
-        plan = build_deterministic_query_plan(effective_scope, direction_expansion)
+            search_scope = scope
+        plan = build_deterministic_query_plan(search_scope, direction_expansion)
         self.database.put_queries(
             run_id,
             [
@@ -134,7 +134,7 @@ class LandscapeExecutionService:
         }
 
     async def search_publications(self, run_id: str) -> dict[str, Any]:
-        scope = self.effective_scope(run_id)
+        scope = self.search_scope(run_id)
         plan = self.load_plan(run_id)
         results = await execute_provider_queries(
             scope=scope,
@@ -146,7 +146,9 @@ class LandscapeExecutionService:
         return {"results": [result.model_dump(mode="json") for result in results]}
 
     async def filter_and_select(self, run_id: str) -> dict[str, Any]:
-        scope = self.effective_scope(run_id)
+        # The persisted run scope is the authority for hard assignee filtering and
+        # company statistics. Model-inferred aliases are search hints only.
+        scope = self.scope(run_id)
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.SEARCH_PUBLICATIONS.value)["value"]
         results = [ProviderResult.model_validate(item) for item in raw["results"]]
         results = await self._enrich_missing_dates(run_id, results)
@@ -231,7 +233,8 @@ class LandscapeExecutionService:
         }
 
     async def fetch_details(self, run_id: str) -> dict[str, Any]:
-        scope = self.effective_scope(run_id)
+        # Company balancing and attribution use only user-confirmed names/aliases.
+        scope = self.scope(run_id)
         filtered = self.database.get_stage_result(
             run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value
         )["value"]["result"]
@@ -458,7 +461,8 @@ class LandscapeExecutionService:
         )["value"]
         return raw.get("technical_direction_expansion")
 
-    def effective_scope(self, run_id: str) -> LandscapeScope:
+    def search_scope(self, run_id: str) -> LandscapeScope:
+        """Return a provider-query scope expanded with non-authoritative aliases."""
         from .schemas import CompetitorAliasPlan
 
         scope = self.scope(run_id)
