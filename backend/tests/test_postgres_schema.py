@@ -17,6 +17,9 @@ LANDSCAPE_COMPANY_SCHEMA_PATH = Path(
 LANDSCAPE_COMPANY_MANIFEST_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/071_landscape_company_assignment_manifest.sql"
 )
+LANDSCAPE_FETCH_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/072_landscape_document_fetches.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -33,6 +36,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_company_manifest_sql = (
             LANDSCAPE_COMPANY_MANIFEST_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_fetch_sql = LANDSCAPE_FETCH_SCHEMA_PATH.read_text(
+            encoding="utf-8"
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -75,6 +81,22 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("assignment_count INTEGER NOT NULL", sql)
         self.assertIn("content_hash TEXT NOT NULL", sql)
         self.assertIn("'071_landscape_company_assignment_manifest'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_document_fetch_state_is_resumable_and_versioned(self) -> None:
+        sql = self.landscape_fetch_sql
+        self.assertIn(
+            "CREATE TABLE IF NOT EXISTS landscape_document_fetches",
+            sql,
+        )
+        self.assertIn("status IN ('FETCHED','FAILED')", sql)
+        self.assertIn("attempt_count INTEGER NOT NULL", sql)
+        self.assertIn("document_json JSONB", sql)
+        self.assertIn("REFERENCES landscape_candidates(run_id, document_id)", sql)
+        self.assertIn("'072_landscape_document_fetches'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)

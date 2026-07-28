@@ -24,13 +24,10 @@ from .planning import (
 from .reporting import LandscapeReportService, build_report
 from .schemas import LandscapeQueryPlan, LandscapeScope
 from .search import (
-    CompanyPatentCount,
     LandscapeCandidateLimitExceededError,
-    candidate_company,
     execute_provider_queries,
     exclusion_reason,
     strict_filter_and_select,
-    weighted_analysis_selection,
 )
 from .store import LandscapeRunStore
 from .workflow import LandscapeWorkflowStep
@@ -52,6 +49,30 @@ class LandscapeCompanyRepository(Protocol):
     ) -> CompanyAssignmentResult: ...
 
 
+class LandscapeFetchRepository(Protocol):
+    def list_fetched_documents(
+        self, run_id: str
+    ) -> dict[str, FetchedDocument]: ...
+
+    def put_fetch_success(
+        self,
+        run_id: str,
+        *,
+        document_id: str,
+        publication_number: str,
+        document: FetchedDocument,
+    ) -> None: ...
+
+    def put_fetch_failure(
+        self,
+        run_id: str,
+        *,
+        document_id: str,
+        publication_number: str,
+        error_message: str,
+    ) -> None: ...
+
+
 class LandscapeExecutionService:
     def __init__(
         self,
@@ -65,6 +86,7 @@ class LandscapeExecutionService:
         report_service: LandscapeReportService,
         candidate_repository: "LandscapeCandidateRepository | None" = None,
         company_repository: "LandscapeCompanyRepository | None" = None,
+        fetch_repository: "LandscapeFetchRepository | None" = None,
     ):
         self.database = database
         self.store = store
@@ -80,6 +102,7 @@ class LandscapeExecutionService:
         self.report_service = report_service
         self.candidate_repository = candidate_repository
         self.company_repository = company_repository
+        self.fetch_repository = fetch_repository
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.enrichment_stats: dict[str, dict[str, int]] = {}
@@ -266,58 +289,36 @@ class LandscapeExecutionService:
         }
 
     async def fetch_details(self, run_id: str) -> dict[str, Any]:
-        # Company balancing and attribution use only user-confirmed names/aliases.
-        scope = self.scope(run_id)
-        filtered = self.database.get_stage_result(
-            run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value
-        )["value"]["result"]
-        company_counts = [
-            CompanyPatentCount.model_validate(item)
-            for item in filtered.get("coverage", {}).get("company_patent_counts", [])
-        ]
         candidates = self.selected_hits(run_id)
-        ordered = weighted_analysis_selection(
-            candidates,
-            scope=scope,
-            company_patent_counts=company_counts,
+        docs = (
+            self.fetch_repository.list_fetched_documents(run_id)
+            if self.fetch_repository is not None
+            else {}
         )
-        target = min(scope.budget.analysis_limit, len(ordered))
-        companies = {
-            candidate_company(candidate, scope) for candidate in candidates
-        }
-        docs: dict[str, FetchedDocument] = {}
-        failures: dict[str, str] = {}
-        attempted: list[MergedHit] = []
-        batch = ordered[:target]
-        remaining = ordered[target:]
-        while len(docs) < target and batch:
-            attempted.extend(batch)
-            fetched, batch_failures = await self._fetch_documents(run_id, batch)
-            docs.update(fetched)
-            failures.update(batch_failures)
-            needed = target - len(docs)
-            failed_companies = [
-                candidate_company(hit, scope)
-                for hit in batch
-                if (hit.publication_number or hit.title) in batch_failures
-            ]
-            next_batch: list[MergedHit] = []
-            for company in failed_companies:
-                replacement = next(
-                    (
-                        hit
-                        for hit in remaining
-                        if candidate_company(hit, scope) == company
-                    ),
-                    None,
-                )
-                if replacement is not None:
-                    remaining.remove(replacement)
-                    next_batch.append(replacement)
-            while len(next_batch) < needed and remaining:
-                next_batch.append(remaining.pop(0))
-            batch = next_batch[:needed]
+        pending = [
+            hit
+            for hit in candidates
+            if hit.publication_number not in docs
+        ]
+        fetched, failures = await self._fetch_documents(run_id, pending)
+        docs.update(fetched)
         self.documents[run_id] = docs
+        for publication, document in fetched.items():
+            if self.fetch_repository is not None:
+                self.fetch_repository.put_fetch_success(
+                    run_id,
+                    document_id=document_id(publication),
+                    publication_number=publication,
+                    document=document,
+                )
+        for publication, error in failures.items():
+            if self.fetch_repository is not None:
+                self.fetch_repository.put_fetch_failure(
+                    run_id,
+                    document_id=document_id(publication),
+                    publication_number=publication,
+                    error_message=error,
+                )
         for publication, document in docs.items():
             self.database.put_document(
                 run_id,
@@ -326,28 +327,17 @@ class LandscapeExecutionService:
                 status="FETCHED",
                 metadata=_document_metadata(document),
             )
-        for publication, error in failures.items():
-            self.database.put_document(
-                run_id,
-                document_id=document_id(publication),
-                publication_number=publication,
-                status="FAILED",
-                metadata={"publication_number": publication},
-                error_code="FETCH_FAILED",
-                error_message=error,
-            )
         return {
-            "target_count": target,
+            "target_count": len(candidates),
             "selected_publications": [
-                hit.publication_number for hit in ordered[:target] if hit.publication_number
+                hit.publication_number for hit in candidates if hit.publication_number
             ],
             "attempted_publications": [
-                hit.publication_number for hit in attempted if hit.publication_number
+                hit.publication_number for hit in pending if hit.publication_number
             ],
             "fetched_publications": sorted(docs),
-            "backfilled_count": max(0, len(attempted) - target),
-            "company_coverage_complete": target >= len(companies),
-            "company_count": len(companies),
+            "resumed_fetched_count": len(docs) - len(fetched),
+            "complete": len(docs) == len(candidates),
             "failures": failures,
         }
 

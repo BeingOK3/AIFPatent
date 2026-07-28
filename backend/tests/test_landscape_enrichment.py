@@ -73,6 +73,26 @@ class CompanyCaptureRepository:
         return result
 
 
+class FetchCaptureRepository:
+    def __init__(self):
+        self.documents = {}
+        self.failures = {}
+
+    def list_fetched_documents(self, _run_id):
+        return dict(self.documents)
+
+    def put_fetch_success(
+        self, _run_id, *, document_id, publication_number, document
+    ):
+        self.documents[publication_number] = document
+        self.failures.pop(publication_number, None)
+
+    def put_fetch_failure(
+        self, _run_id, *, document_id, publication_number, error_message
+    ):
+        self.failures[publication_number] = error_message
+
+
 class LandscapeEnrichmentTests(unittest.TestCase):
     def test_model_alias_expands_search_but_cannot_authorize_filtering(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -373,13 +393,14 @@ class LandscapeEnrichmentTests(unittest.TestCase):
                 11,
             )
 
-    def test_fetch_details_backfills_failed_primary_selection(self) -> None:
+    def test_fetch_details_covers_all_u_and_resumes_completed_documents(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             database = LandscapeDatabase(root / "landscape.db")
             database.initialize()
             store = LandscapeRunStore(root / "runs")
             provider = EnrichmentProvider()
+            fetch_repository = FetchCaptureRepository()
             service = LandscapeExecutionService(
                 database=database,
                 store=store,
@@ -388,6 +409,7 @@ class LandscapeEnrichmentTests(unittest.TestCase):
                 provider_timeout_seconds={"fixture_enrichment": 1},
                 analysis_concurrency=1,
                 report_service=LandscapeReportService(database, store),
+                fetch_repository=fetch_repository,
             )
             scope = LandscapeScope(
                 mode=AnalysisMode.TECHNOLOGY,
@@ -473,12 +495,33 @@ class LandscapeEnrichmentTests(unittest.TestCase):
 
             service._fetch_documents = fetch_batch
             result = asyncio.run(service.fetch_details(run["run_id"]))
-            self.assertEqual(result["target_count"], 3)
-            self.assertEqual(len(result["fetched_publications"]), 3)
-            self.assertEqual(len(result["attempted_publications"]), 4)
-            self.assertEqual(result["attempted_publications"][-1], "US5A1")
-            self.assertEqual(result["backfilled_count"], 1)
+            self.assertEqual(result["target_count"], 5)
+            self.assertEqual(len(result["fetched_publications"]), 4)
+            self.assertEqual(len(result["attempted_publications"]), 5)
             self.assertEqual(result["failures"], {"US1A1": "fixture failure"})
+            self.assertFalse(result["complete"])
+
+            attempted_on_resume = []
+
+            async def fetch_resume(_run_id, batch):
+                attempted_on_resume.extend(
+                    candidate.publication_number for candidate in batch
+                )
+                return {
+                    "US1A1": FetchedDocument(
+                        provider="fixture_enrichment",
+                        publication_number="US1A1",
+                        title="液冷专利 1",
+                        url="https://example.test/1",
+                    )
+                }, {}
+
+            service._fetch_documents = fetch_resume
+            resumed = asyncio.run(service.fetch_details(run["run_id"]))
+            self.assertEqual(attempted_on_resume, ["US1A1"])
+            self.assertEqual(resumed["resumed_fetched_count"], 4)
+            self.assertEqual(len(resumed["fetched_publications"]), 5)
+            self.assertTrue(resumed["complete"])
 
 
 if __name__ == "__main__":

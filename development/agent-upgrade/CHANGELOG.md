@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-28 — landscape-resumable-complete-fetch
+
+### 已完成
+
+- `FETCH_DETAILS` 不再按 `analysis_limit` 抽样或补位，改为尝试抓取完整合格去重集合 `U`。
+- 新增 `072_landscape_document_fetches`，持久化完整文档、内容哈希、成功/失败状态、错误和尝试次数，并以 canonical candidate 外键约束身份。
+- 节点重试或进程重启时先加载已成功文档，只重试未成功专利；成功内容不可变，失败可累计尝试并升级为成功，迟到失败不能降级成功。
+- 旧 `landscape_run_documents` 只记录成功文档元数据，避免失败占位元数据阻止后续成功恢复。
+
+### 验证
+
+- 详情抓取、Repository、Schema 与迁移聚焦测试 40 项通过。
+- Landscape 全量 104 项测试、Python compileall 与 `git diff --check` 通过。
+- 本提交尚未移除 `ANALYZE_PATENTS` 的旧 `analysis_limit`；全量精读在下一独立切片完成。
+
 ## 2026-07-28 — landscape-company-assignment-persistence
 
 ### 已完成

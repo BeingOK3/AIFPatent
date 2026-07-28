@@ -4,6 +4,7 @@ import unittest
 from contextlib import contextmanager
 from datetime import date
 
+from idea.providers.base import FetchedDocument
 from landscape.company_assignment import CompanyAssignmentResult
 from landscape.postgres_database import (
     LandscapePostgreSQLDatabase,
@@ -376,6 +377,141 @@ class LandscapePostgreSQLCompanyAssignmentTests(unittest.TestCase):
             self.database.list_company_assignments("run-empty"),
             empty,
         )
+
+
+class _FetchConnection:
+    def __init__(self):
+        self.rows: dict[str, dict] = {}
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        if normalized.startswith(
+            "SELECT publication_number FROM landscape_candidates"
+        ):
+            return _Cursor([{"publication_number": "CN1A"}])
+        if normalized.startswith("SELECT publication_number,document_json"):
+            return _Cursor(
+                sorted(
+                    (
+                        row
+                        for row in self.rows.values()
+                        if row["status"] == "FETCHED"
+                    ),
+                    key=lambda row: row["publication_number"],
+                )
+            )
+        if normalized.startswith("SELECT status,content_hash"):
+            return _Cursor([self.rows[params[1]]] if params[1] in self.rows else [])
+        if normalized.startswith("INSERT INTO landscape_document_fetches"):
+            run_id, document_id, publication_number = params[:3]
+            if "'FETCHED'" in normalized:
+                document_json, content_hash, _updated_at = params[3:]
+                self.rows[document_id] = {
+                    "run_id": run_id,
+                    "document_id": document_id,
+                    "publication_number": publication_number,
+                    "status": "FETCHED",
+                    "document_json": document_json,
+                    "content_hash": content_hash,
+                    "attempt_count": 1,
+                }
+            else:
+                message, _updated_at = params[3:]
+                self.rows[document_id] = {
+                    "run_id": run_id,
+                    "document_id": document_id,
+                    "publication_number": publication_number,
+                    "status": "FAILED",
+                    "document_json": None,
+                    "content_hash": None,
+                    "attempt_count": 1,
+                    "error_message": message,
+                }
+            return _Cursor()
+        if normalized.startswith("UPDATE landscape_document_fetches"):
+            document_id = params[-1]
+            row = self.rows[document_id]
+            if "SET status='FETCHED'" in normalized:
+                document_json, content_hash, _updated_at, _run_id, _document_id = params
+                row.update(
+                    {
+                        "status": "FETCHED",
+                        "document_json": document_json,
+                        "content_hash": content_hash,
+                        "attempt_count": row["attempt_count"] + 1,
+                    }
+                )
+            else:
+                message, _updated_at, _run_id, _document_id = params
+                row["attempt_count"] += 1
+                row["error_message"] = message
+            return _Cursor()
+        raise AssertionError(f"unexpected SQL: {normalized}")
+
+
+class LandscapePostgreSQLFetchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.database = LandscapePostgreSQLDatabase(
+            "postgresql://test:test@localhost/test"
+        )
+        self.connection = _FetchConnection()
+
+        @contextmanager
+        def connect():
+            yield self.connection
+
+        self.database.connect = connect  # type: ignore[method-assign]
+        self.document = FetchedDocument(
+            provider="fixture",
+            publication_number="CN1A",
+            title="冷却专利",
+            url="https://example.test/CN1A",
+            abstract_text="摘要",
+            claims_text="权利要求",
+            description_text="说明书",
+        )
+
+    def test_failure_is_retryable_and_success_is_resumable_and_immutable(self) -> None:
+        self.database.put_fetch_failure(
+            "run-1",
+            document_id="LD-CN1A",
+            publication_number="CN1A",
+            error_message="timeout",
+        )
+        self.database.put_fetch_failure(
+            "run-1",
+            document_id="LD-CN1A",
+            publication_number="CN1A",
+            error_message="timeout again",
+        )
+        self.assertEqual(self.connection.rows["LD-CN1A"]["attempt_count"], 2)
+
+        self.database.put_fetch_success(
+            "run-1",
+            document_id="LD-CN1A",
+            publication_number="CN1A",
+            document=self.document,
+        )
+        self.assertEqual(
+            self.database.list_fetched_documents("run-1"),
+            {"CN1A": self.document},
+        )
+        self.database.put_fetch_failure(
+            "run-1",
+            document_id="LD-CN1A",
+            publication_number="CN1A",
+            error_message="late failure",
+        )
+        self.assertEqual(self.connection.rows["LD-CN1A"]["status"], "FETCHED")
+
+        changed = self.document.model_copy(update={"title": "changed"})
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.database.put_fetch_success(
+                "run-1",
+                document_id="LD-CN1A",
+                publication_number="CN1A",
+                document=changed,
+            )
 
 
 if __name__ == "__main__":

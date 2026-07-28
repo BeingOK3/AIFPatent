@@ -7,6 +7,7 @@ from typing import Any
 
 from idea.postgres_database import PostgreSQLPersistenceError, _Connection
 from idea.merge import normalize_publication_number
+from idea.providers.base import FetchedDocument
 
 from .company_assignment import CompanyAssignmentResult
 from .database import LandscapeDatabase, assert_no_secrets, canonical_json, now_ms
@@ -208,13 +209,13 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             row = connection.execute(
                 """
                 SELECT version FROM aifpatent_schema_migrations
-                WHERE version = '071_landscape_company_assignment_manifest'
+                WHERE version = '072_landscape_document_fetches'
                 """
             ).fetchone()
         if row is None:
             raise PostgreSQLPersistenceError(
                 "PostgreSQL schema is not current; apply migration "
-                "071_landscape_company_assignment_manifest"
+                "072_landscape_document_fetches"
             )
 
     @contextmanager
@@ -555,6 +556,148 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             assignments=assignments,
         )
 
+    def list_fetched_documents(self, run_id: str) -> dict[str, FetchedDocument]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT publication_number,document_json,content_hash
+                FROM landscape_document_fetches
+                WHERE run_id = %s AND status = 'FETCHED'
+                ORDER BY publication_number
+                """,
+                (run_id,),
+            ).fetchall()
+        documents: dict[str, FetchedDocument] = {}
+        for row in rows:
+            value = _json_value(row["document_json"])
+            encoded = canonical_json(value)
+            if hashlib.sha256(encoded.encode("utf-8")).hexdigest() != row["content_hash"]:
+                raise ValueError(
+                    f"landscape fetched document hash mismatch: {row['publication_number']}"
+                )
+            document = FetchedDocument.model_validate(value)
+            if document.publication_number != row["publication_number"]:
+                raise ValueError("fetched document publication identity mismatch")
+            documents[row["publication_number"]] = document
+        return documents
+
+    def put_fetch_success(
+        self,
+        run_id: str,
+        *,
+        document_id: str,
+        publication_number: str,
+        document: FetchedDocument,
+    ) -> None:
+        publication = normalize_publication_number(publication_number)
+        document_publication = normalize_publication_number(
+            document.publication_number
+        )
+        if (
+            publication is None
+            or publication != publication_number
+            or document_publication != publication
+        ):
+            raise ValueError("fetched document must match canonical publication")
+        canonical_document = document.model_copy(
+            update={"publication_number": publication}
+        )
+        value = canonical_document.model_dump(mode="json")
+        assert_no_secrets(value)
+        encoded = canonical_json(value)
+        content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        with self.connect() as connection:
+            _require_candidate_identity(
+                connection, run_id, document_id, publication
+            )
+            existing = connection.execute(
+                """
+                SELECT status,content_hash FROM landscape_document_fetches
+                WHERE run_id = %s AND document_id = %s
+                FOR UPDATE
+                """,
+                (run_id, document_id),
+            ).fetchone()
+            if existing is not None and existing["status"] == "FETCHED":
+                if existing["content_hash"] != content_hash:
+                    raise ValueError("fetched document is immutable")
+                return
+            if existing is None:
+                connection.execute(
+                    """
+                    INSERT INTO landscape_document_fetches(
+                        run_id,document_id,publication_number,status,document_json,
+                        content_hash,attempt_count,error_code,error_message,updated_at
+                    ) VALUES(%s,%s,%s,'FETCHED',%s::jsonb,%s,1,NULL,NULL,%s)
+                    """,
+                    (
+                        run_id,
+                        document_id,
+                        publication,
+                        encoded,
+                        content_hash,
+                        now_ms(),
+                    ),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE landscape_document_fetches
+                    SET status='FETCHED',document_json=%s::jsonb,content_hash=%s,
+                        attempt_count=attempt_count+1,error_code=NULL,
+                        error_message=NULL,updated_at=%s
+                    WHERE run_id=%s AND document_id=%s
+                    """,
+                    (encoded, content_hash, now_ms(), run_id, document_id),
+                )
+
+    def put_fetch_failure(
+        self,
+        run_id: str,
+        *,
+        document_id: str,
+        publication_number: str,
+        error_message: str,
+    ) -> None:
+        publication = normalize_publication_number(publication_number)
+        if publication is None or publication != publication_number:
+            raise ValueError("fetch failure publication must be canonical")
+        message = error_message.strip()[:2000] or "unknown fetch failure"
+        with self.connect() as connection:
+            _require_candidate_identity(
+                connection, run_id, document_id, publication
+            )
+            existing = connection.execute(
+                """
+                SELECT status,content_hash FROM landscape_document_fetches
+                WHERE run_id = %s AND document_id = %s
+                FOR UPDATE
+                """,
+                (run_id, document_id),
+            ).fetchone()
+            if existing is not None and existing["status"] == "FETCHED":
+                return
+            if existing is None:
+                connection.execute(
+                    """
+                    INSERT INTO landscape_document_fetches(
+                        run_id,document_id,publication_number,status,document_json,
+                        content_hash,attempt_count,error_code,error_message,updated_at
+                    ) VALUES(%s,%s,%s,'FAILED',NULL,NULL,1,'FETCH_FAILED',%s,%s)
+                    """,
+                    (run_id, document_id, publication, message, now_ms()),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE landscape_document_fetches
+                    SET attempt_count=attempt_count+1,error_code='FETCH_FAILED',
+                        error_message=%s,updated_at=%s
+                    WHERE run_id=%s AND document_id=%s
+                    """,
+                    (message, now_ms(), run_id, document_id),
+                )
+
 
 def _json_value(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
@@ -585,6 +728,23 @@ def _assignment_projection(row: dict[str, Any]) -> dict[str, Any]:
         "confidence": row["confidence"],
         "content_hash": row["content_hash"],
     }
+
+
+def _require_candidate_identity(
+    connection: Any,
+    run_id: str,
+    document_id: str,
+    publication_number: str,
+) -> None:
+    row = connection.execute(
+        """
+        SELECT publication_number FROM landscape_candidates
+        WHERE run_id = %s AND document_id = %s
+        """,
+        (run_id, document_id),
+    ).fetchone()
+    if row is None or row["publication_number"] != publication_number:
+        raise ValueError("fetch state must reference the canonical candidate identity")
 
 
 __all__ = ["LandscapePostgreSQLDatabase"]

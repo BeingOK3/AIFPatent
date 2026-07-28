@@ -2,6 +2,17 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-28 — LANDSCAPE-RESUMABLE-FETCH-009
+
+- 类型：完整 `U` 的可恢复专利详情抓取。
+- 范围：`FETCH_DETAILS` 的目标数固定为 `|U|`，不再读取 `analysis_limit`、公司配额或补位抽样；失败专利保留明确缺口。
+- 持久化：新增 `072_landscape_document_fetches`，保存可重建 `FetchedDocument` 的完整 JSON、内容哈希、尝试次数和失败信息，并校验 Run、document ID、公开号与 canonical candidate 一致。
+- 恢复：执行前读取所有 `FETCHED` 文档并校验哈希，只对剩余专利调用 Provider；失败可重试并转为成功，成功内容不可覆盖且不被迟到失败降级。
+- 兼容：`landscape_run_documents` 继续保存成功元数据，失败不再写不可变占位元数据。
+- 涉及文件：Execution/Runtime、PostgreSQL Repository、`072`、迁移工具、执行/Repository/Schema/基础设施测试及两份追加式日志。
+- 验证：聚焦 40 项、Landscape 全量 104 项通过；compileall、`git diff --check` 通过。
+- 未完成：尚未真实执行 PostgreSQL 迁移与中断恢复演练；`ANALYZE_PATENTS` 仍需改为覆盖全部成功抓取集合。
+
 ## 2026-07-28 — LANDSCAPE-COMPANY-PERSISTENCE-008
 
 - 类型：公司 Registry、完整 PRIMARY 归属与集合 Manifest 的 PostgreSQL 持久化。
