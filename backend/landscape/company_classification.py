@@ -31,7 +31,7 @@ class CompanyTechnologyClassificationService:
     def __init__(self, model: StructuredModelClient):
         register_agent_output_model(
             COMPANY_CLASSIFIER_NAME,
-            CompanyTechnologyClassification,
+            CompanyTechnologyClassificationDraft,
         )
         register_agent_output_model(
             LIGHTWEIGHT_COMPANY_CLASSIFIER_NAME,
@@ -77,7 +77,10 @@ class CompanyTechnologyClassificationService:
                 },
             )
             result = completion.output
-            if not isinstance(result, CompanyTechnologyClassification):
+            if not isinstance(
+                result,
+                (CompanyTechnologyClassification, CompanyTechnologyClassificationDraft),
+            ):
                 raise CompanyTechnologyClassificationError(
                     "company classifier returned the wrong schema"
                 )
@@ -311,7 +314,8 @@ def _single_patent_classification(
 
 def _canonicalize_category_ids(
     batch: CompanyAnalysisBatch,
-    result: CompanyTechnologyClassification,
+    result: CompanyTechnologyClassification
+    | CompanyTechnologyClassificationDraft,
 ) -> CompanyTechnologyClassification:
     categories = sorted(
         result.technology_categories,

@@ -236,6 +236,39 @@ class LandscapeCompanyClassificationTests(unittest.TestCase):
             ["CN1A", "US2A1"],
         )
 
+    def test_deep_classifier_duplicate_model_ids_are_normalized_before_validation(
+        self,
+    ) -> None:
+        output = CompanyTechnologyClassificationDraft(
+            technology_categories=[
+                CompanyTechnologyCategory(
+                    category_id="TC-SAME",
+                    name="控制策略",
+                    summary="根据负载控制冷却。",
+                    keywords=["控制"],
+                    publication_numbers=["US2A1"],
+                    evidence_ids=["EV-US2A1"],
+                ),
+                CompanyTechnologyCategory(
+                    category_id="TC-SAME",
+                    name="换热结构",
+                    summary="使用微通道增强换热。",
+                    keywords=["微通道"],
+                    publication_numbers=["CN1A"],
+                    evidence_ids=["EV-CN1A"],
+                ),
+            ]
+        )
+        model = StubModel(output)
+        service = CompanyTechnologyClassificationService(model)
+
+        result = asyncio.run(service.classify(company_batch(["CN1A", "US2A1"])))
+
+        self.assertEqual(
+            [category.category_id for category in result.technology_categories],
+            ["TC-HUAWEI-01", "TC-HUAWEI-02"],
+        )
+
     def test_missing_invented_and_cross_patent_evidence_fail_closed(self) -> None:
         batch = company_batch(["CN1A", "US2A1"])
         invented = CompanyTechnologyClassification(

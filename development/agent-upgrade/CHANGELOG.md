@@ -7,14 +7,15 @@
 ### 已完成
 
 - 轻量公司技术分类改用独立 Draft schema 接收模型输出，不在模型返回阶段强制要求跨类别 `category_id` 唯一。
+- 精读公司分类也统一先接收 Draft，再进行程序归一化；没有轻量指纹时不再回到会提前拒绝重复 ID 的严格解析路径。
 - 类别 ID 由程序按公司和稳定排序重新生成，再构造严格的 `CompanyTechnologyClassification` 并校验证据、专利覆盖和唯一归属。
 - 修复模型重复返回类别 ID 时在 `ANALYZE_COMPANIES` 归一化前直接失败的问题。
-- 保留精读分类使用的严格 schema，避免放宽深度分析链路的约束。
+- 严格 schema 仍作为归一化后的最终边界，避免放宽后续画像、报告链路的约束。
 
 ### 验证
 
-- 公司分类聚焦测试 5 项通过。
-- Landscape 全量测试 165 项通过。
+- 公司分类聚焦测试 6 项通过。
+- Landscape 全量测试 166 项通过。
 - `git diff --check` 与 Python compileall 通过。
 
 ## 2026-07-29 — landscape-base01-main-graph-fixture

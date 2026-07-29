@@ -396,7 +396,7 @@ class CompanyTechnologyCategory(LandscapeModel):
 
 
 class CompanyTechnologyClassification(LandscapeModel):
-    """One company's model-proposed categories before program-owned profiling."""
+    """Program-validated categories with company-owned IDs and memberships."""
 
     technology_categories: list[CompanyTechnologyCategory] = Field(
         min_length=1, max_length=20
