@@ -441,7 +441,11 @@ class LandscapeExecutionService:
             for publication in plan.fetch_publications
             if publication not in documents
         ]
-        fetched, fetch_failures = await self._fetch_documents(run_id, fetch_targets)
+        fetched, fetch_failures = await self._fetch_documents(
+            run_id,
+            fetch_targets,
+            batch_size=self.scope(run_id).budget.analysis_limit,
+        )
         documents.update(fetched)
         self.documents[run_id] = documents
         for publication, document in fetched.items():
@@ -479,10 +483,11 @@ class LandscapeExecutionService:
             for publication in plan.analyze_publications
             if publication in documents and publication not in analyses
         ]
-        new_analyses, analysis_failures = await self.analysis.analyze_many(
+        new_analyses, analysis_failures = await self._analyze_many(
             run_id=run_id,
             documents=analysis_targets,
             direction_terms=direction_terms,
+            batch_size=self.scope(run_id).budget.analysis_limit,
         )
         for publication in new_analyses:
             self.database.put_document(
@@ -777,7 +782,11 @@ class LandscapeExecutionService:
             for hit in candidates
             if hit.publication_number not in docs
         ]
-        fetched, failures = await self._fetch_documents(run_id, pending)
+        fetched, failures = await self._fetch_documents(
+            run_id,
+            pending,
+            batch_size=self.scope(run_id).budget.analysis_limit,
+        )
         docs.update(fetched)
         self.documents[run_id] = docs
         for publication, document in fetched.items():
@@ -836,7 +845,11 @@ class LandscapeExecutionService:
                     for hit in self.selected_hits(run_id)
                     if hit.publication_number in fetched_publications
                 ]
-                docs, _ = await self._fetch_documents(run_id, selected)
+                docs, _ = await self._fetch_documents(
+                    run_id,
+                    selected,
+                    batch_size=scope.budget.analysis_limit,
+                )
             self.documents[run_id] = docs
         analyses = (
             self.analysis_repository.list_patent_analyses(run_id)
@@ -856,10 +869,11 @@ class LandscapeExecutionService:
             for publication, document in sorted(docs.items())
             if publication not in analyses
         ]
-        new_analyses, failures = await self.analysis.analyze_many(
+        new_analyses, failures = await self._analyze_many(
             run_id=run_id,
             documents=pending,
             direction_terms=direction_terms,
+            batch_size=scope.budget.analysis_limit,
         )
         analyses.update(new_analyses)
         for publication in new_analyses:
@@ -1051,8 +1065,42 @@ class LandscapeExecutionService:
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value)["value"]
         return [MergedHit.model_validate(item) for item in raw["result"]["candidates"]]
 
+    async def _analyze_many(
+        self,
+        *,
+        run_id: str,
+        documents: list[tuple[str, FetchedDocument]],
+        direction_terms: list[str],
+        batch_size: int,
+    ) -> tuple[dict[str, LandscapePatentAnalysis], dict[str, str]]:
+        """Call analysis implementations with a compatibility fallback.
+
+        Older test doubles and downstream adapters may still expose the
+        pre-batching signature. They must not prevent the production service
+        from adopting bounded batches.
+        """
+        try:
+            return await self.analysis.analyze_many(
+                run_id=run_id,
+                documents=documents,
+                direction_terms=direction_terms,
+                batch_size=batch_size,
+            )
+        except TypeError as exc:
+            if "batch_size" not in str(exc):
+                raise
+            return await self.analysis.analyze_many(
+                run_id=run_id,
+                documents=documents,
+                direction_terms=direction_terms,
+            )
+
     async def _fetch_documents(
-        self, run_id: str, hits: list[MergedHit]
+        self,
+        run_id: str,
+        hits: list[MergedHit],
+        *,
+        batch_size: int | None = None,
     ) -> tuple[dict[str, FetchedDocument], dict[str, str]]:
         semaphore = asyncio.Semaphore(3)
 
@@ -1063,7 +1111,12 @@ class LandscapeExecutionService:
                     return hit.publication_number or hit.title, prefetched, None
                 return await self._fetch_one(run_id, hit)
 
-        results = await asyncio.gather(*(one(hit) for hit in hits))
+        size = max(1, batch_size or len(hits) or 1)
+        results = []
+        for offset in range(0, len(hits), size):
+            results.extend(
+                await asyncio.gather(*(one(hit) for hit in hits[offset : offset + size]))
+            )
         docs = {publication: document for publication, document, _ in results if document is not None}
         failures = {publication: error for publication, _, error in results if error is not None}
         return docs, failures
