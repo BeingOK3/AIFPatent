@@ -2,6 +2,17 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-29 — landscape-graph-repair-route-e2e-test
+
+### 已完成
+
+- 新增主 LangGraph 条件路由回归：模拟 Audit=REPAIR 后，实际执行 keyed `REPAIR_GAPS`，再进入 `BUILD_REPORT`。
+- 验证 Repair 节点位于报告节点之前，且不重新触发旧聚类步骤。
+
+### 验证
+
+- Workflow 聚焦 7 项、Landscape 全量 158 项测试通过。
+
 ## 2026-07-28 — deployment-apply-landscape-repair-migration
 
 ### 已完成

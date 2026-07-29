@@ -2,6 +2,14 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-29 — LANDSCAPE-GRAPH-REPAIR-ROUTE-E2E-040
+
+- 类型：主 Graph 修复条件边回归。
+- 场景：用确定性 Handler 模拟 `VERIFY_COVERAGE=REPAIR`、`REPAIR_GAPS=PASS`，通过实际编译 Graph 完成报告。
+- 断言：Repair keyed task 被执行且先于 BUILD_REPORT；旧 `CLUSTER_PATENTS` 未被调用。
+- 验证：Workflow 聚焦 7 项、Landscape 全量 158 项通过；无模型 API 调用。
+- 未完成：下一步将把 `BASE-01` Fixture 的 Provider/Analysis/Profile/Trend 事实接入同一主 Graph 契约测试。
+
 ## 2026-07-28 — LANDSCAPE-DEPLOY-MIGRATION-075-FIX-039
 
 - 类型：启动阻断修复。

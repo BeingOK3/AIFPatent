@@ -198,6 +198,42 @@ class LandscapeWorkflowHarnessTests(unittest.TestCase):
             "PASS",
         )
 
+    def test_main_graph_routes_repair_gaps_then_builds_report(self) -> None:
+        invoked_steps = []
+
+        async def handler(run_id, step, _attempt):
+            invoked_steps.append(step)
+            if step == LandscapeWorkflowStep.VERIFY_COVERAGE:
+                return {"decision": "REPAIR", "repair_round": 0}
+            if step == LandscapeWorkflowStep.REPAIR_GAPS:
+                return {"decision": "PASS", "repair_round": 1}
+            if step == LandscapeWorkflowStep.BUILD_REPORT:
+                self.store.write_reports(
+                    run_id,
+                    report={"summary": {}},
+                    markdown="# report\n",
+                    patents_csv="publication_number\n",
+                    manifest_metadata={},
+                )
+            return {"ok": True}
+
+        workflow = LandscapeWorkflow(
+            database=self.db,
+            harness=self.harness,
+            step_handler=handler,
+            limitation_collector=lambda _run_id: [],
+            step_timeout_seconds=5,
+            max_step_attempts=2,
+        )
+        status = asyncio.run(workflow.execute(self.run["run_id"]))
+
+        self.assertEqual(status, "COMPLETED")
+        self.assertIn(LandscapeWorkflowStep.REPAIR_GAPS, invoked_steps)
+        self.assertLess(
+            invoked_steps.index(LandscapeWorkflowStep.REPAIR_GAPS),
+            invoked_steps.index(LandscapeWorkflowStep.BUILD_REPORT),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
