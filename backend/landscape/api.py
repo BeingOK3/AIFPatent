@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, field_validator
 
-from idea.model_client import RuntimeModelConfig
+from idea.model_client import RuntimeModelConfig, runtime_model_config
 
 from .database import LandscapeDatabase
 from .runtime import LandscapeRuntime
@@ -183,6 +183,29 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
             raise HTTPException(404, "landscape run not found")
         except (ValueError, LandscapeStoreError) as exc:
             raise HTTPException(422, str(exc))
+
+    @router.post("/runs/{run_id}/deep-analyze")
+    async def deep_analyze_selected(
+        run_id: str, request: LandscapeRuntimeRequest
+    ):
+        """Run optional deep analysis only for persisted selected patents."""
+        try:
+            run = database.get_run(run_id)
+            if run["status"] not in {"COMPLETED", "COMPLETED_WITH_LIMITATIONS"}:
+                raise HTTPException(
+                    409,
+                    "deep analysis requires a completed landscape run",
+                )
+            with runtime_model_config(request.runtime_config()):
+                result = await runtime.execution.analyze_selected_patents(run_id)
+                report = await runtime.execution.build_report(run_id)
+            return {"run_id": run_id, "deep_analysis": result, "report": report}
+        except KeyError:
+            raise HTTPException(404, "landscape run not found")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(422, str(exc)[:2000])
 
     @router.get("/runs/{run_id}/report")
     async def get_report(run_id: str):
