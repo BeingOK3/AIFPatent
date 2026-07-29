@@ -167,6 +167,45 @@ class CompetitorAliasPlan(LandscapeModel):
     competitors: list[CompetitorAliasResolution] = Field(min_length=1, max_length=20)
 
 
+class CompetitorAliasResolutionDraft(LandscapeModel):
+    """Model-facing alias output before program-owned primary-name reconciliation."""
+
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+    primary_name: str = Field(min_length=1, max_length=200)
+    aliases: list[str] = Field(default_factory=list, max_length=30)
+    source: str | None = Field(default=None, max_length=50)
+
+    @field_validator("aliases", mode="before")
+    @classmethod
+    def normalize_aliases(cls, values: object) -> list[str]:
+        if values is None:
+            return []
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list):
+            return []
+        result: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            if not isinstance(raw, str):
+                continue
+            value = " ".join(raw.split())
+            key = value.casefold()
+            if value and key not in seen:
+                seen.add(key)
+                result.append(value)
+        return result
+
+
+class CompetitorAliasPlanDraft(LandscapeModel):
+    """Untrusted model output; missing or renamed entities are repaired by the service."""
+
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+    competitors: list[CompetitorAliasResolutionDraft] = Field(
+        min_length=1, max_length=20
+    )
+
+
 class TechnicalDirectionExpansion(LandscapeModel):
     original_term: str = Field(min_length=1, max_length=500)
     chinese_terms: list[str] = Field(min_length=1, max_length=8)

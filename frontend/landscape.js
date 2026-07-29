@@ -27,8 +27,8 @@
     const mode = derivedMode();
     const labels = {
       TECHNOLOGY: "技术方向",
-      COMPETITOR: "重点友商",
-      TECHNOLOGY_COMPETITOR: "技术方向 + 重点友商",
+      COMPETITOR: "重点友商（检索公司）",
+      TECHNOLOGY_COMPETITOR: "技术方向 + 重点友商（检索公司）",
     };
     $("derived-mode").textContent = mode ? `当前分析模式：${labels[mode]}（系统自动判定）` : "当前分析模式：等待输入";
   }
@@ -60,7 +60,7 @@
   }
   async function submit(event) {
     event.preventDefault(); $("form-message").textContent = ""; $("submit-button").disabled = true;
-    if (!derivedMode()) { $("form-message").textContent = "请至少填写具体技术方向或重点友商。"; $("submit-button").disabled = false; return; }
+    if (!derivedMode()) { $("form-message").textContent = "请至少填写具体技术方向或重点友商（检索公司）。"; $("submit-button").disabled = false; return; }
     try { const run = await jsonRequest("/api/landscape/runs", { method: "POST", body: JSON.stringify(collectPayload()) }); state.runId = run.run_id; showRun(run); connectEvents(run.run_id); await loadHistory(); }
     catch (error) { $("form-message").textContent = error.message; }
     finally { $("submit-button").disabled = false; }
@@ -71,7 +71,7 @@
     state.events.onerror = () => { if (state.events.readyState === EventSource.CLOSED) state.events = null; };
   }
   function showRun(run) {
-    state.runId = run.run_id; $("run-panel").classList.remove("hidden"); const modeLabel = { TECHNOLOGY: "技术方向", COMPETITOR: "重点友商", TECHNOLOGY_COMPETITOR: "技术方向 + 重点友商" }[run.mode] || "专利态势分析"; $("run-title").textContent = `${modeLabel} · ${run.run_id.slice(0, 8)}`;
+    state.runId = run.run_id; $("run-panel").classList.remove("hidden"); const modeLabel = { TECHNOLOGY: "技术方向", COMPETITOR: "重点友商（检索公司）", TECHNOLOGY_COMPETITOR: "技术方向 + 重点友商（检索公司）" }[run.mode] || "专利态势分析"; $("run-title").textContent = `${modeLabel} · ${run.run_id.slice(0, 8)}`;
     const status = $("run-status"); status.textContent = run.status; status.className = `status ${run.status}`; $("cancel-run").classList.toggle("hidden", TERMINAL.has(run.status));
     $("step-list").innerHTML = (run.progress?.steps || []).map((step) => `<div class="step ${escapeHtml(step.status)}"><span class="step-label">${escapeHtml(step.name)}</span>${escapeHtml(step.status)}${step.attempt ? ` · ${step.attempt}` : ""}</div>`).join("");
     if (run.status === "FAILED" && run.error_message) $("form-message").textContent = run.error_message;

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from datetime import date
+from types import SimpleNamespace
 
+from landscape.planning import (
+    ALIAS_AGENT_NAME,
+    CompetitorAliasService,
+)
 from landscape.planning import (
     CompetitorAliasError,
     build_deterministic_query_plan,
@@ -33,6 +39,65 @@ def direction_expansion() -> TechnicalDirectionExpansion:
 
 
 class LandscapePlanningTests(unittest.TestCase):
+    def test_alias_model_output_is_reconciled_to_requested_company_names(self) -> None:
+        class StubModel:
+            async def complete(self, agent_name, *, system_prompt, input_payload):
+                self.call = (agent_name, input_payload)
+                return SimpleNamespace(
+                    output=CompetitorAliasPlan(
+                        competitors=[
+                            CompetitorAliasResolution(
+                                primary_name="NVIDIA",
+                                aliases=["英伟达", "NVIDIA Corporation"],
+                                source="MODEL_INFERRED",
+                            )
+                        ]
+                    )
+                )
+
+        model = StubModel()
+        service = CompetitorAliasService(model)
+
+        result = asyncio.run(
+            service.resolve([CompetitorInput(name="英伟达", aliases=[])])
+        )
+
+        self.assertEqual(model.call[0], ALIAS_AGENT_NAME)
+        self.assertEqual(result.competitors[0].primary_name, "英伟达")
+        self.assertEqual(
+            result.competitors[0].aliases,
+            ["NVIDIA", "NVIDIA Corporation"],
+        )
+
+    def test_alias_model_missing_row_falls_back_only_for_that_company(self) -> None:
+        class StubModel:
+            async def complete(self, agent_name, *, system_prompt, input_payload):
+                return SimpleNamespace(
+                    output=CompetitorAliasPlan(
+                        competitors=[
+                            CompetitorAliasResolution(
+                                primary_name="NVIDIA",
+                                aliases=["英伟达"],
+                                source="MODEL_INFERRED",
+                            )
+                        ]
+                    )
+                )
+
+        result = asyncio.run(
+            CompetitorAliasService(StubModel()).resolve(
+                [
+                    CompetitorInput(name="英伟达", aliases=[]),
+                    CompetitorInput(name="华为", aliases=[]),
+                ]
+            )
+        )
+
+        self.assertEqual(
+            [(item.primary_name, item.source) for item in result.competitors],
+            [("英伟达", "MODEL_INFERRED"), ("华为", "PRIMARY_NAME_FALLBACK")],
+        )
+
     def test_deterministic_plan_is_bounded_and_retains_direction(self) -> None:
         scope = LandscapeScope(
             mode=AnalysisMode.TECHNOLOGY_COMPETITOR,
