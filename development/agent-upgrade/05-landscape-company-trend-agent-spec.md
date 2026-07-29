@@ -8,7 +8,7 @@
 
 事实源：PostgreSQL
 
-约束：本文件通过审查前，不修改生产业务代码
+约束：本文件作为后续 Coding Agent 的实施基线；若源码与本文不一致，先更新本文和变更记录，再实施代码。
 
 > 注：本文件最初是开发规格，现已进入实施阶段。若本文件中的“当前现状”
 > 与源码不一致，以源码、迁移记录和对应测试为准；后续功能仍需按小功能提交。
@@ -20,6 +20,33 @@
 - 抓取和逐件精读对完整合格集合分批调度，`analysis_limit` 只作为批大小；
 - Report 2.0 已输出合格集合、抓取、精读、公司归属和未覆盖公开号计数；
 - 修复轮次使用独立任务键和追加式审计快照，可在中断后恢复。
+
+## 0.1 目标架构冻结（趋势全量、精读可选）
+
+公司技术趋势的分析全集是全部去重且合格的专利 `U`，不是逐件深度精读成功集。
+
+```text
+U（全部合格身份组）
+  → 轻量技术指纹（标题、SearchHit 摘要片段、日期、公司、关键词）
+  → 公司技术分类和公司总结
+  → 跨公司整体趋势
+  → 按规则选择重点专利
+  → 对重点专利执行可选深度精读
+```
+
+分层职责：
+
+- `LIGHTWEIGHT_DIRECTION`：覆盖所有成功获取基础文本的 `F`，只判断技术方向，不生成完整专利分析；
+- `COMPANY_TREND`：消费全量轻量技术指纹，尽可能覆盖 `U`，缺失项必须显式进入限制；
+- `DEEP_ANALYSIS`：只对重点专利执行证据包和逐件精读，不是公司趋势的前置门槛；
+- 深度精读失败不得阻塞已经具备全量轻量覆盖的公司趋势报告。
+
+当前只有一个检索 Provider，因此 Provider 共识暂不作为区分性评分因素：
+
+- `provider_coverage` 在单 Provider 运行中按满分处理；
+- 不因“只有一个 Provider”降低重点专利分数；
+- 仍记录 Provider 状态、超时、配额和分页限制；
+- 未来接入第二个 Provider 后，才启用跨 Provider 共识加分。
 
 ## 1. 目标
 
@@ -86,13 +113,15 @@ VALIDATE_SCOPE
 - `U`：`P` 按可靠 Family ID、申请号、公开号依次保守聚合后的身份组全集；
 - `C`：完成公司归属后的全集，无法确认时进入 `UNKNOWN`；
 - `F`：详情抓取成功集合；
-- `A`：具有合格逐件分析及有效证据的集合；
-- `T`：进入公司分类和跨公司归纳的集合。
+- `L`：具备轻量技术指纹的集合（标题、摘要片段或摘要正文、日期、公司和方向关键词）；
+- `A`：具有合格逐件深度分析及有效证据的集合；
+- `T`：进入公司分类和跨公司归纳的集合，目标为 `T = L`，而不是 `T = A`。
 
 必须满足：
 
 ```text
-T ⊆ A ⊆ F ⊆ U
+T ⊆ L ⊆ F ⊆ U
+ A ⊆ F
 |C| = |U|
 ```
 
@@ -114,8 +143,9 @@ T ⊆ A ⊆ F ⊆ U
 - 同一公开号或申请号出现冲突 Family ID 时禁止传递合并，记录 `identity_conflict_count` 并保守隔离；
 - 代表公开号选择必须与 Provider、Query 和返回顺序无关：优先 A 类公开文本，再按规范化公开号排序；
 - 不允许从 `U` 静默抽样后声称是整体趋势；
-- 成功报告要求 `A = U`；
-- 若 `A != U`，Run 必须是 `COMPLETED_WITH_LIMITATIONS`，报告列出 `U-A` 和 `A/U`；
+- 公司趋势成功报告要求 `L = U`；若 `L != U`，报告列出 `U-L` 和 `L/U`；
+- 深度精读是可选增强，`A != U` 不再单独阻塞公司趋势报告；
+- 若重点专利精读不完整，报告记录 `selected_deep_analysis` 的缺口，不改变全量趋势覆盖率；
 - 若设置硬上限，超过时必须显式拒绝、审批或输出受限结论。
 - 报告必须分别展示 `|P|`、`|U|`、确认 Family、申请号聚合、公开号保守项和身份冲突数。
 
@@ -132,6 +162,9 @@ analysis_attempted_count
 analysis_succeeded_count
 company_classified_count
 unclassified_count
+lightweight_direction_count
+deep_analysis_selected_count
+deep_analysis_succeeded_count
 ```
 
 ## 4. 输入契约
@@ -153,12 +186,21 @@ unclassified_count
   },
   "analysis_policy": {
     "coverage_mode": "ALL_ELIGIBLE",
+    "trend_input_mode": "LIGHTWEIGHT_DIRECTION",
+    "deep_analysis_mode": "SELECTED_ONLY",
     "unknown_assignee_policy": "KEEP_AS_UNKNOWN",
     "joint_assignee_policy": "PRIMARY_WITH_CO_ASSIGNEES",
     "max_eligible_patents": 200,
     "fetch_batch_size": 10,
+    "direction_packet_batch_size": 20,
+    "deep_analysis_batch_size": 10,
     "analysis_concurrency": 4,
     "company_analysis_concurrency": 3,
+    "deep_analysis_limit": 20,
+    "minimum_deep_per_company": 1,
+    "minimum_deep_per_direction": 1,
+    "minimum_deep_per_time_bucket": 1,
+    "max_deep_per_company_ratio": 0.5,
     "max_repair_rounds": 1,
     "minimum_patents_for_time_trend": 3,
     "time_bucket": "QUARTER"
@@ -170,7 +212,8 @@ unclassified_count
 
 - `per_query_limit` 继续限制 Provider 单次返回量；
 - `candidate_limit` 改为显式安全上限，不再表示抽样量；
-- `analysis_limit` 不再决定成员，兼容期可作为批大小；
+- `analysis_limit` 不再决定趋势成员，兼容期可作为轻量/深度批大小；
+- `deep_analysis_limit` 只限制重点专利精读，不影响 `U`、`L` 或公司趋势成员；
 - 并发数只影响资源，不影响集合成员；
 - 超过 `max_eligible_patents` 由策略节点明确拒绝、待审批或受限运行。
 
@@ -183,6 +226,49 @@ unclassified_count
 - 模型只能提出建议，不能绕过确定性校验直接合并；
 - 歧义、冲突或缺失进入 `UNKNOWN`/`REVIEW_REQUIRED`，不得猜测。
 
+### 4.1 重点专利选择
+
+重点专利由确定性程序选择，模型不得直接决定精读名单。综合分建议为：
+
+```text
+相关性 35%
+检索共识 20%
+技术方向代表性 15%
+时间代表性 10%
+同族布局 10%
+近期性 10%
+```
+
+当前只有一个 Provider：
+
+```text
+provider_coverage = 1.0
+```
+
+它作为满分/中性项写入评分，不作为区分不同专利的加分项。未来增加 Provider
+后再启用跨 Provider 共识差异。
+
+选择程序必须依次满足：
+
+1. 每家公司至少一件（若该公司存在可精读专利）；
+2. 每个主要技术方向至少一件；
+3. 每个主要时间桶至少一件；
+4. 剩余名额按综合分排序；
+5. 单家公司默认不超过精读名额的 50%，除非其他公司没有可选专利。
+
+选择结果必须持久化：
+
+```text
+publication_number
+company_id
+score
+rank
+reason_codes
+company_coverage
+direction_coverage
+time_bucket_coverage
+```
+
 ## 5. 输出契约
 
 目标 Report 2.0 核心结构：
@@ -194,9 +280,11 @@ unclassified_count
     "unique_eligible_count": 12,
     "company_assigned_count": 12,
     "fetch_succeeded_count": 11,
-    "analysis_succeeded_count": 10,
+    "lightweight_direction_count": 10,
     "company_classified_count": 10,
-    "analysis_coverage": 0.833333,
+    "trend_coverage": 0.833333,
+    "deep_analysis_selected_count": 6,
+    "deep_analysis_succeeded_count": 5,
     "unclassified_publications": ["P11", "P12"]
   },
   "companies": [
@@ -363,7 +451,7 @@ NORMALIZE_COMPANIES
   ↓
 FETCH_ELIGIBLE_DOCUMENTS
   ↓
-ANALYZE_ELIGIBLE_PATENTS
+BUILD_LIGHTWEIGHT_DIRECTION_PACKETS
   ↓
 PREPARE_COMPANY_BATCHES
   ↓
@@ -374,10 +462,16 @@ REDUCE_COMPANY_ANALYSES
 ANALYZE_CROSS_COMPANY_TRENDS
   ↓
 VERIFY_COVERAGE
-  ├─ PASS ─────────────────────────→ BUILD_REPORT
+  ├─ PASS ─────────────────────────→ SELECT_DEEP_PATENTS
   ├─ REPAIR ───────────────────────→ REPAIR_GAPS ─→ VERIFY_COVERAGE
-  ├─ LIMITED ──────────────────────→ BUILD_LIMITED_REPORT
+  ├─ LIMITED ──────────────────────→ SELECT_DEEP_PATENTS
   └─ FAIL ─────────────────────────→ FAIL_RUN
+  ↓
+SELECT_DEEP_PATENTS
+  ↓
+[Send: DEEP_ANALYZE_PATENT × M]
+  ↓
+BUILD_REPORT
 ```
 
 节点职责：
