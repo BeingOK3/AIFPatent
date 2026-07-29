@@ -368,7 +368,10 @@ class LandscapeExecutionService:
             LandscapeWorkflowStep.SEARCH_PUBLICATIONS: self.search_publications,
             LandscapeWorkflowStep.FILTER_AND_SELECT: self.filter_and_select,
             LandscapeWorkflowStep.FETCH_DETAILS: self.fetch_details,
-            LandscapeWorkflowStep.ANALYZE_PATENTS: self.analyze_patents,
+            # Deep analysis is an optional post-trend enrichment. The main
+            # workflow must not block company trends on one large per-patent
+            # model fan-out.
+            LandscapeWorkflowStep.ANALYZE_PATENTS: self.defer_deep_analysis,
             LandscapeWorkflowStep.ANALYZE_COMPANIES: self.analyze_companies,
             LandscapeWorkflowStep.ANALYZE_CROSS_COMPANY_TRENDS: (
                 self.analyze_cross_company_trends
@@ -378,6 +381,18 @@ class LandscapeExecutionService:
             LandscapeWorkflowStep.BUILD_REPORT: self.build_report,
         }
         return await handlers[step](run_id)
+
+    async def defer_deep_analysis(self, run_id: str) -> dict[str, Any]:
+        """Record that deep analysis is deferred to selected patents."""
+        return {
+            "input_mode": "DEFERRED_OPTIONAL",
+            "target_count": 0,
+            "selected_publications": [],
+            "attempted_publications": [],
+            "analyzed_count": 0,
+            "failures": {},
+            "complete": True,
+        }
 
     async def analyze_companies(self, run_id: str) -> dict[str, Any]:
         if (
@@ -673,6 +688,14 @@ class LandscapeExecutionService:
                 }
                 for publication, analysis in analyses.items()
             }
+            fingerprints = self._load_direction_fingerprints(run_id)
+            if fingerprints:
+                evidence = {
+                    publication: {
+                        item.evidence_id for item in fingerprint.evidence
+                    }
+                    for publication, fingerprint in fingerprints.items()
+                }
             return audit_company_trend_coverage(
                 eligible_publications=[
                     candidate["publication_number"]
@@ -686,6 +709,7 @@ class LandscapeExecutionService:
                 profiles=self.profile_repository.list_company_profiles(run_id),
                 trends=self.trend_repository.list_cross_company_analysis(run_id),
                 valid_evidence_ids_by_publication=evidence,
+                lightweight_fingerprints=fingerprints or None,
                 repair_round=repair_round,
                 max_repair_rounds=1,
             )
@@ -1034,7 +1058,16 @@ class LandscapeExecutionService:
 
         run = self.database.get_run(run_id)
         coverage = self.database.get_stage_result(run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value)["value"]["result"]["coverage"]
-        analysis_raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.ANALYZE_PATENTS.value)["value"]
+        try:
+            analysis_raw = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.ANALYZE_PATENTS.value
+            )["value"]
+        except KeyError:
+            analysis_raw = {
+                "input_mode": "DEFERRED_OPTIONAL",
+                "analyses": {},
+                "failures": {},
+            }
         analyses = (
             self.analysis_repository.list_patent_analyses(run_id)
             if self.analysis_repository is not None

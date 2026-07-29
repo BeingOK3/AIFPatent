@@ -9,6 +9,7 @@ from .schemas import (
     CrossCompanyTrendAnalysis,
     LandscapeCoverageAudit,
     LandscapePatentAnalysis,
+    LandscapeDirectionFingerprint,
 )
 
 
@@ -25,6 +26,7 @@ def audit_company_trend_coverage(
     profiles: Mapping[str, CompanyTechnologyProfile],
     trends: CrossCompanyTrendAnalysis | None,
     valid_evidence_ids_by_publication: Mapping[str, set[str]],
+    lightweight_fingerprints: Mapping[str, LandscapeDirectionFingerprint] | None = None,
     repair_round: int = 0,
     max_repair_rounds: int = 1,
 ) -> LandscapeCoverageAudit:
@@ -63,6 +65,8 @@ def audit_company_trend_coverage(
     }
 
     analyzed = set(analyses)
+    lightweight = set(lightweight_fingerprints or {})
+    trend_input = lightweight or analyzed
     classified_members: list[str] = []
     wrong_company_members: set[str] = set()
     invalid_evidence: set[str] = set()
@@ -140,6 +144,7 @@ def audit_company_trend_coverage(
         | analyzed
         | classified
         | trend_publications
+        | lightweight
     )
     invented = all_publication_references - eligible
     missing = eligible - classified
@@ -154,10 +159,16 @@ def audit_company_trend_coverage(
         f"FETCH:{publication}"
         for publication in eligible - fetched_publications
     )
-    repair_targets.update(
-        f"ANALYZE:{publication}"
-        for publication in (eligible & fetched_publications) - analyzed
-    )
+    if lightweight_fingerprints is None:
+        repair_targets.update(
+            f"ANALYZE:{publication}"
+            for publication in (eligible & fetched_publications) - analyzed
+        )
+    else:
+        repair_targets.update(
+            f"LIGHTWEIGHT:{publication}"
+            for publication in (eligible & fetched_publications) - lightweight
+        )
     repair_targets.update(
         f"CLASSIFY:{publication}"
         for publication in (eligible & analyzed) - classified
@@ -176,8 +187,8 @@ def audit_company_trend_coverage(
     set_order_corruption = (
         not fetched_publications <= eligible
         or not analyzed <= fetched_publications
-        or not classified <= analyzed
-        or not set(valid_evidence_ids_by_publication) <= analyzed
+        or not classified <= trend_input
+        or not set(valid_evidence_ids_by_publication) <= trend_input
     )
     limitations: list[str] = []
     if fatal_assignment_corruption:
@@ -185,7 +196,11 @@ def audit_company_trend_coverage(
     if wrong_company_members:
         limitations.append("公司分类包含归属于其他公司的专利。")
     if set_order_corruption:
-        limitations.append("持久化集合不满足 T ⊆ A ⊆ F ⊆ U。")
+        limitations.append(
+            "持久化集合不满足 T ⊆ L ⊆ F ⊆ U。"
+            if lightweight_fingerprints is not None
+            else "持久化集合不满足 T ⊆ A ⊆ F ⊆ U。"
+        )
     if invalid_evidence:
         limitations.append("公司分析或趋势引用了无效或跨专利 Evidence。")
 
