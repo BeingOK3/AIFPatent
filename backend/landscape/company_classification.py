@@ -8,6 +8,7 @@ from .schemas import (
     CompanyTechnologyCategory,
     CompanyTechnologyClassification,
 )
+from .schemas import LandscapeDirectionFingerprint, NormalizedCompany
 
 
 COMPANY_CLASSIFIER_NAME = "landscape-company-technology-classifier"
@@ -76,6 +77,82 @@ class CompanyTechnologyClassificationService:
                 )
         result = _canonicalize_category_ids(batch, result)
         validate_company_technology_classification(batch, result)
+        return result
+
+    async def classify_fingerprints(
+        self,
+        *,
+        company: NormalizedCompany,
+        fingerprints: list[LandscapeDirectionFingerprint],
+    ) -> CompanyTechnologyClassification:
+        """Classify a company's full lightweight direction set.
+
+        This path intentionally does not require deep patent analyses. It is
+        the input used for company-level landscape trends.
+        """
+        if not fingerprints:
+            raise CompanyTechnologyClassificationError(
+                "company fingerprint classification requires at least one patent"
+            )
+        expected = {item.publication_number for item in fingerprints}
+        evidence_by_publication = {
+            item.publication_number: {evidence.evidence_id for evidence in item.evidence}
+            for item in fingerprints
+        }
+        if len(fingerprints) == 1:
+            item = fingerprints[0]
+            result = CompanyTechnologyClassification(
+                technology_categories=[
+                    CompanyTechnologyCategory(
+                        category_id="TC-TEMP-01",
+                        name=item.technical_keywords[0]
+                        if item.technical_keywords
+                        else "未细分技术方向",
+                        summary=item.title or "基于检索证据的单件技术方向",
+                        keywords=item.technical_keywords[:10],
+                        publication_numbers=[item.publication_number],
+                        evidence_ids=sorted(evidence_by_publication[item.publication_number]),
+                    )
+                ]
+            )
+        else:
+            completion = await self.model.complete(
+                COMPANY_CLASSIFIER_NAME,
+                system_prompt=(
+                    "Classify every supplied patent into technology categories using only "
+                    "the lightweight title, abstract/snippet evidence, and keywords. "
+                    "Return Simplified Chinese. Every publication must appear exactly once "
+                    "and every category must cite evidence owned by its members. Do not "
+                    "invent statistics, dates, companies, or publication numbers."
+                ),
+                input_payload={
+                    "company_name": company.canonical_name,
+                    "patents": [
+                        {
+                            "publication_number": item.publication_number,
+                            "title": item.title,
+                            "publication_date": item.publication_date,
+                            "technical_keywords": item.technical_keywords,
+                            "evidence": [
+                                evidence.model_dump(mode="json")
+                                for evidence in item.evidence
+                            ],
+                        }
+                        for item in fingerprints
+                    ],
+                },
+            )
+            result = completion.output
+            if not isinstance(result, CompanyTechnologyClassification):
+                raise CompanyTechnologyClassificationError(
+                    "company fingerprint classifier returned the wrong schema"
+                )
+        result = _canonicalize_fingerprint_category_ids(company.company_id, result)
+        _validate_fingerprint_classification(
+            result,
+            expected=expected,
+            evidence_by_publication=evidence_by_publication,
+        )
         return result
 
 
@@ -186,6 +263,58 @@ def _category_id(batch: CompanyAnalysisBatch, index: int) -> str:
         else "UNKNOWN"
     )
     return f"TC-{token}-{index:02d}"
+
+
+def _canonicalize_fingerprint_category_ids(
+    company_id: str,
+    result: CompanyTechnologyClassification,
+) -> CompanyTechnologyClassification:
+    categories = sorted(
+        result.technology_categories,
+        key=lambda category: (min(category.publication_numbers), category.name.casefold()),
+    )
+    token = company_id.removeprefix("CO-") if company_id != "UNKNOWN" else "UNKNOWN"
+    return CompanyTechnologyClassification(
+        technology_categories=[
+            category.model_copy(
+                update={"category_id": f"TC-{token}-{index:02d}"}
+            )
+            for index, category in enumerate(categories, start=1)
+        ]
+    )
+
+
+def _validate_fingerprint_classification(
+    result: CompanyTechnologyClassification,
+    *,
+    expected: set[str],
+    evidence_by_publication: dict[str, set[str]],
+) -> None:
+    members = [
+        publication
+        for category in result.technology_categories
+        for publication in category.publication_numbers
+    ]
+    if set(members) != expected or len(members) != len(set(members)):
+        raise CompanyTechnologyClassificationError(
+            "lightweight categories must cover every eligible publication exactly once"
+        )
+    for category in result.technology_categories:
+        cited = set(category.evidence_ids)
+        allowed = set().union(
+            *(evidence_by_publication[publication] for publication in category.publication_numbers)
+        )
+        if not cited <= allowed:
+            raise CompanyTechnologyClassificationError(
+                f"lightweight category cites unknown evidence: {category.category_id}"
+            )
+        if any(
+            not (cited & evidence_by_publication[publication])
+            for publication in category.publication_numbers
+        ):
+            raise CompanyTechnologyClassificationError(
+                f"lightweight category leaves a patent uncited: {category.category_id}"
+            )
 
 
 __all__ = [

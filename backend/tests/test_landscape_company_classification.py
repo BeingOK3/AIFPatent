@@ -16,6 +16,8 @@ from landscape.schemas import (
     CompanyTechnologyCategory,
     CompanyTechnologyClassification,
     LandscapeEvidenceRef,
+    LandscapeDirectionEvidence,
+    LandscapeDirectionFingerprint,
     LandscapePatentAnalysis,
     NormalizedCompany,
 )
@@ -82,6 +84,37 @@ class StubModel:
 
 
 class LandscapeCompanyClassificationTests(unittest.TestCase):
+    def test_single_lightweight_fingerprint_uses_deterministic_category(self) -> None:
+        service = CompanyTechnologyClassificationService(StubModel())
+        fingerprint = LandscapeDirectionFingerprint(
+            publication_number="CN1A",
+            company_id="CO-HUAWEI",
+            title="微通道冷板",
+            publication_date="2026-06-01",
+            source_kind="SEARCH_HIT",
+            technical_keywords=["微通道", "冷板"],
+            evidence=[
+                LandscapeDirectionEvidence(
+                    evidence_id="EV-DIR-CN1A",
+                    section_type="SNIPPET",
+                    text="微通道冷板提高换热效率。",
+                    content_hash="a" * 64,
+                )
+            ],
+        )
+        result = asyncio.run(
+            service.classify_fingerprints(
+                company=NormalizedCompany(
+                    company_id="CO-HUAWEI",
+                    canonical_name="Huawei",
+                    aliases=["华为"],
+                ),
+                fingerprints=[fingerprint],
+            )
+        )
+        self.assertEqual(result.technology_categories[0].publication_numbers, ["CN1A"])
+        self.assertEqual(result.technology_categories[0].category_id, "TC-HUAWEI-01")
+
     def test_single_patent_uses_deterministic_category_without_model(self) -> None:
         model = StubModel()
         service = CompanyTechnologyClassificationService(model)
