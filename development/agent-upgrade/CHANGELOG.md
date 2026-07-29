@@ -849,3 +849,10 @@
 - Landscape 全量回归：`164` 项通过；
 - `python3 -m compileall -q backend tools`：通过；
 - `git diff --check`：通过。
+## 2026-07-29 — landscape-company-fingerprint-batching
+
+### 修复
+
+- 公司轻量指纹分类改为每批最多 8 件专利；
+- 多批分类结果由程序按技术分类名称合并，并重新校验成员和证据覆盖；
+- 避免 `ANALYZE_COMPANIES` 因单家公司一次性提交过大上下文而连续超时。

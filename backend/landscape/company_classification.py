@@ -94,6 +94,59 @@ class CompanyTechnologyClassificationService:
             raise CompanyTechnologyClassificationError(
                 "company fingerprint classification requires at least one patent"
             )
+        batch_size = 8
+        if len(fingerprints) > batch_size:
+            partial: list[CompanyTechnologyClassification] = []
+            ordered = sorted(
+                fingerprints,
+                key=lambda item: item.publication_number,
+            )
+            for offset in range(0, len(ordered), batch_size):
+                partial.append(
+                    await self.classify_fingerprints(
+                        company=company,
+                        fingerprints=ordered[offset : offset + batch_size],
+                    )
+                )
+            merged: dict[str, CompanyTechnologyCategory] = {}
+            for result in partial:
+                for category in result.technology_categories:
+                    key = category.name.casefold()
+                    existing = merged.get(key)
+                    if existing is None:
+                        merged[key] = category
+                    else:
+                        merged[key] = existing.model_copy(
+                            update={
+                                "summary": f"{existing.summary}；{category.summary}",
+                                "keywords": list(
+                                    dict.fromkeys(
+                                        [*existing.keywords, *category.keywords]
+                                    )
+                                )[:30],
+                                "publication_numbers": sorted(
+                                    set(
+                                        [
+                                            *existing.publication_numbers,
+                                            *category.publication_numbers,
+                                        ]
+                                    )
+                                ),
+                                "evidence_ids": sorted(
+                                    set(
+                                        [*existing.evidence_ids, *category.evidence_ids]
+                                    )
+                                ),
+                            }
+                        )
+            result = _canonicalize_fingerprint_category_ids(
+                company.company_id,
+                CompanyTechnologyClassification(
+                    technology_categories=list(merged.values())
+                ),
+            )
+            self._validate_fingerprint_result(result, fingerprints)
+            return result
         expected = {item.publication_number for item in fingerprints}
         evidence_by_publication = {
             item.publication_number: {evidence.evidence_id for evidence in item.evidence}
@@ -154,6 +207,22 @@ class CompanyTechnologyClassificationService:
             evidence_by_publication=evidence_by_publication,
         )
         return result
+
+    @staticmethod
+    def _validate_fingerprint_result(
+        result: CompanyTechnologyClassification,
+        fingerprints: list[LandscapeDirectionFingerprint],
+    ) -> None:
+        _validate_fingerprint_classification(
+            result,
+            expected={item.publication_number for item in fingerprints},
+            evidence_by_publication={
+                item.publication_number: {
+                    evidence.evidence_id for evidence in item.evidence
+                }
+                for item in fingerprints
+            },
+        )
 
 
 def validate_company_technology_classification(
