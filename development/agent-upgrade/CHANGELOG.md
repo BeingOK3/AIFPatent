@@ -843,3 +843,9 @@
 - 深度分析结果支持写入 SQLite 兼容仓储和 PostgreSQL 唯一事实源；
 - 深度分析写入保持内容哈希幂等和不可变，重复执行不会覆盖不同结果。
 - 新增 `POST /api/landscape/runs/{run_id}/deep-analyze`，使用临时模型凭据执行已选重点专利精读并重建报告。
+
+### 验证
+
+- Landscape 全量回归：`164` 项通过；
+- `python3 -m compileall -q backend tools`：通过；
+- `git diff --check`：通过。
