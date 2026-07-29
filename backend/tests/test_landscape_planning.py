@@ -65,6 +65,7 @@ class LandscapePlanningTests(unittest.TestCase):
 
         self.assertEqual(model.call[0], ALIAS_AGENT_NAME)
         self.assertEqual(result.competitors[0].primary_name, "英伟达")
+        self.assertEqual(result.competitors[0].assignee_scope, AssigneeScope.ENTITY)
         self.assertEqual(
             result.competitors[0].aliases,
             ["NVIDIA", "NVIDIA Corporation"],
@@ -256,9 +257,12 @@ class LandscapePlanningTests(unittest.TestCase):
         )
 
     def test_alias_failure_falls_back_to_primary_names(self) -> None:
-        fallback = fallback_alias_plan([CompetitorInput(name="Huawei")])
+        fallback = fallback_alias_plan(
+            [CompetitorInput(name="Huawei", assignee_scope=AssigneeScope.GROUP)]
+        )
         self.assertEqual(fallback.competitors[0].aliases, [])
         self.assertEqual(fallback.competitors[0].source, "PRIMARY_NAME_FALLBACK")
+        self.assertEqual(fallback.competitors[0].assignee_scope, AssigneeScope.GROUP)
 
     def test_plan_without_user_scope_anchor_is_rejected(self) -> None:
         scope = LandscapeScope(

@@ -155,6 +155,7 @@ def _reconcile_alias_plan(
                     primary_name=input_item.name,
                     aliases=[],
                     source="PRIMARY_NAME_FALLBACK",
+                    assignee_scope=input_item.assignee_scope,
                 )
             )
             continue
@@ -181,6 +182,7 @@ def _reconcile_alias_plan(
                 primary_name=input_item.name,
                 aliases=aliases,
                 source="MODEL_INFERRED",
+                assignee_scope=input_item.assignee_scope,
             )
         )
     return CompetitorAliasPlan(competitors=reconciled)
@@ -198,6 +200,7 @@ def fallback_alias_plan(competitors: list[CompetitorInput]) -> CompetitorAliasPl
                 primary_name=item.name,
                 aliases=[],
                 source="PRIMARY_NAME_FALLBACK",
+                assignee_scope=item.assignee_scope,
             )
             for item in competitors
         ]

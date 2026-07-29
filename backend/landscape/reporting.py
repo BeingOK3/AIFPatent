@@ -31,6 +31,7 @@ def build_report(
     cross_company_analysis: CrossCompanyTrendAnalysis | None = None,
     company_trend_coverage: dict[str, Any] | None = None,
     company_trend_coverage_history: list[dict[str, Any]] | None = None,
+    deep_read: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Keep the frozen search metrics and add explicit downstream counters so a
     # report can explain where the complete eligible set stopped being covered.
@@ -97,6 +98,15 @@ def build_report(
         "model": run["model"],
         "searched_competitor_aliases": searched_competitor_aliases or [],
         "technical_direction_expansion": technical_direction_expansion,
+        "deep_read": deep_read or {
+            "status": "NOT_STARTED",
+            "selected_count": 0,
+            "selected_publications": [],
+            "succeeded_count": len(analyses),
+            "failed_count": len(failures),
+            "pending_count": 0,
+            "last_execution": None,
+        },
         "coverage": coverage,
         "summary": {
             "candidate_count": coverage.get("unique_candidate_count", 0),
@@ -327,7 +337,9 @@ class LandscapeReportService:
         self.database = database
         self.store = store
 
-    def save(self, run_id: str, report: dict[str, Any]) -> dict[str, Any]:
+    def save(
+        self, run_id: str, report: dict[str, Any], *, allow_revision: bool = False
+    ) -> dict[str, Any]:
         markdown = render_markdown(report)
         csv_content = render_patents_csv(report)
         manifest = self.store.write_reports(
@@ -347,6 +359,7 @@ class LandscapeReportService:
             patents_csv_path=str(paths.patents_csv),
             patents_csv_hash=sha256_file(paths.patents_csv),
             manifest_path=str(paths.manifest),
+            allow_revision=allow_revision,
         )
         return manifest
 

@@ -2,6 +2,20 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-29 — landscape-deep-read-trigger-and-scope-contract
+
+### 已完成
+
+- 修复 `GROUP` 口径在 Alias Plan 持久化后不能被严格 Schema 重新解析的回归；`assignee_scope` 现在从用户输入经别名对齐、运行时 Registry 到检索与归属全程保留，避免任务在 `SEARCH_PUBLICATIONS` 前失败。
+- 主流程仍按既定架构先以全量轻量指纹完成公司画像与趋势；报告现在明确返回精读状态、已选数量、待精读数量和本次精读结果，不再把“尚未发起”伪装成“精读失败”。
+- 前端报告新增“开始精读已选 N 件专利”入口，使用当前页面的临时模型配置调用 `/deep-analyze`；密钥不落库。重复点击仅处理尚未成功的选中专利，不会重复调用模型覆盖已有精读结果。
+- 深读属于完成后 enrichment，因此报告文件支持受控修订并更新其 manifest/哈希索引；候选、抓取文本、证据和已成功的逐篇精读结果仍保持不可变。
+
+### 验证
+
+- Landscape 全量回归 186 项通过；前端 JavaScript 语法检查、Python compileall 与 `git diff --check` 通过。
+- 真实 Run `ec36933f-0d99-415e-b2a0-e18b0bb5639d` 证实此前“成功精读 0”是延后精读未被 UI 触发，而不是 18 件模型分析均失败；新 UI 将显示为待发起精读。
+
 ## 2026-07-29 — landscape-assignee-scope-unification
 
 ### 已完成

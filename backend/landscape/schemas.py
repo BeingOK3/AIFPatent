@@ -160,6 +160,11 @@ class CompetitorAliasResolution(LandscapeModel):
     primary_name: str = Field(min_length=1, max_length=200)
     aliases: list[str] = Field(default_factory=list, max_length=12)
     source: Literal["MODEL_INFERRED", "PRIMARY_NAME_FALLBACK"]
+    # This value is program-owned: the alias model never gets to widen an
+    # ENTITY request into GROUP matching.  It is copied from CompetitorInput
+    # when the alias plan is reconciled and retained for every downstream
+    # search/assignment decision.
+    assignee_scope: AssigneeScope = AssigneeScope.ENTITY
 
     @field_validator("aliases")
     @classmethod

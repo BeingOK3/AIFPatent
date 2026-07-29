@@ -43,16 +43,23 @@
       return { name, aliases: [], assignee_scope: rawScope };
     });
   }
-  function collectPayload() {
-    const mode = derivedMode();
+  function collectRuntimeConfig() {
     const baseUrl = $("base-url").value.trim();
     if ((baseUrl.match(/:\/\//g) || []).length !== 1) {
       throw new Error("模型 Base URL 必须是一条完整地址；请不要重复粘贴 URL。");
     }
+    const apiKey = $("api-key").value.trim();
+    if (!apiKey) throw new Error("请填写模型 API Key 后再启动精读；密钥只在本次请求中使用。");
     return {
-      api_key: $("api-key").value,
+      api_key: apiKey,
       base_url: baseUrl,
       model: $("model").value.trim(),
+    };
+  }
+  function collectPayload() {
+    const mode = derivedMode();
+    return {
+      ...collectRuntimeConfig(),
       scope: {
         mode,
         technology_direction: $("technology-direction").value.trim() || null,
@@ -110,6 +117,7 @@
   async function loadReport(runId) { try { state.report = await jsonRequest(`/api/landscape/runs/${encodeURIComponent(runId)}/report`); renderReport(state.report); } catch (_) { /* report becomes available after BUILD_REPORT */ } }
   function renderReport(report) {
     const summary = report.summary || {};
+    const deepRead = report.deep_read || {};
     const companyCounts = summary.company_patent_counts || [];
     const maxCompany = Math.max(1, ...companyCounts.map((item) => Number(item.patent_count || 0)));
     const companyBars = companyCounts.map((item) => `<div class="bar-row"><span title="${escapeHtml(item.company)}">${escapeHtml(item.company)}</span><div class="bar"><i style="width:${Math.round(Number(item.patent_count || 0) / maxCompany * 100)}%"></i></div><b>${Number(item.patent_count || 0)}</b></div>`).join("") || `<p class="muted">暂无权利人数据。</p>`;
@@ -131,10 +139,29 @@
       const family = patent.family_status || {};
       const familyMembers = (family.members || []).map((member) => `<div class="family-member"><b>${escapeHtml(member.application_number || member.publication_number || "未知编号")}</b><span>${escapeHtml(member.jurisdiction || "未知法域")}</span><span>${escapeHtml(member.legal_status_category && member.legal_status_category !== "UNKNOWN" ? member.legal_status_category : member.legal_status || "UNKNOWN")}</span><span>申请日 ${escapeHtml(member.filing_date || "未知")}</span></div>`).join("") || `<p class="muted">当前数据源未返回同族成员明细。</p>`;
       return `<details class="patent-card"><summary>${escapeHtml(patent.publication_number)} · ${escapeHtml(patent.title)}</summary><div class="patent-facts"><span>申请号：${escapeHtml(patent.application_number || "未知")}</span><span>申请日：${escapeHtml(patent.filing_date || "未知")}</span><span>公开日：${escapeHtml(patent.publication_date || "未知")}</span><span>当前权利人：${escapeHtml(patent.current_assignee || "未知")}</span></div><div class="family-status"><h4>全族状态</h4><div class="patent-facts"><span>数据状态：${escapeHtml(family.data_status || patent.family_data_status || "UNAVAILABLE")}</span><span>总体法律状态：${escapeHtml(family.overall_legal_status || "UNKNOWN")}</span><span>法域：${escapeHtml((family.jurisdictions || []).join("、") || "未知")}</span><span>Family ID：${escapeHtml(family.family_id || patent.family_id || "未知")}</span></div>${familyMembers}</div><p><b>现有技术：</b>${escapeHtml(analysis.prior_art || "未知")}</p><p><b>现有技术问题：</b>${escapeHtml((analysis.prior_art_problems || []).join("；") || "未知")}</p><p><b>核心发明点：</b>${escapeHtml((analysis.core_invention_points || []).join("；") || "未知")}</p><p><b>解决的技术问题：</b>${escapeHtml((analysis.technical_problems_solved || []).join("；") || "未知")}</p><p><b>有益效果：</b>${escapeHtml((analysis.beneficial_effects || []).join("；") || "未知")}</p></details>`;
-    }).join("") || `<p class="muted">暂无成功精读。</p>`;
-    const limitations = [...(report.limitations || []), ...Object.entries(report.failures || {}).map(([publication_number, message]) => ({ code: publication_number, message }))].map((item) => `<div class="limitation"><b>${escapeHtml(item.code || "LIMITATION")}</b>：${escapeHtml(item.message || "")}</div>`).join("") || `<p class="muted">无</p>`;
+    }).join("") || (deepRead.status === "NOT_STARTED" && Number(deepRead.selected_count || 0) > 0 ? `<p class="muted">尚未发起逐族精读；当前公司趋势已基于全量轻量指纹生成。点击下方按钮后，才会对选中的专利调用模型精读。</p>` : `<p class="muted">暂无成功精读。</p>`);
+    const deepFailures = Object.entries(deepRead.last_execution?.failures || {}).map(([publication_number, message]) => ({ code: publication_number, message }));
+    const limitations = [...(report.limitations || []), ...Object.entries(report.failures || {}).map(([publication_number, message]) => ({ code: publication_number, message })), ...deepFailures].map((item) => `<div class="limitation"><b>${escapeHtml(item.code || "LIMITATION")}</b>：${escapeHtml(item.message || "")}</div>`).join("") || `<p class="muted">无</p>`;
+    const pendingDeepCount = Number(deepRead.pending_count || 0);
+    const deepReadAction = pendingDeepCount > 0 ? `<section class="report-section"><h3>逐族精读</h3><p class="muted">待精读 ${pendingDeepCount} 件；此操作会使用当前页面的模型配置，并且 API Key 不会保存。</p><button type="button" class="secondary deep-analysis-button" data-run-id="${escapeHtml(report.run_id)}">开始精读已选 ${pendingDeepCount} 件专利</button></section>` : `<section class="report-section"><h3>逐族精读</h3><p class="muted">${deepRead.status === "EXECUTED" ? `已启动精读：成功 ${Number(deepRead.succeeded_count || 0)}，失败 ${Number(deepRead.failed_count || 0)}。` : "本次没有可供精读的选中专利。"}</p></section>`;
     $("report-view").classList.remove("hidden");
-    $("report-view").innerHTML = `<div class="metric-grid"><div class="metric"><b>${summary.family_count ?? summary.candidate_count ?? 0}</b><span>唯一合格专利族</span></div><div class="metric"><b>${summary.publication_count ?? summary.candidate_count ?? 0}</b><span>合格公开文本</span></div><div class="metric"><b>${summary.analyzed_count || 0}</b><span>成功精读专利族</span></div><div class="metric"><b>${summary.company_profile_count || 0}</b><span>公司技术画像</span></div><div class="metric"><b>${summary.trend_count || 0}</b><span>跨公司趋势</span></div><div class="metric"><b>${summary.failed_analysis_count || 0}</b><span>精读失败</span></div></div><section class="report-section"><h3>公司趋势覆盖审计</h3>${coverageAuditView}</section><section class="report-section"><h3>本次检索到的友商别名</h3>${aliases}</section><section class="report-section"><h3>各公司专利族数量</h3><p class="muted">统计口径：时间与友商条件过滤后，优先按可靠 Family ID、其次按申请号聚合；身份缺失时按公开文本保守分开，不用标题相似度猜测合并。</p>${companyBars}</section><section class="report-section"><h3>公司技术画像</h3>${companyProfiles}</section><section class="report-section"><h3>跨公司整体技术趋势</h3>${companyTrends}</section><section class="report-section"><h3>公开法域布局</h3><div class="jurisdiction-list">${jurisdictions}</div></section>${legacyClusterSection}<div class="report-section"><h3>逐族精读</h3>${patents}</div><div class="report-section"><h3>限制与失败</h3>${limitations}</div><div class="report-links"><a href="/api/landscape/runs/${encodeURIComponent(report.run_id)}/report.md">下载 Markdown</a><a href="/api/landscape/runs/${encodeURIComponent(report.run_id)}/patents.csv">下载 CSV</a></div>`;
+    $("report-view").innerHTML = `<div class="metric-grid"><div class="metric"><b>${summary.family_count ?? summary.candidate_count ?? 0}</b><span>唯一合格专利族</span></div><div class="metric"><b>${summary.publication_count ?? summary.candidate_count ?? 0}</b><span>合格公开文本</span></div><div class="metric"><b>${summary.analyzed_count || 0}</b><span>成功精读专利族</span></div><div class="metric"><b>${pendingDeepCount}</b><span>待发起精读</span></div><div class="metric"><b>${summary.company_profile_count || 0}</b><span>公司技术画像</span></div><div class="metric"><b>${summary.trend_count || 0}</b><span>跨公司趋势</span></div><div class="metric"><b>${deepRead.failed_count ?? summary.failed_analysis_count ?? 0}</b><span>精读失败</span></div></div><section class="report-section"><h3>公司趋势覆盖审计</h3>${coverageAuditView}</section><section class="report-section"><h3>本次检索到的友商别名</h3>${aliases}</section><section class="report-section"><h3>各公司专利族数量</h3><p class="muted">统计口径：时间与友商条件过滤后，优先按可靠 Family ID、其次按申请号聚合；身份缺失时按公开文本保守分开，不用标题相似度猜测合并。</p>${companyBars}</section><section class="report-section"><h3>公司技术画像</h3>${companyProfiles}</section><section class="report-section"><h3>跨公司整体技术趋势</h3>${companyTrends}</section><section class="report-section"><h3>公开法域布局</h3><div class="jurisdiction-list">${jurisdictions}</div></section>${legacyClusterSection}${deepReadAction}<div class="report-section"><h3>逐族精读结果</h3>${patents}</div><div class="report-section"><h3>限制与失败</h3>${limitations}</div><div class="report-links"><a href="/api/landscape/runs/${encodeURIComponent(report.run_id)}/report.md">下载 Markdown</a><a href="/api/landscape/runs/${encodeURIComponent(report.run_id)}/patents.csv">下载 CSV</a></div>`;
+    const deepButton = document.querySelector(".deep-analysis-button");
+    if (deepButton) deepButton.addEventListener("click", () => startDeepAnalysis(report.run_id, deepButton));
+  }
+  async function startDeepAnalysis(runId, button) {
+    try {
+      button.disabled = true;
+      $("form-message").textContent = "正在逐件精读已选专利，请勿关闭页面…";
+      const result = await jsonRequest(`/api/landscape/runs/${encodeURIComponent(runId)}/deep-analyze`, { method: "POST", body: JSON.stringify(collectRuntimeConfig()) });
+      state.report = result.report;
+      renderReport(result.report);
+      await loadDebug(runId, true);
+      $("form-message").textContent = `精读完成：成功 ${Number(result.deep_analysis?.analyzed_count || 0)}，本次失败 ${Object.keys(result.deep_analysis?.failures || {}).length}。`;
+    } catch (error) {
+      $("form-message").textContent = `精读未完成：${error.message}`;
+      button.disabled = false;
+    }
   }
   async function loadHistory() { try { const body = await jsonRequest("/api/landscape/runs"); $("history-list").innerHTML = body.runs.length ? body.runs.map((run) => `<button class="history-item ${run.run_id === state.runId ? "active" : ""}" data-run-id="${escapeHtml(run.run_id)}"><strong>${escapeHtml(run.scope?.technology_direction || (run.scope?.competitors || []).map((item) => item.name).join("、") || "专利态势分析")}</strong><span class="history-meta"><span>${escapeHtml(run.status)}</span><span>${escapeHtml((run.created_at ? new Date(run.created_at).toLocaleString("zh-CN") : ""))}</span></span></button>`).join("") : `<p class="muted">还没有分析任务。</p>`; document.querySelectorAll(".history-item").forEach((item) => item.addEventListener("click", () => openRun(item.dataset.runId))); } catch (error) { $("history-list").innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`; } }
   async function openRun(runId) { try { const run = await jsonRequest(`/api/landscape/runs/${encodeURIComponent(runId)}`); showRun(run); loadDebug(runId, true); if (TERMINAL.has(run.status)) loadReport(runId); else connectEvents(runId); await loadHistory(); } catch (error) { $("form-message").textContent = error.message; } }

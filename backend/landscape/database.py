@@ -636,6 +636,7 @@ class LandscapeDatabase:
         patents_csv_path: str,
         patents_csv_hash: str,
         manifest_path: str,
+        allow_revision: bool = False,
     ) -> None:
         with self.connect() as connection:
             values = (
@@ -653,7 +654,32 @@ class LandscapeDatabase:
                 "run_id", "report_json_path", "report_json_hash", "report_md_path",
                 "report_md_hash", "patents_csv_path", "patents_csv_hash", "manifest_path",
             )) != values[:-1]:
-                raise ValueError("landscape report record is immutable")
+                if not allow_revision:
+                    raise ValueError("landscape report record is immutable")
+                # A completed Run may receive optional deep-read enrichment.
+                # The source candidates, documents and analyses remain
+                # immutable; this is only the current report artifact pointer
+                # and its integrity hashes.
+                connection.execute(
+                    """
+                    UPDATE landscape_reports
+                    SET report_json_path=?,report_json_hash=?,report_md_path=?,
+                        report_md_hash=?,patents_csv_path=?,patents_csv_hash=?,
+                        manifest_path=?,created_at=?
+                    WHERE run_id=?
+                    """,
+                    (
+                        report_json_path,
+                        report_json_hash,
+                        report_md_path,
+                        report_md_hash,
+                        patents_csv_path,
+                        patents_csv_hash,
+                        manifest_path,
+                        now_ms(),
+                        run_id,
+                    ),
+                )
 
     def delete_run(self, run_id: str) -> None:
         with self.connect() as connection:

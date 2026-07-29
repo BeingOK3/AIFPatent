@@ -430,10 +430,15 @@ class LandscapeExecutionService:
             if self.fetch_repository is not None
             else {}
         )
+        existing = (
+            self.analysis_repository.list_patent_analyses(run_id)
+            if self.analysis_repository is not None
+            else {}
+        )
         pending = [
             (document_id(publication), docs[publication])
             for publication in selected
-            if publication in docs
+            if publication in docs and publication not in existing
         ]
         direction_terms = self.load_plan(run_id).direction_terms
         analyses, failures = await self._analyze_many(
@@ -449,11 +454,14 @@ class LandscapeExecutionService:
                     document_id=document_id(publication),
                     analysis=analysis,
                 )
+        selected_set = set(selected)
+        succeeded = selected_set & (set(existing) | set(analyses))
         return {
             "input_mode": "SELECTED_DEEP_ANALYSIS",
             "selected_count": len(selected),
             "attempted_count": len(pending),
-            "analyzed_count": len(analyses),
+            "analyzed_count": len(succeeded),
+            "resumed_count": len(selected_set & set(existing)),
             "failures": failures,
             "missing_documents": sorted(set(selected) - set(docs)),
         }
@@ -1142,7 +1150,13 @@ class LandscapeExecutionService:
             "failures": failures,
         }
 
-    async def build_report(self, run_id: str) -> dict[str, Any]:
+    async def build_report(
+        self,
+        run_id: str,
+        *,
+        deep_analysis: dict[str, Any] | None = None,
+        allow_report_revision: bool = False,
+    ) -> dict[str, Any]:
         from .schemas import LandscapePatentAnalysis
 
         run = self.database.get_run(run_id)
@@ -1165,6 +1179,14 @@ class LandscapeExecutionService:
                 for key, value in analysis_raw["analyses"].items()
             }
         )
+        documents = self.documents.get(run_id)
+        if documents is None:
+            documents = (
+                self.fetch_repository.list_fetched_documents(run_id)
+                if self.fetch_repository is not None
+                else {}
+            )
+            self.documents[run_id] = documents
         profiles = (
             self.profile_repository.list_company_profiles(run_id)
             if self.profile_repository is not None
@@ -1206,10 +1228,39 @@ class LandscapeExecutionService:
             else []
         )
         limitations = self.collect_limitations(run_id)
+        try:
+            company_raw = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.ANALYZE_COMPANIES.value
+            )["value"]
+            selected_for_deep = [
+                item["publication_number"]
+                for item in company_raw.get("deep_selection", [])
+                if item.get("publication_number")
+            ]
+        except KeyError:
+            selected_for_deep = []
+        deep_read = {
+            "status": (
+                "EXECUTED"
+                if analyses or (deep_analysis and deep_analysis.get("attempted_count"))
+                else "NOT_STARTED"
+            ),
+            "selected_count": len(selected_for_deep),
+            "selected_publications": selected_for_deep,
+            "succeeded_count": len(analyses),
+            "failed_count": len((deep_analysis or {}).get("failures", {})),
+            "pending_count": max(
+                0,
+                len(selected_for_deep)
+                - len(analyses)
+                - len((deep_analysis or {}).get("failures", {})),
+            ),
+            "last_execution": deep_analysis,
+        }
         report = build_report(
             run=run,
             coverage=coverage,
-            documents=self.documents.get(run_id, {}),
+            documents=documents,
             analyses=analyses,
             failures=analysis_raw["failures"],
             limitations=limitations,
@@ -1219,8 +1270,11 @@ class LandscapeExecutionService:
             cross_company_analysis=cross_company_analysis,
             company_trend_coverage=company_trend_coverage,
             company_trend_coverage_history=company_trend_coverage_history,
+            deep_read=deep_read,
         )
-        self.report_service.save(run_id, report)
+        self.report_service.save(
+            run_id, report, allow_revision=allow_report_revision
+        )
         return {"report": report, "manifest": "manifest.json"}
 
     def collect_limitations(self, run_id: str) -> list[dict[str, Any]]:
