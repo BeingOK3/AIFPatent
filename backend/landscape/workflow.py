@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
-from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
 
@@ -22,22 +21,46 @@ class LandscapeWorkflowStep(StrEnum):
     FILTER_AND_SELECT = "FILTER_AND_SELECT"
     FETCH_DETAILS = "FETCH_DETAILS"
     ANALYZE_PATENTS = "ANALYZE_PATENTS"
+    ANALYZE_COMPANIES = "ANALYZE_COMPANIES"
+    ANALYZE_CROSS_COMPANY_TRENDS = "ANALYZE_CROSS_COMPANY_TRENDS"
+    VERIFY_COVERAGE = "VERIFY_COVERAGE"
+    REPAIR_GAPS = "REPAIR_GAPS"
     CLUSTER_PATENTS = "CLUSTER_PATENTS"
     BUILD_REPORT = "BUILD_REPORT"
 
 
-WORKFLOW_STEPS = tuple(LandscapeWorkflowStep)
+# CLUSTER_PATENTS remains a readable legacy step for historical runs, but new
+# company-trend workflows no longer execute or require it for completion.
+WORKFLOW_STEPS = tuple(
+    step
+    for step in LandscapeWorkflowStep
+    if step not in {
+        LandscapeWorkflowStep.CLUSTER_PATENTS,
+        LandscapeWorkflowStep.REPAIR_GAPS,
+    }
+)
 TERMINAL_STATUSES = {"COMPLETED", "COMPLETED_WITH_LIMITATIONS", "FAILED", "CANCELLED"}
+MAIN_TASK_KEY = "__main__"
 
 
 class LandscapeWorkflowError(RuntimeError):
     pass
 
 
+class NonRetryableLandscapeWorkflowError(LandscapeWorkflowError):
+    """A deterministic policy or data gate that cannot succeed on identical retry."""
+
+
+def _retry_transient_error(error: Exception) -> bool:
+    return not isinstance(error, NonRetryableLandscapeWorkflowError)
+
+
 class LandscapeWorkflowState(TypedDict):
     run_id: str
     last_completed_step: str | None
     completed_steps: int
+    audit_decision: NotRequired[str]
+    repair_round: NotRequired[int]
 
 
 StepHandler = Callable[[str, LandscapeWorkflowStep, int], Awaitable[dict[str, Any]]]
@@ -78,39 +101,76 @@ class LandscapeWorkflowHarness:
             None,
         )
 
-    def start_step(self, run_id: str, step: LandscapeWorkflowStep, input_value: Any) -> int:
+    def start_step(
+        self,
+        run_id: str,
+        step: LandscapeWorkflowStep,
+        input_value: Any,
+        *,
+        task_key: str = MAIN_TASK_KEY,
+    ) -> int:
+        task_key = _validated_task_key(task_key)
         run = self.database.get_run(run_id)
         if run["status"] != "RUNNING":
             raise LandscapeWorkflowError(f"run is not RUNNING: {run['status']}")
-        expected = self.next_step(run_id)
-        if expected != step:
-            raise LandscapeWorkflowError(f"out-of-order step: expected {expected}, got {step}")
-        attempt = self._attempt_count(run_id, step) + 1
+        if task_key == MAIN_TASK_KEY:
+            expected = self.next_step(run_id)
+            if expected != step:
+                raise LandscapeWorkflowError(
+                    f"out-of-order step: expected {expected}, got {step}"
+                )
+        attempt = self._attempt_count(run_id, step, task_key) + 1
         if attempt > self.max_step_attempts:
             raise LandscapeWorkflowError("step attempt limit exceeded")
         encoded = canonical_json(input_value)
         with self.database.connect() as connection:
             connection.execute(
                 """
-                INSERT INTO landscape_steps(run_id,step_name,attempt,status,input_hash,started_at)
-                VALUES(?,?,?,?,?,?)
+                INSERT INTO landscape_steps(
+                    run_id,step_name,task_key,attempt,status,input_hash,started_at
+                ) VALUES(?,?,?,?,?,?,?)
                 """,
-                (run_id, step.value, attempt, "RUNNING", _hash(encoded), now_ms()),
+                (
+                    run_id,
+                    step.value,
+                    task_key,
+                    attempt,
+                    "RUNNING",
+                    _hash(encoded),
+                    now_ms(),
+                ),
             )
         return attempt
 
     def complete_step(
-        self, run_id: str, step: LandscapeWorkflowStep, attempt: int, output: dict[str, Any]
+        self,
+        run_id: str,
+        step: LandscapeWorkflowStep,
+        attempt: int,
+        output: dict[str, Any],
+        *,
+        task_key: str = MAIN_TASK_KEY,
     ) -> None:
+        task_key = _validated_task_key(task_key)
         encoded = canonical_json(output)
-        self.database.put_stage_result(run_id, step.value, output)
+        if task_key == MAIN_TASK_KEY:
+            self.database.put_stage_result(run_id, step.value, output)
         with self.database.connect() as connection:
             cursor = connection.execute(
                 """
                 UPDATE landscape_steps SET status='SUCCEEDED',output_hash=?,output_json=?,completed_at=?
-                WHERE run_id=? AND step_name=? AND attempt=? AND status='RUNNING'
+                WHERE run_id=? AND step_name=? AND task_key=?
+                  AND attempt=? AND status='RUNNING'
                 """,
-                (_hash(encoded), encoded, now_ms(), run_id, step.value, attempt),
+                (
+                    _hash(encoded),
+                    encoded,
+                    now_ms(),
+                    run_id,
+                    step.value,
+                    task_key,
+                    attempt,
+                ),
             )
             if cursor.rowcount != 1:
                 raise LandscapeWorkflowError("running step attempt not found")
@@ -121,18 +181,30 @@ class LandscapeWorkflowHarness:
         step: LandscapeWorkflowStep,
         attempt: int,
         error: Exception,
+        *,
+        task_key: str = MAIN_TASK_KEY,
     ) -> None:
+        task_key = _validated_task_key(task_key)
         with self.database.connect() as connection:
             cursor = connection.execute(
                 """
                 UPDATE landscape_steps SET status='FAILED',completed_at=?,error_code=?,error_message=?
-                WHERE run_id=? AND step_name=? AND attempt=? AND status='RUNNING'
+                WHERE run_id=? AND step_name=? AND task_key=?
+                  AND attempt=? AND status='RUNNING'
                 """,
-                (now_ms(), type(error).__name__, str(error)[:2000], run_id, step.value, attempt),
+                (
+                    now_ms(),
+                    type(error).__name__,
+                    str(error)[:2000],
+                    run_id,
+                    step.value,
+                    task_key,
+                    attempt,
+                ),
             )
             if cursor.rowcount != 1:
                 raise LandscapeWorkflowError("running step attempt not found")
-        if attempt >= self.max_step_attempts:
+        if task_key == MAIN_TASK_KEY and attempt >= self.max_step_attempts:
             self.database.set_run_status(
                 run_id, "FAILED", error_code=type(error).__name__, error_message=str(error)[:2000]
             )
@@ -186,11 +258,38 @@ class LandscapeWorkflowHarness:
             ],
         }
 
-    def _attempt_count(self, run_id: str, step: LandscapeWorkflowStep) -> int:
+    def latest_task(
+        self,
+        run_id: str,
+        step: LandscapeWorkflowStep,
+        *,
+        task_key: str,
+    ) -> dict[str, Any] | None:
+        task_key = _validated_task_key(task_key)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM landscape_steps
+                WHERE run_id=? AND step_name=? AND task_key=?
+                ORDER BY attempt DESC LIMIT 1
+                """,
+                (run_id, step.value, task_key),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def _attempt_count(
+        self,
+        run_id: str,
+        step: LandscapeWorkflowStep,
+        task_key: str = MAIN_TASK_KEY,
+    ) -> int:
         with self.database.connect() as connection:
             return connection.execute(
-                "SELECT COUNT(*) FROM landscape_steps WHERE run_id=? AND step_name=?",
-                (run_id, step.value),
+                """
+                SELECT COUNT(*) FROM landscape_steps
+                WHERE run_id=? AND step_name=? AND task_key=?
+                """,
+                (run_id, step.value, task_key),
             ).fetchone()[0]
 
     def _latest_steps(self, run_id: str) -> dict[str, dict[str, Any]]:
@@ -199,11 +298,11 @@ class LandscapeWorkflowHarness:
                 """
                 SELECT s.* FROM landscape_steps s JOIN (
                     SELECT step_name,MAX(attempt) attempt FROM landscape_steps
-                    WHERE run_id=? GROUP BY step_name
+                    WHERE run_id=? AND task_key=? GROUP BY step_name
                 ) latest ON latest.step_name=s.step_name AND latest.attempt=s.attempt
-                WHERE s.run_id=?
+                WHERE s.run_id=? AND s.task_key=?
                 """,
-                (run_id, run_id),
+                (run_id, MAIN_TASK_KEY, run_id, MAIN_TASK_KEY),
             ).fetchall()
         return {row["step_name"]: dict(row) for row in rows}
 
@@ -214,7 +313,6 @@ class LandscapeWorkflow:
         *,
         database: LandscapeDatabase,
         harness: LandscapeWorkflowHarness,
-        checkpoint_path: Path,
         step_handler: StepHandler,
         limitation_collector: LimitationCollector,
         step_timeout_seconds: int,
@@ -222,13 +320,11 @@ class LandscapeWorkflow:
     ):
         self.database = database
         self.harness = harness
-        self.checkpoint_path = checkpoint_path
         self.step_handler = step_handler
         self.limitation_collector = limitation_collector
         self.step_timeout_seconds = step_timeout_seconds
         self.max_step_attempts = max_step_attempts
         self._lock = asyncio.Lock()
-        self._saver_context = None
         self._graph = None
 
     async def execute(self, run_id: str) -> str:
@@ -240,8 +336,7 @@ class LandscapeWorkflow:
         graph = await self._compiled_graph()
         try:
             await graph.ainvoke(
-                {"run_id": run_id, "last_completed_step": None, "completed_steps": 0},
-                {"configurable": {"thread_id": run_id}},
+                {"run_id": run_id, "last_completed_step": None, "completed_steps": 0}
             )
             return self.harness.finish_run(run_id, self.limitation_collector(run_id))
         except asyncio.CancelledError:
@@ -257,10 +352,7 @@ class LandscapeWorkflow:
             return "FAILED"
 
     async def aclose(self) -> None:
-        if self._saver_context is not None:
-            await self._saver_context.__aexit__(None, None, None)
-            self._saver_context = None
-            self._graph = None
+        self._graph = None
 
     async def _compiled_graph(self):
         if self._graph is not None:
@@ -268,25 +360,93 @@ class LandscapeWorkflow:
         async with self._lock:
             if self._graph is not None:
                 return self._graph
-            self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-            self._saver_context = AsyncSqliteSaver.from_conn_string(str(self.checkpoint_path))
-            saver = await self._saver_context.__aenter__()
-            await saver.setup()
-            self._graph = self._build_graph().compile(
-                checkpointer=saver, name="aifpatent-landscape-workflow"
-            )
+            self._graph = self._build_graph().compile(name="aifpatent-landscape-workflow")
             return self._graph
 
     def _build_graph(self) -> StateGraph:
         builder = StateGraph(LandscapeWorkflowState)
-        retry = RetryPolicy(max_attempts=self.max_step_attempts, retry_on=Exception)
-        previous = None
+        retry = RetryPolicy(
+            max_attempts=self.max_step_attempts,
+            retry_on=_retry_transient_error,
+        )
         for step in WORKFLOW_STEPS:
             builder.add_node(step.value, self._node(step), retry_policy=retry)
-            builder.add_edge(START if previous is None else previous, step.value)
-            previous = step.value
-        builder.add_edge(previous, END)
+        builder.add_node(
+            LandscapeWorkflowStep.REPAIR_GAPS.value,
+            self._repair_node,
+            retry_policy=retry,
+        )
+        builder.add_edge(START, WORKFLOW_STEPS[0].value)
+        for current, following in zip(WORKFLOW_STEPS, WORKFLOW_STEPS[1:]):
+            if current == LandscapeWorkflowStep.VERIFY_COVERAGE:
+                continue
+            builder.add_edge(current.value, following.value)
+        builder.add_conditional_edges(
+            LandscapeWorkflowStep.VERIFY_COVERAGE.value,
+            self._route_coverage,
+            {
+                "PASS": LandscapeWorkflowStep.BUILD_REPORT.value,
+                "LIMITED": LandscapeWorkflowStep.BUILD_REPORT.value,
+                "REPAIR": LandscapeWorkflowStep.REPAIR_GAPS.value,
+            },
+        )
+        builder.add_conditional_edges(
+            LandscapeWorkflowStep.REPAIR_GAPS.value,
+            self._route_coverage,
+            {
+                "PASS": LandscapeWorkflowStep.BUILD_REPORT.value,
+                "LIMITED": LandscapeWorkflowStep.BUILD_REPORT.value,
+            },
+        )
+        builder.add_edge(WORKFLOW_STEPS[-1].value, END)
         return builder
+
+    @staticmethod
+    async def _route_coverage(state: LandscapeWorkflowState) -> str:
+        decision = state.get("audit_decision")
+        if decision not in {"PASS", "REPAIR", "LIMITED"}:
+            raise NonRetryableLandscapeWorkflowError(
+                f"unsupported coverage route: {decision}"
+            )
+        return decision
+
+    async def _repair_node(self, state: LandscapeWorkflowState) -> dict[str, Any]:
+        """Run the durable repair task outside the linear main-step sequence."""
+        run_id = state["run_id"]
+        audit_round = int(state.get("repair_round", 0)) + 1
+        task_key = f"repair-round-{audit_round}"
+        latest = self.harness.latest_task(
+            run_id, LandscapeWorkflowStep.REPAIR_GAPS, task_key=task_key
+        )
+        if latest is not None and latest["status"] == "SUCCEEDED":
+            output = json.loads(latest["output_json"])
+            return {
+                "audit_decision": output["decision"],
+                "repair_round": output["repair_round"],
+            }
+        attempt = self.harness.start_step(
+            run_id,
+            LandscapeWorkflowStep.REPAIR_GAPS,
+            {"repair_round": audit_round},
+            task_key=task_key,
+        )
+        try:
+            output = await asyncio.wait_for(
+                self.step_handler(run_id, LandscapeWorkflowStep.REPAIR_GAPS, attempt),
+                timeout=self.step_timeout_seconds,
+            )
+        except Exception as exc:
+            self.harness.fail_step(
+                run_id, LandscapeWorkflowStep.REPAIR_GAPS, attempt, exc, task_key=task_key
+            )
+            raise
+        self.harness.complete_step(
+            run_id, LandscapeWorkflowStep.REPAIR_GAPS, attempt, output, task_key=task_key
+        )
+        return {
+            "audit_decision": output["decision"],
+            "repair_round": output["repair_round"],
+        }
 
     def _node(self, step: LandscapeWorkflowStep):
         async def node(state: LandscapeWorkflowState) -> dict[str, Any]:
@@ -294,7 +454,17 @@ class LandscapeWorkflow:
             progress = self.harness.progress(run_id)
             state_for_step = next(item for item in progress["steps"] if item["name"] == step.value)
             if state_for_step["status"] == "SUCCEEDED":
-                return {"last_completed_step": step.value, "completed_steps": progress["completed_steps"]}
+                result = {
+                    "last_completed_step": step.value,
+                    "completed_steps": progress["completed_steps"],
+                }
+                if step == LandscapeWorkflowStep.VERIFY_COVERAGE:
+                    audit = self.database.get_stage_result(
+                        run_id, step.value
+                    )["value"]
+                    result["audit_decision"] = audit["decision"]
+                    result["repair_round"] = audit["repair_round"]
+                return result
             attempt = self.harness.start_step(run_id, step, {"input_hash": self.database.get_run(run_id)["input_hash"]})
             try:
                 output = await asyncio.wait_for(
@@ -306,7 +476,14 @@ class LandscapeWorkflow:
                 self.harness.fail_step(run_id, step, attempt, exc)
                 raise
             self.harness.complete_step(run_id, step, attempt, output)
-            return {"last_completed_step": step.value, "completed_steps": progress["completed_steps"] + 1}
+            result = {
+                "last_completed_step": step.value,
+                "completed_steps": progress["completed_steps"] + 1,
+            }
+            if step == LandscapeWorkflowStep.VERIFY_COVERAGE:
+                result["audit_decision"] = output["decision"]
+                result["repair_round"] = output.get("repair_round", 0)
+            return result
 
         node.__name__ = f"run_{step.value.lower()}"
         return node
@@ -314,3 +491,13 @@ class LandscapeWorkflow:
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _validated_task_key(task_key: str) -> str:
+    if not isinstance(task_key, str) or task_key != task_key.strip():
+        raise LandscapeWorkflowError("task_key must be a trimmed string")
+    if not task_key or len(task_key) > 256:
+        raise LandscapeWorkflowError(
+            "task_key must contain between 1 and 256 characters"
+        )
+    return task_key

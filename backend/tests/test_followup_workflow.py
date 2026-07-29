@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import tempfile
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 
 from idea.followup import FollowupError, TurnStatus
@@ -78,18 +76,16 @@ class RecordingHandler:
 class FollowupWorkflowTests(unittest.TestCase):
     def run_workflow(self, repository, handler, *, timeout=1):
         async def scenario():
-            with tempfile.TemporaryDirectory() as directory:
-                workflow = FollowupWorkflow(
-                    repository=repository,
-                    handler=handler,
-                    checkpoint_path=Path(directory) / "followup.sqlite3",
-                    step_timeout_seconds=timeout,
-                    max_step_attempts=1,
-                )
-                try:
-                    return await workflow.execute("turn-1")
-                finally:
-                    await workflow.aclose()
+            workflow = FollowupWorkflow(
+                repository=repository,
+                handler=handler,
+                step_timeout_seconds=timeout,
+                max_step_attempts=1,
+            )
+            try:
+                return await workflow.execute("turn-1")
+            finally:
+                await workflow.aclose()
 
         return asyncio.run(scenario())
 
@@ -164,20 +160,18 @@ class FollowupWorkflowTests(unittest.TestCase):
                     started.set()
                     await asyncio.Event().wait()
 
-            with tempfile.TemporaryDirectory() as directory:
-                workflow = FollowupWorkflow(
-                    repository=repository,
-                    handler=BlockingHandler(),
-                    checkpoint_path=Path(directory) / "followup.sqlite3",
-                    step_timeout_seconds=30,
-                    max_step_attempts=1,
-                )
-                task = asyncio.create_task(workflow.execute("turn-1"))
-                await started.wait()
-                task.cancel()
-                with self.assertRaises(asyncio.CancelledError):
-                    await task
-                await workflow.aclose()
+            workflow = FollowupWorkflow(
+                repository=repository,
+                handler=BlockingHandler(),
+                step_timeout_seconds=30,
+                max_step_attempts=1,
+            )
+            task = asyncio.create_task(workflow.execute("turn-1"))
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            await workflow.aclose()
             return repository
 
         repository = asyncio.run(scenario())

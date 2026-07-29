@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from datetime import date
+from types import SimpleNamespace
 
+from landscape.planning import (
+    ALIAS_AGENT_NAME,
+    CompetitorAliasService,
+)
 from landscape.planning import (
     CompetitorAliasError,
     build_deterministic_query_plan,
@@ -13,6 +19,7 @@ from landscape.planning import (
 )
 from landscape.schemas import (
     AnalysisMode,
+    AssigneeScope,
     CompetitorAliasPlan,
     CompetitorAliasResolution,
     CompetitorInput,
@@ -33,6 +40,66 @@ def direction_expansion() -> TechnicalDirectionExpansion:
 
 
 class LandscapePlanningTests(unittest.TestCase):
+    def test_alias_model_output_is_reconciled_to_requested_company_names(self) -> None:
+        class StubModel:
+            async def complete(self, agent_name, *, system_prompt, input_payload):
+                self.call = (agent_name, input_payload)
+                return SimpleNamespace(
+                    output=CompetitorAliasPlan(
+                        competitors=[
+                            CompetitorAliasResolution(
+                                primary_name="NVIDIA",
+                                aliases=["英伟达", "NVIDIA Corporation"],
+                                source="MODEL_INFERRED",
+                            )
+                        ]
+                    )
+                )
+
+        model = StubModel()
+        service = CompetitorAliasService(model)
+
+        result = asyncio.run(
+            service.resolve([CompetitorInput(name="英伟达", aliases=[])])
+        )
+
+        self.assertEqual(model.call[0], ALIAS_AGENT_NAME)
+        self.assertEqual(result.competitors[0].primary_name, "英伟达")
+        self.assertEqual(result.competitors[0].assignee_scope, AssigneeScope.ENTITY)
+        self.assertEqual(
+            result.competitors[0].aliases,
+            ["NVIDIA", "NVIDIA Corporation"],
+        )
+
+    def test_alias_model_missing_row_falls_back_only_for_that_company(self) -> None:
+        class StubModel:
+            async def complete(self, agent_name, *, system_prompt, input_payload):
+                return SimpleNamespace(
+                    output=CompetitorAliasPlan(
+                        competitors=[
+                            CompetitorAliasResolution(
+                                primary_name="NVIDIA",
+                                aliases=["英伟达"],
+                                source="MODEL_INFERRED",
+                            )
+                        ]
+                    )
+                )
+
+        result = asyncio.run(
+            CompetitorAliasService(StubModel()).resolve(
+                [
+                    CompetitorInput(name="英伟达", aliases=[]),
+                    CompetitorInput(name="华为", aliases=[]),
+                ]
+            )
+        )
+
+        self.assertEqual(
+            [(item.primary_name, item.source) for item in result.competitors],
+            [("英伟达", "MODEL_INFERRED"), ("华为", "PRIMARY_NAME_FALLBACK")],
+        )
+
     def test_deterministic_plan_is_bounded_and_retains_direction(self) -> None:
         scope = LandscapeScope(
             mode=AnalysisMode.TECHNOLOGY_COMPETITOR,
@@ -91,6 +158,14 @@ class LandscapePlanningTests(unittest.TestCase):
             self.assertEqual(
                 sum(competitor.name in item.query_text for item in plan.queries), 1
             )
+            matching = [
+                item.query_text
+                for item in plan.queries
+                if competitor.name in item.query_text
+            ]
+            self.assertNotIn("assignee:", matching[0])
+            for name in [competitor.name, *competitor.aliases]:
+                self.assertIn(f'"{name}"', matching[0])
         validate_query_plan_scope(plan, scope)
 
     def test_combined_mode_plan_must_retain_both_anchors(self) -> None:
@@ -112,7 +187,10 @@ class LandscapePlanningTests(unittest.TestCase):
             validate_query_plan_scope(plan, scope)
 
     def test_alias_plan_cannot_change_or_cross_competitor_entities(self) -> None:
-        inputs = [CompetitorInput(name="Huawei"), CompetitorInput(name="Samsung")]
+        inputs = [
+            CompetitorInput(name="Huawei", aliases=["华为"]),
+            CompetitorInput(name="Samsung"),
+        ]
         valid = CompetitorAliasPlan(
             competitors=[
                 CompetitorAliasResolution(
@@ -144,10 +222,47 @@ class LandscapePlanningTests(unittest.TestCase):
         with self.assertRaisesRegex(CompetitorAliasError, "collides"):
             validate_alias_plan(collision, inputs)
 
+    def test_search_scope_preserves_confirmed_aliases_and_adds_inferred_aliases(self) -> None:
+        scope = LandscapeScope(
+            competitors=[
+                CompetitorInput(
+                    name="Huawei",
+                    aliases=["华为", "Huawei Technologies"],
+                    assignee_scope=AssigneeScope.GROUP,
+                )
+            ],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 7, 1),
+        )
+        plan = CompetitorAliasPlan(
+            competitors=[
+                CompetitorAliasResolution(
+                    primary_name="Huawei",
+                    aliases=["Huawei Technologies", "华为技术"],
+                    source="MODEL_INFERRED",
+                )
+            ]
+        )
+
+        search_scope = scope_with_alias_plan(scope, plan)
+
+        self.assertEqual(
+            search_scope.competitors[0].aliases,
+            ["华为", "Huawei Technologies", "华为技术"],
+        )
+        self.assertEqual(scope.competitors[0].aliases, ["华为", "Huawei Technologies"])
+        self.assertEqual(
+            search_scope.competitors[0].assignee_scope,
+            AssigneeScope.GROUP,
+        )
+
     def test_alias_failure_falls_back_to_primary_names(self) -> None:
-        fallback = fallback_alias_plan([CompetitorInput(name="Huawei")])
+        fallback = fallback_alias_plan(
+            [CompetitorInput(name="Huawei", assignee_scope=AssigneeScope.GROUP)]
+        )
         self.assertEqual(fallback.competitors[0].aliases, [])
         self.assertEqual(fallback.competitors[0].source, "PRIMARY_NAME_FALLBACK")
+        self.assertEqual(fallback.competitors[0].assignee_scope, AssigneeScope.GROUP)
 
     def test_plan_without_user_scope_anchor_is_rejected(self) -> None:
         scope = LandscapeScope(

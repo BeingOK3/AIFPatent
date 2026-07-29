@@ -23,6 +23,7 @@ from .providers import (
     SearchProvider,
     SearchQuery,
 )
+from .query_strategy import compile_provider_query
 from .runtime_debug import RunDebugLog
 from .search_strategy import (
     DEFAULT_RELEVANCE_THRESHOLD,
@@ -171,15 +172,17 @@ class RetrievalService:
             call_specs = []
             for planned in queries_by_round[round_number]:
                 query_id = f"{run_id}:{planned.query_id}"
-                query = SearchQuery(
-                    query_id=query_id,
-                    text=planned.query_text,
-                    language=planned.language,
-                    round_number=round_number,
-                    limit=budget.per_query_limit,
-                    query_type=planned.query_type,
-                )
                 for provider in self.providers:
+                    query = SearchQuery(
+                        query_id=query_id,
+                        text=compile_provider_query(
+                            planned.query_text, provider.name
+                        ),
+                        language=planned.language,
+                        round_number=round_number,
+                        limit=budget.per_query_limit,
+                        query_type=planned.query_type,
+                    )
                     call_specs.append((provider, query))
             if self.debug_log:
                 for provider, query in call_specs:
@@ -677,7 +680,8 @@ class RetrievalService:
                 document_id = existing["document_id"]
                 if document.family_id:
                     connection.execute(
-                        "INSERT OR IGNORE INTO patent_families(family_id,source) VALUES(?,?)",
+                        "INSERT INTO patent_families(family_id,source) VALUES(?,?) "
+                        "ON CONFLICT (family_id) DO NOTHING",
                         (document.family_id, document.provider),
                     )
                 connection.execute(
@@ -709,7 +713,8 @@ class RetrievalService:
                 document_id = str(uuid.uuid4())
                 if document.family_id:
                     connection.execute(
-                        "INSERT OR IGNORE INTO patent_families(family_id,source) VALUES(?,?)",
+                        "INSERT INTO patent_families(family_id,source) VALUES(?,?) "
+                        "ON CONFLICT (family_id) DO NOTHING",
                         (document.family_id, document.provider),
                     )
                 connection.execute(
@@ -751,10 +756,16 @@ class RetrievalService:
                 )
             connection.execute(
                 """
-                INSERT OR REPLACE INTO run_documents(
+                INSERT INTO run_documents(
                     run_id,document_id,relevance,relevance_score,screening_status,
                     deep_reviewed,found_by_json,query_ids_json
                 ) VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT (run_id, document_id) DO UPDATE SET
+                    relevance = EXCLUDED.relevance,
+                    relevance_score = EXCLUDED.relevance_score,
+                    screening_status = EXCLUDED.screening_status,
+                    found_by_json = EXCLUDED.found_by_json,
+                    query_ids_json = EXCLUDED.query_ids_json
                 """,
                 (
                     run_id,
@@ -762,7 +773,7 @@ class RetrievalService:
                     None,
                     None,
                     "FETCHED",
-                    0,
+                    False,
                     canonical_json(merged_hit.found_by),
                     canonical_json(merged_hit.query_ids),
                 ),

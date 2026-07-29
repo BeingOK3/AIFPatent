@@ -38,6 +38,7 @@ from .postgres_corpus import (
 )
 from .postgres_context import PostgreSQLContextRepository
 from .postgres_citations import PostgreSQLCitationRepository
+from .postgres_database import PostgreSQLDatabase
 from .postgres_lexical import PostgreSQLLexicalSearchRepository
 from .postgres_followup import PostgreSQLFollowupRepository
 from .postgres_followup_data import PostgreSQLFollowupDataSource
@@ -150,7 +151,7 @@ def build_corpus_ingest(
     dsn = _required_environment("AIFPATENT_POSTGRES_DSN")
     if database is None:
         raise RuntimeConfigurationError(
-            "SQLite source database is required for the PostgreSQL Corpus transition"
+            "PostgreSQL source database is required for Corpus persistence"
         )
     objects = S3ObjectStore(
         endpoint_url=_required_environment("AIFPATENT_S3_ENDPOINT_URL"),
@@ -239,13 +240,9 @@ def build_followup_manager(
         input_budget=48_000,
         reserved_output_tokens=config.model.max_output_tokens,
     )
-    checkpoint = config.storage.langgraph_database.with_name(
-        "followup-checkpoints.db"
-    )
     workflow = FollowupWorkflow(
         repository=repository,
         handler=handler,
-        checkpoint_path=checkpoint,
         step_timeout_seconds=config.workflow.step_timeout_seconds,
         max_step_attempts=config.workflow.max_step_attempts,
     )
@@ -253,7 +250,7 @@ def build_followup_manager(
 
 
 def build_runtime(config: AppConfig) -> IdeaRuntime:
-    database = Database(config.storage.database)
+    database = PostgreSQLDatabase(_required_environment("AIFPATENT_POSTGRES_DSN"))
     database.initialize()
     cache = CacheStore(
         config.storage.cache_dir,

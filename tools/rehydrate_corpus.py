@@ -57,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-id", help="limit migration to one historical Run")
     parser.add_argument("--limit", type=int, help="maximum number of Run documents to inspect")
     parser.add_argument("--config", help="application configuration path")
+    parser.add_argument(
+        "--sqlite",
+        type=Path,
+        default=PROJECT_ROOT / "data" / "aifpatent" / "aifpatent.db",
+        help="legacy SQLite source database",
+    )
     parser.add_argument("--output", type=Path, help="JSON audit report destination")
     return parser
 
@@ -96,8 +102,10 @@ def _providers(config: AppConfig, cache: CacheStore):
     return providers
 
 
-def build_migrator(config: AppConfig, *, apply: bool) -> HistoricalCorpusMigrator:
-    database = Database(config.storage.database)
+def build_migrator(
+    config: AppConfig, *, apply: bool, sqlite_path: Path
+) -> HistoricalCorpusMigrator:
+    database = Database(sqlite_path)
     if not apply:
         return HistoricalCorpusMigrator(database=database)
     database.initialize()
@@ -145,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_config(args.config)
         report = asyncio.run(
-            build_migrator(config, apply=args.apply).migrate(
+            build_migrator(config, apply=args.apply, sqlite_path=args.sqlite).migrate(
                 apply=args.apply,
                 run_id=args.run_id,
                 limit=args.limit,

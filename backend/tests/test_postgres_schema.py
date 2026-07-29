@@ -11,6 +11,24 @@ REPORT_RETRIEVAL_SCHEMA_PATH = Path("deploy/rag/postgres-init/035_report_retriev
 REPORT_CITATION_SCHEMA_PATH = Path("deploy/rag/postgres-init/040_report_citation_schema.sql")
 FOLLOWUP_SCHEMA_PATH = Path("deploy/rag/postgres-init/050_followup_schema.sql")
 REPORT_HYBRID_SCHEMA_PATH = Path("deploy/rag/postgres-init/055_report_hybrid_schema.sql")
+LANDSCAPE_COMPANY_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/070_landscape_company_analysis.sql"
+)
+LANDSCAPE_COMPANY_MANIFEST_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/071_landscape_company_assignment_manifest.sql"
+)
+LANDSCAPE_FETCH_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/072_landscape_document_fetches.sql"
+)
+LANDSCAPE_RESULT_MANIFEST_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/073_landscape_company_result_manifests.sql"
+)
+LANDSCAPE_KEYED_STEPS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/074_landscape_keyed_steps.sql"
+)
+LANDSCAPE_REPAIR_SNAPSHOTS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/075_landscape_repair_snapshots.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -22,6 +40,24 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.report_citation_sql = REPORT_CITATION_SCHEMA_PATH.read_text(encoding="utf-8")
         self.followup_sql = FOLLOWUP_SCHEMA_PATH.read_text(encoding="utf-8")
         self.report_hybrid_sql = REPORT_HYBRID_SCHEMA_PATH.read_text(encoding="utf-8")
+        self.landscape_company_sql = LANDSCAPE_COMPANY_SCHEMA_PATH.read_text(
+            encoding="utf-8"
+        )
+        self.landscape_company_manifest_sql = (
+            LANDSCAPE_COMPANY_MANIFEST_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_fetch_sql = LANDSCAPE_FETCH_SCHEMA_PATH.read_text(
+            encoding="utf-8"
+        )
+        self.landscape_result_manifest_sql = (
+            LANDSCAPE_RESULT_MANIFEST_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_keyed_steps_sql = (
+            LANDSCAPE_KEYED_STEPS_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_repair_snapshots_sql = (
+            LANDSCAPE_REPAIR_SNAPSHOTS_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
         self.assertIn("BEGIN;", self.sql)
@@ -52,7 +88,92 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
         self.assertNotIn("DELETE FROM", upper)
+
+    def test_company_assignment_manifest_freezes_empty_and_nonempty_sets(self) -> None:
+        sql = self.landscape_company_manifest_sql
+        self.assertIn(
+            "CREATE TABLE IF NOT EXISTS landscape_company_assignment_manifests",
+            sql,
+        )
+        self.assertIn("company_count INTEGER NOT NULL", sql)
+        self.assertIn("assignment_count INTEGER NOT NULL", sql)
+        self.assertIn("content_hash TEXT NOT NULL", sql)
+        self.assertIn("'071_landscape_company_assignment_manifest'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_document_fetch_state_is_resumable_and_versioned(self) -> None:
+        sql = self.landscape_fetch_sql
+        self.assertIn(
+            "CREATE TABLE IF NOT EXISTS landscape_document_fetches",
+            sql,
+        )
+        self.assertIn("status IN ('FETCHED','FAILED')", sql)
+        self.assertIn("attempt_count INTEGER NOT NULL", sql)
+        self.assertIn("document_json JSONB", sql)
+        self.assertIn("REFERENCES landscape_candidates(run_id, document_id)", sql)
+        self.assertIn("'072_landscape_document_fetches'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_company_result_manifests_cover_zero_trends_and_audits(self) -> None:
+        sql = self.landscape_result_manifest_sql
+        for table in (
+            "landscape_company_analysis_manifests",
+            "landscape_cross_company_analyses",
+            "landscape_coverage_audits",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("trend_count INTEGER NOT NULL CHECK (trend_count >= 0)", sql)
+        self.assertIn("PRIMARY KEY(run_id, repair_round)", sql)
+        self.assertIn(
+            "decision IN ('PASS','REPAIR','LIMITED','FAIL')",
+            sql,
+        )
+        self.assertIn("'073_landscape_company_result_manifests'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
         self.assertNotIn("POSTGRES_PASSWORD=", upper)
+
+    def test_landscape_step_attempts_are_scoped_by_stable_task_key(self) -> None:
+        sql = self.landscape_keyed_steps_sql
+        self.assertIn(
+            "ADD COLUMN IF NOT EXISTS task_key TEXT NOT NULL DEFAULT '__main__'",
+            " ".join(sql.split()),
+        )
+        self.assertIn(
+            "UNIQUE(run_id, step_name, task_key, attempt)",
+            sql,
+        )
+        self.assertIn("idx_landscape_steps_task", sql)
+        self.assertIn("'074_landscape_keyed_steps'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_repair_snapshots_are_append_only_and_versioned(self) -> None:
+        sql = self.landscape_repair_snapshots_sql
+        self.assertIn(
+            "CREATE TABLE IF NOT EXISTS landscape_company_profile_revisions", sql
+        )
+        self.assertIn(
+            "CREATE TABLE IF NOT EXISTS landscape_cross_company_analysis_revisions",
+            sql,
+        )
+        self.assertIn("PRIMARY KEY(run_id, repair_round, company_id)", sql)
+        self.assertIn("PRIMARY KEY(run_id, repair_round)", sql)
+        self.assertIn("'075_landscape_repair_snapshots'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
 
     def test_corpus_schema_is_versioned_and_scoped(self) -> None:
         self.assertIn("BEGIN;", self.corpus_sql)
@@ -145,6 +266,33 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertNotIn("DROP TABLE", sql.upper())
         self.assertNotIn("TRUNCATE", sql.upper())
         self.assertNotIn("DELETE FROM", sql.upper())
+
+    def test_landscape_company_schema_is_complete_versioned_and_non_destructive(self) -> None:
+        sql = self.landscape_company_sql
+        for table in (
+            "landscape_candidates",
+            "landscape_companies",
+            "landscape_document_companies",
+            "landscape_company_categories",
+            "landscape_company_category_members",
+            "landscape_company_profiles",
+            "landscape_cross_company_trends",
+            "landscape_insight_evidence",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("UNIQUE(run_id, publication_number)", sql)
+        self.assertIn("UNIQUE(run_id, normalized_key)", sql)
+        self.assertIn("metadata_json JSONB NOT NULL", sql)
+        self.assertIn(
+            "REFERENCES landscape_evidence(run_id, evidence_id)",
+            " ".join(sql.split()),
+        )
+        self.assertIn("'070_landscape_company_analysis'", sql)
+        self.assertIn("ON CONFLICT (version) DO NOTHING", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
 
 
 if __name__ == "__main__":

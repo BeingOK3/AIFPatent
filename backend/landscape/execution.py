@@ -3,15 +3,31 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Iterable
-from typing import Any
+from dataclasses import asdict
+from datetime import date
+from typing import Any, Protocol
 
 from idea.merge import MergedHit
+from idea.merge import normalize_publication_number
 from idea.model_client import StructuredModelClient
 from idea.providers.base import FetchRequest, FetchedDocument, ProviderResult, ProviderRunner, SearchHit, SearchProvider
 
 from .analysis import LandscapeAnalysisService
-from .clustering import LandscapeClusteringError, LandscapeClusteringService
+from .company_assignment import CompanyAssignmentResult, assign_companies
+from .company_batches import build_company_analysis_batches
+from .company_classification import (
+    CompanyTechnologyClassificationService,
+    validate_company_technology_classification,
+)
+from .company_profiles import CompanyTechnologyProfileService
+from .company_trends import (
+    CrossCompanyTrendService,
+    validate_cross_company_trend_proposal,
+)
+from .coverage_audit import audit_company_trend_coverage
 from .database import LandscapeDatabase
+from .direction_fingerprints import build_direction_fingerprint
+from .deep_selection import select_deep_patents
 from .planning import (
     CompetitorAliasService,
     TechnicalDirectionService,
@@ -20,17 +36,162 @@ from .planning import (
     scope_with_alias_plan,
 )
 from .reporting import LandscapeReportService, build_report
-from .schemas import LandscapeQueryPlan, LandscapeScope
+from .repair import build_repair_plan
+from .schemas import (
+    CompanyTechnologyClassification,
+    CompanyTechnologyProfile,
+    CrossCompanyTrendAnalysis,
+    CrossCompanyTrendProposal,
+    CrossCompanyTrendProposalAnalysis,
+    LandscapeCoverageAudit,
+    LandscapeDirectionFingerprint,
+    LandscapePatentAnalysis,
+    LandscapeQueryPlan,
+    LandscapeScope,
+    TrendTimeBasis,
+)
 from .search import (
     CompanyPatentCount,
-    candidate_company,
+    LandscapeCandidateLimitExceededError,
     execute_provider_queries,
     exclusion_reason,
+    family_publication_numbers,
     strict_filter_and_select,
-    weighted_analysis_selection,
 )
 from .store import LandscapeRunStore
-from .workflow import LandscapeWorkflowStep
+from .workflow import (
+    LandscapeWorkflowStep,
+    NonRetryableLandscapeWorkflowError,
+)
+
+
+class LandscapeCandidateRepository(Protocol):
+    def put_candidates(
+        self, run_id: str, candidates: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]: ...
+
+    def list_candidates(self, run_id: str) -> list[dict[str, Any]]: ...
+
+
+class LandscapeCompanyRepository(Protocol):
+    def put_company_assignments(
+        self,
+        run_id: str,
+        *,
+        scope: LandscapeScope,
+        result: CompanyAssignmentResult,
+    ) -> CompanyAssignmentResult: ...
+
+    def list_company_assignments(self, run_id: str) -> CompanyAssignmentResult: ...
+
+
+class LandscapeFetchRepository(Protocol):
+    def list_fetched_documents(
+        self, run_id: str
+    ) -> dict[str, FetchedDocument]: ...
+
+    def put_fetch_success(
+        self,
+        run_id: str,
+        *,
+        document_id: str,
+        publication_number: str,
+        document: FetchedDocument,
+    ) -> None: ...
+
+    def put_fetch_failure(
+        self,
+        run_id: str,
+        *,
+        document_id: str,
+        publication_number: str,
+        error_message: str,
+    ) -> None: ...
+
+
+class LandscapeAnalysisRepository(Protocol):
+    def put_patent_analysis(
+        self,
+        run_id: str,
+        *,
+        document_id: str,
+        analysis: LandscapePatentAnalysis,
+    ) -> None: ...
+
+    def list_patent_analyses(
+        self, run_id: str
+    ) -> dict[str, LandscapePatentAnalysis]: ...
+
+
+class LandscapeDirectionEvidenceRepository(Protocol):
+    """Durably store the bounded evidence used by full-set direction trends."""
+
+    def put_direction_evidence(
+        self,
+        run_id: str,
+        fingerprints: list[LandscapeDirectionFingerprint],
+    ) -> None: ...
+
+
+class LandscapeCompanyProfileRepository(Protocol):
+    def list_company_profiles(
+        self, run_id: str
+    ) -> dict[str, CompanyTechnologyProfile]: ...
+
+    def put_company_profile(
+        self,
+        run_id: str,
+        *,
+        company_id: str,
+        profile: CompanyTechnologyProfile,
+    ) -> CompanyTechnologyProfile: ...
+
+    def put_repaired_company_profile(
+        self,
+        run_id: str,
+        *,
+        repair_round: int,
+        company_id: str,
+        profile: CompanyTechnologyProfile,
+    ) -> CompanyTechnologyProfile: ...
+
+
+class LandscapeCompanyFanoutRunner(Protocol):
+    async def execute(
+        self, run_id: str, company_ids: list[str]
+    ) -> list[str]: ...
+
+
+class LandscapeTrendRepository(Protocol):
+    def list_cross_company_analysis(
+        self, run_id: str
+    ) -> CrossCompanyTrendAnalysis | None: ...
+
+    def put_cross_company_analysis(
+        self, run_id: str, analysis: CrossCompanyTrendAnalysis
+    ) -> CrossCompanyTrendAnalysis: ...
+
+    def put_repaired_cross_company_analysis(
+        self,
+        run_id: str,
+        *,
+        repair_round: int,
+        analysis: CrossCompanyTrendAnalysis,
+    ) -> CrossCompanyTrendAnalysis: ...
+
+
+class LandscapeCoverageAuditRepository(Protocol):
+    def list_coverage_audits(
+        self, run_id: str
+    ) -> list[LandscapeCoverageAudit]: ...
+
+    def put_coverage_audit(
+        self,
+        run_id: str,
+        *,
+        repair_round: int,
+        audit: LandscapeCoverageAudit,
+    ) -> LandscapeCoverageAudit: ...
 
 
 class LandscapeExecutionService:
@@ -44,6 +205,15 @@ class LandscapeExecutionService:
         provider_timeout_seconds: dict[str, float],
         analysis_concurrency: int,
         report_service: LandscapeReportService,
+        candidate_repository: "LandscapeCandidateRepository | None" = None,
+        company_repository: "LandscapeCompanyRepository | None" = None,
+        fetch_repository: "LandscapeFetchRepository | None" = None,
+        analysis_repository: "LandscapeAnalysisRepository | None" = None,
+        direction_evidence_repository: "LandscapeDirectionEvidenceRepository | None" = None,
+        profile_repository: "LandscapeCompanyProfileRepository | None" = None,
+        company_fanout: "LandscapeCompanyFanoutRunner | None" = None,
+        trend_repository: "LandscapeTrendRepository | None" = None,
+        audit_repository: "LandscapeCoverageAuditRepository | None" = None,
     ):
         self.database = database
         self.store = store
@@ -53,14 +223,162 @@ class LandscapeExecutionService:
         self.analysis = LandscapeAnalysisService(
             model, database, concurrency=analysis_concurrency
         )
-        self.clustering = LandscapeClusteringService(model)
         self.aliases = CompetitorAliasService(model)
         self.directions = TechnicalDirectionService(model)
+        self.company_classifier = CompanyTechnologyClassificationService(model)
+        self.company_profiler = CompanyTechnologyProfileService(model)
+        self.company_trends = CrossCompanyTrendService(model)
         self.report_service = report_service
+        self.candidate_repository = candidate_repository
+        self.company_repository = company_repository
+        self.fetch_repository = fetch_repository
+        self.analysis_repository = analysis_repository
+        self.direction_evidence_repository = direction_evidence_repository
+        self.profile_repository = profile_repository
+        self.company_fanout = company_fanout
+        self.trend_repository = trend_repository
+        self.audit_repository = audit_repository
+        self.direction_fingerprints: dict[
+            str, dict[str, LandscapeDirectionFingerprint]
+        ] = {}
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.enrichment_stats: dict[str, dict[str, int]] = {}
-        self.cluster_failures: dict[str, str] = {}
+
+    def bind_company_fanout(
+        self, company_fanout: LandscapeCompanyFanoutRunner
+    ) -> None:
+        if self.company_fanout is not None:
+            raise RuntimeError("company fan-out is already bound")
+        self.company_fanout = company_fanout
+
+    async def analyze_company(
+        self,
+        run_id: str,
+        company_id: str,
+        *,
+        repair_round: int | None = None,
+    ) -> dict[str, Any]:
+        if (
+            self.company_repository is None
+            or self.analysis_repository is None
+            or self.profile_repository is None
+        ):
+            raise RuntimeError(
+                "company analysis requires assignment, analysis and profile repositories"
+            )
+        assignment_result = self.company_repository.list_company_assignments(
+            run_id
+        )
+        analyses = self.analysis_repository.list_patent_analyses(run_id)
+        batches = build_company_analysis_batches(assignment_result, analyses)
+        fingerprints = self._load_direction_fingerprints(run_id)
+        batch = next(
+            (candidate for candidate in batches if candidate.company_id == company_id),
+            None,
+        )
+        if fingerprints and any(
+            item.company_id == company_id for item in fingerprints.values()
+        ):
+            batch = None
+        if batch is None:
+            fingerprint_batch = [
+                item
+                for item in fingerprints.values()
+                if item.company_id == company_id
+            ]
+            if not fingerprint_batch:
+                raise ValueError(
+                    f"unknown or empty company analysis batch: {company_id}"
+                )
+            company = next(
+                (
+                    candidate
+                    for candidate in assignment_result.companies
+                    if candidate.company_id == company_id
+                ),
+                None,
+            )
+            if company is None:
+                raise ValueError(f"unknown lightweight company: {company_id}")
+            existing_profile = self.profile_repository.list_company_profiles(run_id).get(
+                company_id
+            )
+            if existing_profile is not None and repair_round is None:
+                return {
+                    "company_id": company_id,
+                    "publication_count": len(fingerprint_batch),
+                    "category_count": len(existing_profile.technology_categories),
+                    "recovered": True,
+                    "input_mode": "LIGHTWEIGHT_DIRECTION",
+                    "repair_round": repair_round,
+                }
+            classification = await self.company_classifier.classify_fingerprints(
+                company=company,
+                fingerprints=sorted(
+                    fingerprint_batch,
+                    key=lambda item: item.publication_number,
+                ),
+            )
+            categories = classification.technology_categories
+            profile = CompanyTechnologyProfile(
+                overall_summary="；".join(category.summary for category in categories),
+                technology_directions=[
+                    category.name for category in categories
+                ],
+                technology_categories=categories,
+                limitations=[],
+            )
+            self.profile_repository.put_company_profile(
+                run_id,
+                company_id=company_id,
+                profile=profile,
+            )
+            return {
+                "company_id": company_id,
+                "publication_count": len(fingerprint_batch),
+                "category_count": len(categories),
+                "recovered": False,
+                "input_mode": "LIGHTWEIGHT_DIRECTION",
+                "repair_round": repair_round,
+            }
+
+        existing = self.profile_repository.list_company_profiles(run_id)
+        profile = existing.get(company_id)
+        force_rebuild = repair_round is not None
+        if force_rebuild and repair_round < 1:
+            raise ValueError("company repair requires repair_round >= 1")
+        recovered = profile is not None
+        if profile is not None and not force_rebuild:
+            validate_company_technology_classification(
+                batch,
+                CompanyTechnologyClassification(
+                    technology_categories=profile.technology_categories
+                ),
+            )
+        else:
+            classification = await self.company_classifier.classify(batch)
+            profile = await self.company_profiler.build(batch, classification)
+            if force_rebuild:
+                self.profile_repository.put_repaired_company_profile(
+                    run_id,
+                    repair_round=repair_round,
+                    company_id=company_id,
+                    profile=profile,
+                )
+            else:
+                self.profile_repository.put_company_profile(
+                    run_id,
+                    company_id=company_id,
+                    profile=profile,
+                )
+        return {
+            "company_id": company_id,
+            "publication_count": len(batch.items),
+            "category_count": len(profile.technology_categories),
+            "recovered": recovered and not force_rebuild,
+            "repair_round": repair_round,
+        }
 
     async def handle_step(
         self, run_id: str, step: LandscapeWorkflowStep, attempt: int
@@ -71,11 +389,453 @@ class LandscapeExecutionService:
             LandscapeWorkflowStep.SEARCH_PUBLICATIONS: self.search_publications,
             LandscapeWorkflowStep.FILTER_AND_SELECT: self.filter_and_select,
             LandscapeWorkflowStep.FETCH_DETAILS: self.fetch_details,
-            LandscapeWorkflowStep.ANALYZE_PATENTS: self.analyze_patents,
-            LandscapeWorkflowStep.CLUSTER_PATENTS: self.cluster_patents,
+            # Deep analysis is an optional post-trend enrichment. The main
+            # workflow must not block company trends on one large per-patent
+            # model fan-out.
+            LandscapeWorkflowStep.ANALYZE_PATENTS: self.defer_deep_analysis,
+            LandscapeWorkflowStep.ANALYZE_COMPANIES: self.analyze_companies,
+            LandscapeWorkflowStep.ANALYZE_CROSS_COMPANY_TRENDS: (
+                self.analyze_cross_company_trends
+            ),
+            LandscapeWorkflowStep.VERIFY_COVERAGE: self.verify_coverage,
+            LandscapeWorkflowStep.REPAIR_GAPS: self.repair_coverage_gaps,
             LandscapeWorkflowStep.BUILD_REPORT: self.build_report,
         }
         return await handlers[step](run_id)
+
+    async def defer_deep_analysis(self, run_id: str) -> dict[str, Any]:
+        """Record that deep analysis is deferred to selected patents."""
+        return {
+            "input_mode": "DEFERRED_OPTIONAL",
+            "target_count": 0,
+            "selected_publications": [],
+            "attempted_publications": [],
+            "analyzed_count": 0,
+            "failures": {},
+            "complete": True,
+        }
+
+    async def analyze_selected_patents(self, run_id: str) -> dict[str, Any]:
+        """Deep-analyze only the persisted deterministic selection."""
+        raw = self.database.get_stage_result(
+            run_id, LandscapeWorkflowStep.ANALYZE_COMPANIES.value
+        )["value"]
+        selected = [
+            item["publication_number"]
+            for item in raw.get("deep_selection", [])
+            if item.get("publication_number")
+        ]
+        docs = (
+            self.fetch_repository.list_fetched_documents(run_id)
+            if self.fetch_repository is not None
+            else {}
+        )
+        existing = (
+            self.analysis_repository.list_patent_analyses(run_id)
+            if self.analysis_repository is not None
+            else {}
+        )
+        pending = [
+            (document_id(publication), docs[publication])
+            for publication in selected
+            if publication in docs and publication not in existing
+        ]
+        direction_terms = self.load_plan(run_id).direction_terms
+        analyses, failures = await self._analyze_many(
+            run_id=run_id,
+            documents=pending,
+            direction_terms=direction_terms,
+            batch_size=self.scope(run_id).budget.analysis_limit,
+        )
+        if self.analysis_repository is not None:
+            for publication, analysis in analyses.items():
+                self.analysis_repository.put_patent_analysis(
+                    run_id,
+                    document_id=document_id(publication),
+                    analysis=analysis,
+                )
+        selected_set = set(selected)
+        succeeded = selected_set & (set(existing) | set(analyses))
+        return {
+            "input_mode": "SELECTED_DEEP_ANALYSIS",
+            "selected_count": len(selected),
+            "attempted_count": len(pending),
+            "analyzed_count": len(succeeded),
+            "resumed_count": len(selected_set & set(existing)),
+            "failures": failures,
+            "missing_documents": sorted(set(selected) - set(docs)),
+        }
+
+    async def analyze_companies(self, run_id: str) -> dict[str, Any]:
+        if (
+            self.company_repository is None
+            or self.analysis_repository is None
+            or self.company_fanout is None
+        ):
+            raise RuntimeError(
+                "company fan-out requires assignment, analysis and fan-out services"
+            )
+        fingerprints = self._prepare_direction_fingerprints(run_id)
+        assignments = self.company_repository.list_company_assignments(run_id)
+        analyses = self.analysis_repository.list_patent_analyses(run_id)
+        if fingerprints:
+            company_ids = sorted(
+                {item.company_id for item in fingerprints.values()}
+            )
+        else:
+            batches = build_company_analysis_batches(assignments, analyses)
+            company_ids = [batch.company_id for batch in batches]
+        completed = await self.company_fanout.execute(run_id, company_ids)
+        deep_selection = []
+        if fingerprints:
+            try:
+                ranking_rows = self.database.get_stage_result(
+                    run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value
+                )["value"]["result"]["ranking"]
+                ranking = {
+                    item["publication_number"]: {
+                        "technical_relevance": item.get("technical_relevance", 0.5),
+                        "query_consensus": min(
+                            1.0, float(item.get("query_coverage", 1)) / 3
+                        ),
+                        "recency": item.get("recency_score", 0.5),
+                    }
+                    for item in ranking_rows
+                }
+            except (AttributeError, KeyError, TypeError):
+                ranking = {}
+            deep_selection = [
+                asdict(item)
+                for item in select_deep_patents(
+                    fingerprints,
+                    ranking=ranking,
+                    limit=self.scope(run_id).budget.analysis_limit,
+                )
+            ]
+        return {
+            "company_count": len(company_ids),
+            "company_ids": company_ids,
+            "completed_company_ids": completed,
+            "input_mode": (
+                "LIGHTWEIGHT_DIRECTION" if fingerprints else "DEEP_ANALYSIS"
+            ),
+            "direction_fingerprints": (
+                [
+                    item.model_dump(mode="json")
+                    for item in sorted(
+                        fingerprints.values(),
+                        key=lambda item: item.publication_number,
+                    )
+                ]
+                if fingerprints
+                else []
+            ),
+            "deep_selection": deep_selection,
+        }
+
+    async def analyze_cross_company_trends(
+        self, run_id: str, *, repair_round: int | None = None
+    ) -> dict[str, Any]:
+        if (
+            self.profile_repository is None
+            or self.analysis_repository is None
+            or self.fetch_repository is None
+            or self.trend_repository is None
+        ):
+            raise RuntimeError(
+                "trend analysis requires profile, analysis, fetch and trend repositories"
+            )
+        scope = self.scope(run_id)
+        profiles = self.profile_repository.list_company_profiles(run_id)
+        analyses = self.analysis_repository.list_patent_analyses(run_id)
+        documents = self.fetch_repository.list_fetched_documents(run_id)
+        fingerprints = self._load_direction_fingerprints(run_id)
+        if fingerprints:
+            publication_dates = {}
+            for publication, fingerprint in fingerprints.items():
+                raw_date = fingerprint.publication_date
+                if not raw_date:
+                    raise ValueError(
+                        f"trend input lacks publication date: {publication}"
+                    )
+                publication_dates[publication] = date.fromisoformat(raw_date[:10])
+        else:
+            publication_dates = {}
+            source_publications = analyses
+            for publication in source_publications:
+                document = documents.get(publication)
+                if document is None or not document.publication_date:
+                    raise ValueError(
+                        f"trend input lacks publication date: {publication}"
+                    )
+                publication_dates[publication] = date.fromisoformat(
+                    document.publication_date[:10]
+                )
+        time_basis = TrendTimeBasis(
+            start=scope.publication_start,
+            end=scope.publication_end,
+            bucket="QUARTER",
+        )
+        existing = self.trend_repository.list_cross_company_analysis(run_id)
+        force_rebuild = repair_round is not None
+        if force_rebuild and repair_round < 1:
+            raise ValueError("trend repair requires repair_round >= 1")
+        recovered = existing is not None and not force_rebuild
+        if existing is not None and not force_rebuild:
+            _validate_recovered_trends(
+                existing,
+                profiles=profiles,
+                analyses=analyses,
+                publication_dates=publication_dates,
+                time_basis=time_basis,
+                fingerprints=fingerprints or None,
+            )
+            analysis = existing
+        else:
+            analysis = await self.company_trends.analyze(
+                profiles=profiles,
+                analyses=analyses,
+                publication_dates=publication_dates,
+                time_basis=time_basis,
+                fingerprints=fingerprints or None,
+            )
+            if force_rebuild:
+                self.trend_repository.put_repaired_cross_company_analysis(
+                    run_id, repair_round=repair_round, analysis=analysis
+                )
+            else:
+                self.trend_repository.put_cross_company_analysis(run_id, analysis)
+        return {
+            "trend_count": len(analysis.trends),
+            "company_count": len(profiles),
+            "recovered": recovered,
+            "repair_round": repair_round,
+        }
+
+    async def repair_gaps(
+        self,
+        run_id: str,
+        *,
+        audit: LandscapeCoverageAudit,
+        repair_round: int,
+    ) -> dict[str, Any]:
+        """Execute one bounded repair plan without revisiting search or scope."""
+        if repair_round < 1:
+            raise ValueError("repair execution requires repair_round >= 1")
+        if (
+            self.candidate_repository is None
+            or self.company_repository is None
+            or self.fetch_repository is None
+            or self.analysis_repository is None
+        ):
+            raise RuntimeError("repair execution requires landscape repositories")
+        candidates = self.candidate_repository.list_candidates(run_id)
+        plan = build_repair_plan(
+            audit,
+            eligible_publications=[
+                candidate["publication_number"] for candidate in candidates
+            ],
+            assignment_result=self.company_repository.list_company_assignments(run_id),
+        )
+        selected_by_publication = (
+            {
+                hit.publication_number: hit
+                for hit in self.selected_hits(run_id)
+            }
+            if plan.fetch_publications
+            else {}
+        )
+        missing_hits = sorted(
+            set(plan.fetch_publications) - set(selected_by_publication)
+        )
+        if missing_hits:
+            raise ValueError(
+                "repair targets are absent from frozen selected hits: "
+                + ", ".join(missing_hits)
+            )
+
+        documents = self.fetch_repository.list_fetched_documents(run_id)
+        fetch_targets = [
+            selected_by_publication[publication]
+            for publication in plan.fetch_publications
+            if publication not in documents
+        ]
+        fetched, fetch_failures = await self._fetch_for_run(
+            run_id,
+            fetch_targets,
+            batch_size=self.scope(run_id).budget.analysis_limit,
+        )
+        documents.update(fetched)
+        self.documents[run_id] = documents
+        for publication, document in fetched.items():
+            self.fetch_repository.put_fetch_success(
+                run_id,
+                document_id=document_id(publication),
+                publication_number=publication,
+                document=document,
+            )
+            self.database.put_document(
+                run_id,
+                document_id=document_id(publication),
+                publication_number=publication,
+                status="FETCHED",
+                metadata=_document_metadata(document),
+            )
+        for publication, error in fetch_failures.items():
+            self.fetch_repository.put_fetch_failure(
+                run_id,
+                document_id=document_id(publication),
+                publication_number=publication,
+                error_message=error,
+            )
+
+        analyses = self.analysis_repository.list_patent_analyses(run_id)
+        if plan.analyze_publications:
+            scope = self.scope(run_id)
+            direction_terms = self.load_plan(run_id).direction_terms or (
+                [scope.technology_direction] if scope.technology_direction else []
+            )
+        else:
+            direction_terms = []
+        analysis_targets = [
+            (document_id(publication), documents[publication])
+            for publication in plan.analyze_publications
+            if publication in documents and publication not in analyses
+        ]
+        new_analyses, analysis_failures = await self._analyze_many(
+            run_id=run_id,
+            documents=analysis_targets,
+            direction_terms=direction_terms,
+            batch_size=self.scope(run_id).budget.analysis_limit,
+        )
+        for publication in new_analyses:
+            self.database.put_document(
+                run_id,
+                document_id=document_id(publication),
+                publication_number=publication,
+                status="ANALYZED",
+                metadata=_document_metadata(documents[publication]),
+            )
+
+        if plan.rebuild_lightweight_fingerprints:
+            refreshed_fingerprints = self._prepare_direction_fingerprints(run_id)
+            if not refreshed_fingerprints:
+                raise ValueError(
+                    "lightweight repair could not rebuild direction fingerprints"
+                )
+
+        rebuilt_companies = []
+        for company_id in plan.rebuild_company_ids:
+            result = await self.analyze_company(
+                run_id, company_id, repair_round=repair_round
+            )
+            rebuilt_companies.append(result["company_id"])
+        trend_result = None
+        if plan.rebuild_cross_company_trends:
+            trend_result = await self.analyze_cross_company_trends(
+                run_id, repair_round=repair_round
+            )
+        return {
+            "repair_round": repair_round,
+            "repair_targets": audit.repair_targets,
+            "fetched_publications": sorted(fetched),
+            "fetch_failures": fetch_failures,
+            "analyzed_publications": sorted(new_analyses),
+            "analysis_failures": analysis_failures,
+            "rebuilt_company_ids": rebuilt_companies,
+            "trend_rebuilt": trend_result is not None,
+        }
+
+    async def verify_coverage(
+        self, run_id: str, *, force_recheck: bool = False
+    ) -> dict[str, Any]:
+        if (
+            self.candidate_repository is None
+            or self.company_repository is None
+            or self.fetch_repository is None
+            or self.analysis_repository is None
+            or self.profile_repository is None
+            or self.trend_repository is None
+            or self.audit_repository is None
+        ):
+            raise RuntimeError("coverage audit requires all landscape repositories")
+
+        def compute_audit(repair_round: int) -> LandscapeCoverageAudit:
+            analyses = self.analysis_repository.list_patent_analyses(run_id)
+            evidence = {
+                publication: {
+                    reference.evidence_id
+                    for reference in analysis.evidence_refs
+                }
+                for publication, analysis in analyses.items()
+            }
+            fingerprints = self._load_direction_fingerprints(run_id)
+            if fingerprints:
+                evidence = {
+                    publication: {
+                        item.evidence_id for item in fingerprint.evidence
+                    }
+                    for publication, fingerprint in fingerprints.items()
+                }
+            return audit_company_trend_coverage(
+                eligible_publications=[
+                    candidate["publication_number"]
+                    for candidate in self.candidate_repository.list_candidates(run_id)
+                ],
+                assignment_result=self.company_repository.list_company_assignments(run_id),
+                fetched_publications=set(
+                    self.fetch_repository.list_fetched_documents(run_id)
+                ),
+                analyses=analyses,
+                profiles=self.profile_repository.list_company_profiles(run_id),
+                trends=self.trend_repository.list_cross_company_analysis(run_id),
+                valid_evidence_ids_by_publication=evidence,
+                lightweight_fingerprints=fingerprints or None,
+                repair_round=repair_round,
+                max_repair_rounds=1,
+            )
+
+        existing = self.audit_repository.list_coverage_audits(run_id)
+        if existing and not force_recheck:
+            audit = existing[-1]
+            recovered = True
+            repair_round = len(existing) - 1
+        else:
+            repair_round = len(existing)
+            audit = compute_audit(repair_round)
+            self.audit_repository.put_coverage_audit(
+                run_id,
+                repair_round=repair_round,
+                audit=audit,
+            )
+            recovered = False
+        if audit.decision == "FAIL":
+            raise NonRetryableLandscapeWorkflowError(
+                "coverage audit rejected corrupt landscape result"
+            )
+        return {
+            "decision": audit.decision,
+            "coverage_ratio": audit.coverage_ratio,
+            "repair_round": repair_round,
+            "missing_publications": audit.missing_publications,
+            "repair_targets": audit.repair_targets,
+            "limitations": audit.limitations,
+            "recovered": recovered,
+            "repair": None,
+        }
+
+    async def repair_coverage_gaps(self, run_id: str) -> dict[str, Any]:
+        if self.audit_repository is None:
+            raise RuntimeError("repair execution requires coverage audit repository")
+        history = self.audit_repository.list_coverage_audits(run_id)
+        if not history or history[-1].decision != "REPAIR":
+            raise ValueError("repair requires latest audit decision REPAIR")
+        repair_round = len(history)
+        repair = await self.repair_gaps(
+            run_id, audit=history[-1], repair_round=repair_round
+        )
+        verification = await self.verify_coverage(run_id, force_recheck=True)
+        return {**verification, "repair": repair}
 
     async def validate_scope(self, run_id: str) -> dict[str, Any]:
         scope = self.scope(run_id)
@@ -95,11 +855,11 @@ class LandscapeExecutionService:
             except Exception as exc:
                 alias_plan = fallback_alias_plan(scope.competitors)
                 alias_error = f"{type(exc).__name__}: {str(exc)[:500]}"
-            effective_scope = scope_with_alias_plan(scope, alias_plan)
+            search_scope = scope_with_alias_plan(scope, alias_plan)
         else:
             alias_plan = None
-            effective_scope = scope
-        plan = build_deterministic_query_plan(effective_scope, direction_expansion)
+            search_scope = scope
+        plan = build_deterministic_query_plan(search_scope, direction_expansion)
         self.database.put_queries(
             run_id,
             [
@@ -112,9 +872,24 @@ class LandscapeExecutionService:
                 for index, query in enumerate(plan.queries, start=1)
             ],
         )
+        alias_output = []
+        if alias_plan is not None:
+            scope_by_primary = {
+                competitor.name.casefold(): competitor
+                for competitor in scope.competitors
+            }
+            alias_output = [
+                {
+                    **item,
+                    "assignee_scope": scope_by_primary[
+                        item["primary_name"].casefold()
+                    ].assignee_scope.value,
+                }
+                for item in alias_plan.model_dump(mode="json")["competitors"]
+            ]
         return {
             "plan": plan.model_dump(mode="json"),
-            "competitor_aliases": alias_plan.model_dump(mode="json")["competitors"] if alias_plan else [],
+            "competitor_aliases": alias_output,
             "technical_direction_expansion": (
                 direction_expansion.model_dump(mode="json")
                 if direction_expansion
@@ -124,7 +899,7 @@ class LandscapeExecutionService:
         }
 
     async def search_publications(self, run_id: str) -> dict[str, Any]:
-        scope = self.effective_scope(run_id)
+        scope = self.search_scope(run_id)
         plan = self.load_plan(run_id)
         results = await execute_provider_queries(
             scope=scope,
@@ -136,7 +911,12 @@ class LandscapeExecutionService:
         return {"results": [result.model_dump(mode="json") for result in results]}
 
     async def filter_and_select(self, run_id: str) -> dict[str, Any]:
-        scope = self.effective_scope(run_id)
+        # The effective registry preserves the user-owned primary company and
+        # assignee scope, while adding reconciled aliases.  It is the one
+        # authority for filter decisions, candidate counts, PRIMARY assignment,
+        # and the durable hit ledger.
+        scope = self.scope(run_id)
+        effective_scope = self.search_scope(run_id)
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.SEARCH_PUBLICATIONS.value)["value"]
         results = [ProviderResult.model_validate(item) for item in raw["results"]]
         results = await self._enrich_missing_dates(run_id, results)
@@ -144,13 +924,13 @@ class LandscapeExecutionService:
         statuses = {f"{result.request_id}:{result.provider}": result.status.value for result in results}
         result = strict_filter_and_select(
             batches,
-            scope=scope,
+            scope=effective_scope,
             provider_statuses=statuses,
             direction_terms=self.load_plan(run_id).direction_terms,
         )
         for provider_result in results:
             for hit in provider_result.hits:
-                reason = exclusion_reason(hit, scope)
+                reason = exclusion_reason(hit, effective_scope)
                 decision = "ELIGIBLE" if reason is None else "EXCLUDED"
                 hit_id = _hit_id(run_id, provider_result.request_id, hit)
                 self.database.put_hit(
@@ -162,68 +942,123 @@ class LandscapeExecutionService:
                     application_number=hit.application_number,
                     publication_date=hit.publication_date,
                     assignee=hit.assignee,
-                    normalized_key=hit.publication_number,
+                    normalized_key=normalize_publication_number(hit.publication_number),
                     decision=decision,
                     exclusion_reason=reason.value if reason else None,
                     raw=hit.model_dump(mode="json"),
                 )
+        if self.candidate_repository is not None:
+            ranking_by_publication = {
+                item.publication_number: item
+                for item in result.ranking
+            }
+            self.candidate_repository.put_candidates(
+                run_id,
+                [
+                    {
+                        "document_id": document_id(candidate.publication_number or ""),
+                        "publication_number": candidate.publication_number,
+                        "normalized_key": candidate.publication_number,
+                        "rank": rank,
+                        "decision": "ELIGIBLE",
+                        "metadata": {
+                            "title": candidate.title,
+                            "application_number": candidate.application_number,
+                            "family_id": candidate.family_id,
+                            "family_publication_numbers": family_publication_numbers(
+                                candidate
+                            ),
+                            "priority_date": candidate.priority_date,
+                            "filing_date": candidate.filing_date,
+                            "publication_date": candidate.publication_date,
+                            "assignee": candidate.assignee,
+                            "found_by": sorted(candidate.found_by),
+                            "query_ids": sorted(candidate.query_ids),
+                            "ranking": (
+                                {
+                                    **ranking_by_publication[
+                                        candidate.publication_number
+                                    ].model_dump(mode="json"),
+                                    "reasons": sorted(
+                                        ranking_by_publication[
+                                            candidate.publication_number
+                                        ].reasons
+                                    ),
+                                }
+                                if candidate.publication_number in ranking_by_publication
+                                else None
+                            ),
+                        },
+                    }
+                    for rank, candidate in enumerate(result.candidates, start=1)
+                ],
+            )
+        company_result = assign_companies(
+            result.candidates,
+            effective_scope,
+            user_confirmed_competitors=(
+                effective_scope.competitors if effective_scope.competitors else None
+            ),
+        )
+        result = _reconcile_search_company_view(result, company_result)
+        if self.company_repository is not None:
+            self.company_repository.put_company_assignments(
+                run_id,
+                scope=effective_scope,
+                result=company_result,
+            )
+        if result.coverage.candidate_limit_exceeded:
+            raise LandscapeCandidateLimitExceededError(
+                unique_candidate_count=result.coverage.unique_candidate_count,
+                candidate_limit=scope.budget.candidate_limit,
+            )
         return {
             "result": result.model_dump(mode="json"),
             "enrichment": self.enrichment_stats.get(run_id, {}),
+            "company_assignment": {
+                "company_count": len(company_result.companies),
+                "assignment_count": len(company_result.assignments),
+                "company_ids": [
+                    company.company_id for company in company_result.companies
+                ],
+            },
         }
 
     async def fetch_details(self, run_id: str) -> dict[str, Any]:
-        scope = self.effective_scope(run_id)
-        filtered = self.database.get_stage_result(
-            run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value
-        )["value"]["result"]
-        company_counts = [
-            CompanyPatentCount.model_validate(item)
-            for item in filtered.get("coverage", {}).get("company_patent_counts", [])
-        ]
         candidates = self.selected_hits(run_id)
-        ordered = weighted_analysis_selection(
-            candidates,
-            scope=scope,
-            company_patent_counts=company_counts,
+        docs = (
+            self.fetch_repository.list_fetched_documents(run_id)
+            if self.fetch_repository is not None
+            else {}
         )
-        target = min(scope.budget.analysis_limit, len(ordered))
-        companies = {
-            candidate_company(candidate, scope) for candidate in candidates
-        }
-        docs: dict[str, FetchedDocument] = {}
-        failures: dict[str, str] = {}
-        attempted: list[MergedHit] = []
-        batch = ordered[:target]
-        remaining = ordered[target:]
-        while len(docs) < target and batch:
-            attempted.extend(batch)
-            fetched, batch_failures = await self._fetch_documents(run_id, batch)
-            docs.update(fetched)
-            failures.update(batch_failures)
-            needed = target - len(docs)
-            failed_companies = [
-                candidate_company(hit, scope)
-                for hit in batch
-                if (hit.publication_number or hit.title) in batch_failures
-            ]
-            next_batch: list[MergedHit] = []
-            for company in failed_companies:
-                replacement = next(
-                    (
-                        hit
-                        for hit in remaining
-                        if candidate_company(hit, scope) == company
-                    ),
-                    None,
-                )
-                if replacement is not None:
-                    remaining.remove(replacement)
-                    next_batch.append(replacement)
-            while len(next_batch) < needed and remaining:
-                next_batch.append(remaining.pop(0))
-            batch = next_batch[:needed]
+        pending = [
+            hit
+            for hit in candidates
+            if hit.publication_number not in docs
+        ]
+        fetched, failures = await self._fetch_for_run(
+            run_id,
+            pending,
+            batch_size=self.scope(run_id).budget.analysis_limit,
+        )
+        docs.update(fetched)
         self.documents[run_id] = docs
+        for publication, document in fetched.items():
+            if self.fetch_repository is not None:
+                self.fetch_repository.put_fetch_success(
+                    run_id,
+                    document_id=document_id(publication),
+                    publication_number=publication,
+                    document=document,
+                )
+        for publication, error in failures.items():
+            if self.fetch_repository is not None:
+                self.fetch_repository.put_fetch_failure(
+                    run_id,
+                    document_id=document_id(publication),
+                    publication_number=publication,
+                    error_message=error,
+                )
         for publication, document in docs.items():
             self.database.put_document(
                 run_id,
@@ -232,28 +1067,17 @@ class LandscapeExecutionService:
                 status="FETCHED",
                 metadata=_document_metadata(document),
             )
-        for publication, error in failures.items():
-            self.database.put_document(
-                run_id,
-                document_id=document_id(publication),
-                publication_number=publication,
-                status="FAILED",
-                metadata={"publication_number": publication},
-                error_code="FETCH_FAILED",
-                error_message=error,
-            )
         return {
-            "target_count": target,
+            "target_count": len(candidates),
             "selected_publications": [
-                hit.publication_number for hit in ordered[:target] if hit.publication_number
+                hit.publication_number for hit in candidates if hit.publication_number
             ],
             "attempted_publications": [
-                hit.publication_number for hit in attempted if hit.publication_number
+                hit.publication_number for hit in pending if hit.publication_number
             ],
             "fetched_publications": sorted(docs),
-            "backfilled_count": max(0, len(attempted) - target),
-            "company_coverage_complete": target >= len(companies),
-            "company_count": len(companies),
+            "resumed_fetched_count": len(docs) - len(fetched),
+            "complete": len(docs) == len(candidates),
             "failures": failures,
         }
 
@@ -261,25 +1085,52 @@ class LandscapeExecutionService:
         scope = self.scope(run_id)
         docs = self.documents.get(run_id)
         if docs is None:
-            fetch_result = self.database.get_stage_result(
-                run_id, LandscapeWorkflowStep.FETCH_DETAILS.value
-            )["value"]
-            fetched_publications = set(fetch_result.get("fetched_publications", []))
-            selected = [
-                hit
-                for hit in self.selected_hits(run_id)
-                if hit.publication_number in fetched_publications
-            ][: scope.budget.analysis_limit]
-            docs, _ = await self._fetch_documents(run_id, selected)
+            if self.fetch_repository is not None:
+                docs = self.fetch_repository.list_fetched_documents(run_id)
+            else:
+                fetch_result = self.database.get_stage_result(
+                    run_id, LandscapeWorkflowStep.FETCH_DETAILS.value
+                )["value"]
+                fetched_publications = set(
+                    fetch_result.get("fetched_publications", [])
+                )
+                selected = [
+                    hit
+                    for hit in self.selected_hits(run_id)
+                    if hit.publication_number in fetched_publications
+                ]
+                docs, _ = await self._fetch_for_run(
+                    run_id,
+                    selected,
+                    batch_size=scope.budget.analysis_limit,
+                )
             self.documents[run_id] = docs
+        analyses = (
+            self.analysis_repository.list_patent_analyses(run_id)
+            if self.analysis_repository is not None
+            else {}
+        )
+        outside_fetched = sorted(set(analyses) - set(docs))
+        if outside_fetched:
+            raise ValueError(
+                "persisted analyses reference documents outside fetched set: "
+                + ", ".join(outside_fetched)
+            )
         plan = self.load_plan(run_id)
         direction_terms = plan.direction_terms or ([scope.technology_direction] if scope.technology_direction else [])
-        analyses, failures = await self.analysis.analyze_many(
+        pending = [
+            (document_id(publication), document)
+            for publication, document in sorted(docs.items())
+            if publication not in analyses
+        ]
+        new_analyses, failures = await self._analyze_many(
             run_id=run_id,
-            documents=[(document_id(publication), document) for publication, document in docs.items()],
+            documents=pending,
             direction_terms=direction_terms,
+            batch_size=scope.budget.analysis_limit,
         )
-        for publication in analyses:
+        analyses.update(new_analyses)
+        for publication in new_analyses:
             self.database.put_document(
                 run_id,
                 document_id=document_id(publication),
@@ -287,49 +1138,143 @@ class LandscapeExecutionService:
                 status="ANALYZED",
                 metadata=_document_metadata(docs[publication]),
             )
-        return {"analyses": {key: value.model_dump(mode="json") for key, value in analyses.items()}, "failures": failures}
+        return {
+            "target_count": len(docs),
+            "resumed_analysis_count": len(analyses) - len(new_analyses),
+            "analyzed_count": len(analyses),
+            "complete": len(analyses) == len(docs),
+            "analyses": {
+                key: value.model_dump(mode="json")
+                for key, value in sorted(analyses.items())
+            },
+            "failures": failures,
+        }
 
-    async def cluster_patents(self, run_id: str) -> dict[str, Any]:
-        raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.ANALYZE_PATENTS.value)["value"]
+    async def build_report(
+        self,
+        run_id: str,
+        *,
+        deep_analysis: dict[str, Any] | None = None,
+        allow_report_revision: bool = False,
+    ) -> dict[str, Any]:
         from .schemas import LandscapePatentAnalysis
-
-        analyses = {key: LandscapePatentAnalysis.model_validate(value) for key, value in raw["analyses"].items()}
-        if not analyses:
-            self.cluster_failures[run_id] = "没有成功精读文献，无法形成技术聚类。"
-            return {"clusters": [], "failure": self.cluster_failures[run_id]}
-        docs = self.documents.get(run_id, {})
-        metadata = {publication: {"title": document.title, "abstract": document.abstract_text} for publication, document in docs.items()}
-        try:
-            plan = await self.clustering.cluster(analyses, metadata)
-        except LandscapeClusteringError as exc:
-            self.cluster_failures[run_id] = str(exc)
-            return {"clusters": [], "failure": str(exc)}
-        clusters = plan.model_dump(mode="json")["clusters"]
-        self.database.put_clusters(run_id, clusters, {publication: document_id(publication) for publication in analyses})
-        return {"clusters": clusters}
-
-    async def build_report(self, run_id: str) -> dict[str, Any]:
-        from .schemas import LandscapeClusterPlan, LandscapePatentAnalysis
 
         run = self.database.get_run(run_id)
         coverage = self.database.get_stage_result(run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value)["value"]["result"]["coverage"]
-        analysis_raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.ANALYZE_PATENTS.value)["value"]
-        analyses = {key: LandscapePatentAnalysis.model_validate(value) for key, value in analysis_raw["analyses"].items()}
-        cluster_raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.CLUSTER_PATENTS.value)["value"]
-        clusters = LandscapeClusterPlan.model_validate({"clusters": cluster_raw["clusters"]}) if cluster_raw["clusters"] else None
+        try:
+            analysis_raw = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.ANALYZE_PATENTS.value
+            )["value"]
+        except KeyError:
+            analysis_raw = {
+                "input_mode": "DEFERRED_OPTIONAL",
+                "analyses": {},
+                "failures": {},
+            }
+        analyses = (
+            self.analysis_repository.list_patent_analyses(run_id)
+            if self.analysis_repository is not None
+            else {
+                key: LandscapePatentAnalysis.model_validate(value)
+                for key, value in analysis_raw["analyses"].items()
+            }
+        )
+        documents = self.documents.get(run_id)
+        if documents is None:
+            documents = (
+                self.fetch_repository.list_fetched_documents(run_id)
+                if self.fetch_repository is not None
+                else {}
+            )
+            self.documents[run_id] = documents
+        profiles = (
+            self.profile_repository.list_company_profiles(run_id)
+            if self.profile_repository is not None
+            else {}
+        )
+        cross_company_analysis = (
+            self.trend_repository.list_cross_company_analysis(run_id)
+            if self.trend_repository is not None
+            else None
+        )
+        audit_history = (
+            self.audit_repository.list_coverage_audits(run_id)
+            if self.audit_repository is not None
+            else []
+        )
+        company_trend_coverage = (
+            {
+                "decision": audit_history[-1].decision,
+                "coverage_ratio": audit_history[-1].coverage_ratio,
+                "repair_round": len(audit_history) - 1,
+                "repair_targets": audit_history[-1].repair_targets,
+                "limitations": audit_history[-1].limitations,
+            }
+            if audit_history
+            else None
+        )
+        company_trend_coverage_history = (
+            [
+                {
+                    "repair_round": index,
+                    "decision": audit.decision,
+                    "coverage_ratio": audit.coverage_ratio,
+                    "repair_targets": audit.repair_targets,
+                    "limitations": audit.limitations,
+                }
+                for index, audit in enumerate(audit_history)
+            ]
+            if self.audit_repository is not None
+            else []
+        )
         limitations = self.collect_limitations(run_id)
+        try:
+            company_raw = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.ANALYZE_COMPANIES.value
+            )["value"]
+            selected_for_deep = [
+                item["publication_number"]
+                for item in company_raw.get("deep_selection", [])
+                if item.get("publication_number")
+            ]
+        except KeyError:
+            selected_for_deep = []
+        deep_read = {
+            "status": (
+                "EXECUTED"
+                if analyses or (deep_analysis and deep_analysis.get("attempted_count"))
+                else "NOT_STARTED"
+            ),
+            "selected_count": len(selected_for_deep),
+            "selected_publications": selected_for_deep,
+            "succeeded_count": len(analyses),
+            "failed_count": len((deep_analysis or {}).get("failures", {})),
+            "pending_count": max(
+                0,
+                len(selected_for_deep)
+                - len(analyses)
+                - len((deep_analysis or {}).get("failures", {})),
+            ),
+            "last_execution": deep_analysis,
+        }
         report = build_report(
             run=run,
             coverage=coverage,
-            documents=self.documents.get(run_id, {}),
+            documents=documents,
             analyses=analyses,
-            clusters=clusters,
             failures=analysis_raw["failures"],
             limitations=limitations,
             searched_competitor_aliases=self.report_alias_output(run_id),
             technical_direction_expansion=self.direction_output(run_id),
+            company_profiles=profiles,
+            cross_company_analysis=cross_company_analysis,
+            company_trend_coverage=company_trend_coverage,
+            company_trend_coverage_history=company_trend_coverage_history,
+            deep_read=deep_read,
         )
-        self.report_service.save(run_id, report)
+        self.report_service.save(
+            run_id, report, allow_revision=allow_report_revision
+        )
         return {"report": report, "manifest": "manifest.json"}
 
     def collect_limitations(self, run_id: str) -> list[dict[str, Any]]:
@@ -337,14 +1282,7 @@ class LandscapeExecutionService:
         try:
             filtered = self.database.get_stage_result(run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value)["value"]["result"]
             coverage = filtered["coverage"]
-            if coverage["truncated_count"]:
-                limitations.append({"code": "CANDIDATE_LIMIT", "message": f"候选集合超出预算，截断 {coverage['truncated_count']} 件。"})
-            for key, count in coverage.get("excluded_counts", {}).items():
-                if count:
-                    limitations.append({"code": key, "message": f"严格范围过滤排除 {count} 条命中。"})
-            failed_providers = [key for key, status in coverage.get("provider_statuses", {}).items() if status not in {"SUCCESS", "EMPTY"}]
-            if failed_providers:
-                limitations.append({"code": "PROVIDER_FAILURE", "message": "部分 Provider 不可用：" + ", ".join(failed_providers)})
+            limitations.extend(coverage_limitations(coverage))
         except KeyError:
             pass
         try:
@@ -359,8 +1297,23 @@ class LandscapeExecutionService:
                 limitations.append({"code": "ANALYSIS_FAILURE", "message": f"{len(analysis['failures'])} 件专利精读失败。"})
         except KeyError:
             pass
-        if run_id in self.cluster_failures:
-            limitations.append({"code": "CLUSTER_FAILURE", "message": self.cluster_failures[run_id]})
+        try:
+            audit = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.VERIFY_COVERAGE.value
+            )["value"]
+            if audit.get("decision") == "LIMITED":
+                messages = audit.get("limitations") or [
+                    "公司趋势覆盖未达到完整报告门槛。"
+                ]
+                limitations.extend(
+                    {
+                        "code": "COVERAGE_LIMITED",
+                        "message": message,
+                    }
+                    for message in messages
+                )
+        except KeyError:
+            pass
         try:
             plan = self.database.get_stage_result(run_id, LandscapeWorkflowStep.PLAN_SEARCH.value)["value"]
             if plan.get("alias_resolution_error"):
@@ -407,7 +1360,8 @@ class LandscapeExecutionService:
         )["value"]
         return raw.get("technical_direction_expansion")
 
-    def effective_scope(self, run_id: str) -> LandscapeScope:
+    def search_scope(self, run_id: str) -> LandscapeScope:
+        """Return the shared runtime registry expanded with reconciled aliases."""
         from .schemas import CompetitorAliasPlan
 
         scope = self.scope(run_id)
@@ -420,8 +1374,118 @@ class LandscapeExecutionService:
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value)["value"]
         return [MergedHit.model_validate(item) for item in raw["result"]["candidates"]]
 
+    def _load_direction_fingerprints(
+        self, run_id: str
+    ) -> dict[str, LandscapeDirectionFingerprint]:
+        cached = self.direction_fingerprints.get(run_id)
+        if cached is not None:
+            return cached
+        try:
+            raw = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.ANALYZE_COMPANIES.value
+            )["value"].get("direction_fingerprints", [])
+        except (AttributeError, KeyError, TypeError):
+            return {}
+        loaded = {
+            item.publication_number: LandscapeDirectionFingerprint.model_validate(item)
+            for item in raw
+        }
+        self.direction_fingerprints[run_id] = loaded
+        return loaded
+
+    def _prepare_direction_fingerprints(
+        self, run_id: str
+    ) -> dict[str, LandscapeDirectionFingerprint] | None:
+        """Prepare all eligible direction signals when durable run data exists."""
+        try:
+            assignments = self.company_repository.list_company_assignments(run_id)
+            hits = self.selected_hits(run_id)
+            documents = (
+                self.fetch_repository.list_fetched_documents(run_id)
+                if self.fetch_repository is not None
+                else {}
+            )
+        except (AttributeError, KeyError, TypeError):
+            return None
+        company_by_publication = {
+            assignment.publication_number: assignment.primary_company_id
+            for assignment in assignments.assignments
+        }
+        output: dict[str, LandscapeDirectionFingerprint] = {}
+        for hit in hits:
+            publication = hit.publication_number
+            if not publication or publication not in company_by_publication:
+                continue
+            output[publication] = build_direction_fingerprint(
+                hit,
+                company_id=company_by_publication[publication],
+                document=documents.get(publication),
+                evidence_namespace=run_id,
+            )
+        if not output:
+            return None
+        if self.direction_evidence_repository is not None:
+            self.direction_evidence_repository.put_direction_evidence(
+                run_id,
+                [output[publication] for publication in sorted(output)],
+            )
+        self.direction_fingerprints[run_id] = output
+        return output
+
+    async def _analyze_many(
+        self,
+        *,
+        run_id: str,
+        documents: list[tuple[str, FetchedDocument]],
+        direction_terms: list[str],
+        batch_size: int,
+    ) -> tuple[dict[str, LandscapePatentAnalysis], dict[str, str]]:
+        """Call analysis implementations with a compatibility fallback.
+
+        Older test doubles and downstream adapters may still expose the
+        pre-batching signature. They must not prevent the production service
+        from adopting bounded batches.
+        """
+        try:
+            return await self.analysis.analyze_many(
+                run_id=run_id,
+                documents=documents,
+                direction_terms=direction_terms,
+                batch_size=batch_size,
+            )
+        except TypeError as exc:
+            if "batch_size" not in str(exc):
+                raise
+            return await self.analysis.analyze_many(
+                run_id=run_id,
+                documents=documents,
+                direction_terms=direction_terms,
+            )
+
+    async def _fetch_for_run(
+        self,
+        run_id: str,
+        hits: list[MergedHit],
+        *,
+        batch_size: int,
+    ) -> tuple[dict[str, FetchedDocument], dict[str, str]]:
+        try:
+            return await self._fetch_documents(
+                run_id,
+                hits,
+                batch_size=batch_size,
+            )
+        except TypeError as exc:
+            if "batch_size" not in str(exc):
+                raise
+            return await self._fetch_documents(run_id, hits)
+
     async def _fetch_documents(
-        self, run_id: str, hits: list[MergedHit]
+        self,
+        run_id: str,
+        hits: list[MergedHit],
+        *,
+        batch_size: int | None = None,
     ) -> tuple[dict[str, FetchedDocument], dict[str, str]]:
         semaphore = asyncio.Semaphore(3)
 
@@ -432,7 +1496,12 @@ class LandscapeExecutionService:
                     return hit.publication_number or hit.title, prefetched, None
                 return await self._fetch_one(run_id, hit)
 
-        results = await asyncio.gather(*(one(hit) for hit in hits))
+        size = max(1, batch_size or len(hits) or 1)
+        results = []
+        for offset in range(0, len(hits), size):
+            results.extend(
+                await asyncio.gather(*(one(hit) for hit in hits[offset : offset + size]))
+            )
         docs = {publication: document for publication, document, _ in results if document is not None}
         failures = {publication: error for publication, _, error in results if error is not None}
         return docs, failures
@@ -440,18 +1509,27 @@ class LandscapeExecutionService:
     async def _enrich_missing_dates(
         self, run_id: str, results: list[ProviderResult]
     ) -> list[ProviderResult]:
-        """Use a bounded details call to recover authoritative publication dates.
+        """Use bounded detail calls only when an authoritative date is missing.
 
-        Search indexes often omit patent-specific dates. The strict filter still rejects a
-        document when this enrichment cannot recover a real ISO publication date.
+        A date-recovery response also contributes its application/family identity
+        and is cached for FETCH_DETAILS. Missing family identity alone deliberately
+        does not trigger a details call: doing that here would turn deduplication
+        into an unbounded full-text crawl.
         """
         unique_requests: dict[tuple[str, str], SearchHit] = {}
         missing_hit_count = 0
+        missing_family_identity_count = 0
         for result in results:
             if not result.succeeded:
                 continue
             for hit in result.hits:
-                if hit.publication_date or not hit.publication_number:
+                if not hit.publication_number:
+                    continue
+                missing_date = not hit.publication_date
+                missing_family_identity = not hit.family_id
+                if missing_family_identity:
+                    missing_family_identity_count += 1
+                if not missing_date:
                     continue
                 missing_hit_count += 1
                 key = (hit.provider, hit.publication_number.replace(" ", "").upper())
@@ -463,6 +1541,7 @@ class LandscapeExecutionService:
         requests = list(unique_requests.items())[:enrichment_limit]
         self.enrichment_stats[run_id] = {
             "missing_hit_count": missing_hit_count,
+            "missing_family_identity_count": missing_family_identity_count,
             "unique_publication_count": len(unique_requests),
             "attempted_count": len(requests),
             "reused_hit_count": max(0, missing_hit_count - len(unique_requests)),
@@ -489,7 +1568,13 @@ class LandscapeExecutionService:
                 )
             if not fetched.succeeded or fetched.document is None:
                 return key, hit
-            document = fetched.document
+            document = fetched.document.model_copy(
+                update={
+                    "publication_date": (
+                        fetched.document.publication_date or hit.publication_date
+                    )
+                }
+            )
             if not document.publication_date:
                 return key, hit
             prefetched[hit.publication_number or ""] = document
@@ -498,6 +1583,9 @@ class LandscapeExecutionService:
                 hit.model_copy(
                     update={
                         "publication_date": document.publication_date,
+                        "application_number": (
+                            document.application_number or hit.application_number
+                        ),
                         "filing_date": document.filing_date or hit.filing_date,
                         "assignee": document.assignee or hit.assignee,
                         "title": document.title or hit.title,
@@ -552,6 +1640,198 @@ class LandscapeExecutionService:
     @staticmethod
     def query_key(run_id: str, index: int) -> str:
         return f"{run_id}:LQ-{index}"
+
+
+def coverage_limitations(coverage: dict[str, Any]) -> list[dict[str, str]]:
+    limitations: list[dict[str, str]] = []
+    raw_hit_count = int(coverage.get("raw_hit_count", 0))
+    unique_candidate_count = int(coverage.get("unique_candidate_count", 0))
+    statuses = list(coverage.get("provider_statuses", {}).values())
+    if statuses and all(status == "EMPTY" for status in statuses):
+        limitations.append(
+            {
+                "code": "SEARCH_EMPTY",
+                "message": "已启用的检索 Provider 未返回任何原始专利命中。",
+            }
+        )
+    elif raw_hit_count > 0 and unique_candidate_count == 0:
+        limitations.append(
+            {
+                "code": "NO_ELIGIBLE_PATENTS",
+                "message": "检索有返回，但没有专利同时满足公开日和友商范围。",
+            }
+        )
+    if coverage.get("truncated_count"):
+        limitations.append(
+            {
+                "code": "CANDIDATE_LIMIT",
+                "message": f"候选集合超出预算，截断 {coverage['truncated_count']} 件。",
+            }
+        )
+    for key, count in coverage.get("excluded_counts", {}).items():
+        if count:
+            limitations.append(
+                {"code": key, "message": f"严格范围过滤排除 {count} 条命中。"}
+            )
+    failed_providers = [
+        key
+        for key, status in coverage.get("provider_statuses", {}).items()
+        if status not in {"SUCCESS", "EMPTY"}
+    ]
+    if failed_providers:
+        limitations.append(
+            {
+                "code": "PROVIDER_FAILURE",
+                "message": "部分 Provider 不可用：" + ", ".join(failed_providers),
+            }
+        )
+    return limitations
+
+
+def _validate_recovered_trends(
+    analysis: CrossCompanyTrendAnalysis,
+    *,
+    profiles: dict[str, CompanyTechnologyProfile],
+    analyses: dict[str, LandscapePatentAnalysis],
+    publication_dates: dict[str, date],
+    time_basis: TrendTimeBasis,
+    fingerprints: dict[str, LandscapeDirectionFingerprint] | None = None,
+) -> None:
+    company_by_publication = {
+        publication: company_id
+        for company_id, profile in profiles.items()
+        for category in profile.technology_categories
+        for publication in category.publication_numbers
+    }
+    source_publications = set(fingerprints or analyses)
+    if set(company_by_publication) != source_publications:
+        raise ValueError(
+            "recovered trend profiles do not cover current trend inputs"
+        )
+    if set(publication_dates) != source_publications:
+        raise ValueError(
+            "recovered trend dates do not cover current trend inputs"
+        )
+    if fingerprints:
+        for publication, fingerprint in fingerprints.items():
+            if fingerprint.company_id != company_by_publication[publication]:
+                raise ValueError(
+                    "recovered lightweight fingerprint company does not match profile"
+                )
+        evidence_by_publication = {
+            publication: {
+                evidence.evidence_id for evidence in fingerprint.evidence
+            }
+            for publication, fingerprint in fingerprints.items()
+        }
+    else:
+        evidence_by_publication = {
+            publication: {
+                reference.evidence_id for reference in patent.evidence_refs
+            }
+        for publication, patent in analyses.items()
+    }
+    for publication, published in publication_dates.items():
+        if published < time_basis.start or published > time_basis.end:
+            raise ValueError(
+                "recovered trend publication date is outside run scope: "
+                f"{publication}"
+            )
+    bucket_by_publication = {
+        publication: (
+            f"{published.year:04d}-Q{(published.month - 1) // 3 + 1}"
+        )
+        for publication, published in publication_dates.items()
+    }
+    if any(trend.time_basis != time_basis for trend in analysis.trends):
+        raise ValueError("recovered trend time basis does not match run scope")
+    validate_cross_company_trend_proposal(
+        CrossCompanyTrendProposalAnalysis(
+            overall_summary=analysis.overall_summary,
+            common_directions=analysis.common_directions,
+            differentiated_directions=analysis.differentiated_directions,
+            trends=[
+                CrossCompanyTrendProposal(
+                    name=trend.name,
+                    summary=trend.summary,
+                    direction=trend.direction,
+                    company_ids=trend.company_ids,
+                    publication_numbers=trend.publication_numbers,
+                    evidence_ids=trend.evidence_ids,
+                )
+                for trend in analysis.trends
+            ],
+            limitations=analysis.limitations,
+        ),
+        company_by_publication=company_by_publication,
+        evidence_by_publication=evidence_by_publication,
+        bucket_by_publication=bucket_by_publication,
+        minimum_patents_for_time_trend=3,
+    )
+
+
+def _reconcile_search_company_view(
+    result: Any,
+    assignments: CompanyAssignmentResult,
+) -> Any:
+    """Make report-facing counts and ranking labels follow frozen PRIMARY IDs.
+
+    Search filtering and assignment use the same resolver, but merged source
+    conflicts can still be deliberately routed to UNKNOWN during attribution.
+    This final program-owned reconciliation prevents a report from displaying
+    a different company count than the persisted company profiles.
+    """
+
+    company_by_id = {
+        company.company_id: company.canonical_name
+        for company in assignments.companies
+    }
+    assignment_by_publication = {
+        assignment.publication_number: assignment.primary_company_id
+        for assignment in assignments.assignments
+    }
+    counts: dict[str, int] = {}
+    for assignment in assignments.assignments:
+        counts[assignment.primary_company_id] = (
+            counts.get(assignment.primary_company_id, 0) + 1
+        )
+    total = len(assignments.assignments)
+    company_counts = [
+        CompanyPatentCount(
+            company=company_by_id[company_id],
+            patent_count=count,
+            share=round(count / total, 6) if total else 0.0,
+            source="PRIMARY_ASSIGNMENT",
+        )
+        for company_id, count in sorted(
+            counts.items(),
+            key=lambda item: (
+                -item[1],
+                company_by_id[item[0]].casefold(),
+                company_by_id[item[0]],
+            ),
+        )
+    ]
+    ranking = [
+        item.model_copy(
+            update={
+                "company": company_by_id[
+                    assignment_by_publication.get(
+                        item.publication_number, "UNKNOWN"
+                    )
+                ]
+            }
+        )
+        for item in result.ranking
+    ]
+    return result.model_copy(
+        update={
+            "ranking": ranking,
+            "coverage": result.coverage.model_copy(
+                update={"company_patent_counts": company_counts}
+            ),
+        }
+    )
 
 
 def document_id(publication: str) -> str:

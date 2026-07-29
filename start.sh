@@ -12,7 +12,11 @@ start_local() {
         echo "本地环境未就绪，请先运行：./install.sh" >&2
         exit 1
     fi
-    mkdir -p "$ROOT/logs" "$ROOT/workspace/uploads" "$ROOT/data/aifpatent"
+    if [[ -z "${AIFPATENT_POSTGRES_DSN:-}" ]]; then
+        echo "本地模式需要已初始化的 PostgreSQL，请先设置 AIFPATENT_POSTGRES_DSN。" >&2
+        exit 1
+    fi
+    mkdir -p "$ROOT/logs" "$ROOT/workspace/uploads"
     local ready_url="http://127.0.0.1:$port/openapi.json"
     if ! curl --noproxy "*" --fail --silent --max-time 2 "$ready_url" >/dev/null; then
         nohup "$venv/bin/python" -m uvicorn main:app --port "$port" --app-dir "$ROOT/backend" \

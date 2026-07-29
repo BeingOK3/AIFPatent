@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import re
+import unicodedata
+
 from .schemas import (
     AnalysisMode,
     CompetitorAliasPlan,
+    CompetitorAliasPlanDraft,
     CompetitorAliasResolution,
+    CompetitorAliasResolutionDraft,
     CompetitorInput,
     LandscapePlannedQuery,
     LandscapeQueryPlan,
@@ -17,12 +22,12 @@ from idea.model_client import StructuredModelClient
 ALIAS_AGENT_NAME = "patent-landscape-competitor-aliaser"
 TECHNICAL_DIRECTION_AGENT_NAME = "patent-landscape-direction-expander"
 ALIAS_PROMPT = """
-For every supplied competitor primary_name, identify patent-assignee search aliases: common Chinese
-and English names, full corporate names, abbreviations, and well-known historical names. Return
-exactly one item per supplied primary_name and copy each primary_name exactly. Do not introduce a
-different corporate group, subsidiary, affiliate, product brand, or guessed legal entity. Use at
-most 12 aliases per competitor. source must be MODEL_INFERRED. This output expands search terms and
-is not a legal entity verification.
+For every supplied target company (the company whose patent assignees will be searched), identify
+patent-assignee search aliases: common Chinese and English names, full corporate names,
+abbreviations, and well-known historical names. Return exactly one item per supplied primary_name
+and copy each primary_name exactly. Do not introduce a different corporate group, subsidiary,
+affiliate, product brand, or guessed legal entity. Use at most 12 aliases per company. source must
+be MODEL_INFERRED. This output expands search terms and is not a legal entity verification.
 """
 TECHNICAL_DIRECTION_PROMPT = """
 Expand the supplied patent technology direction into precise search terminology. Copy original_term
@@ -39,7 +44,7 @@ class CompetitorAliasError(RuntimeError):
 
 class CompetitorAliasService:
     def __init__(self, model: StructuredModelClient):
-        register_agent_output_model(ALIAS_AGENT_NAME, CompetitorAliasPlan)
+        register_agent_output_model(ALIAS_AGENT_NAME, CompetitorAliasPlanDraft)
         self.model = model
 
     async def resolve(self, competitors: list[CompetitorInput]) -> CompetitorAliasPlan:
@@ -51,22 +56,12 @@ class CompetitorAliasService:
             input_payload={"competitors": [{"primary_name": item.name} for item in competitors]},
         )
         output = result.output
-        if not isinstance(output, CompetitorAliasPlan):
+        if not isinstance(
+            output,
+            (CompetitorAliasPlan, CompetitorAliasPlanDraft),
+        ):
             raise CompetitorAliasError("competitor aliaser returned the wrong schema")
-        output = CompetitorAliasPlan(
-            competitors=[
-                item.model_copy(
-                    update={
-                        "aliases": [
-                            alias
-                            for alias in item.aliases
-                            if alias.casefold() != item.primary_name.casefold()
-                        ]
-                    }
-                )
-                for item in output.competitors
-            ]
-        )
+        output = _reconcile_alias_plan(output, competitors)
         validate_alias_plan(output, competitors)
         return output
 
@@ -114,6 +109,90 @@ def validate_alias_plan(plan: CompetitorAliasPlan, inputs: list[CompetitorInput]
                 raise CompetitorAliasError("an alias collides with another requested competitor")
 
 
+def _reconcile_alias_plan(
+    output: CompetitorAliasPlan | CompetitorAliasPlanDraft,
+    inputs: list[CompetitorInput],
+) -> CompetitorAliasPlan:
+    """Bind model rows back to user-owned company names before validation.
+
+    A model may echo a common alias as ``primary_name`` (for example NVIDIA
+    for 英伟达), omit one row, or return duplicate rows. Those are model
+    quality issues, not reasons to discard every valid alias in the run.
+    Primary names and missing rows are repaired deterministically here.
+    """
+
+    expected_keys = {
+        _identity_key(input_item.name): index
+        for index, input_item in enumerate(inputs)
+    }
+    primary_keys = set(expected_keys)
+    matched: dict[
+        int, CompetitorAliasResolutionDraft | CompetitorAliasResolution
+    ] = {}
+
+    for item in output.competitors:
+        target_index = expected_keys.get(_identity_key(item.primary_name))
+        if target_index is None:
+            alias_targets = {
+                expected_keys[_identity_key(alias)]
+                for alias in item.aliases
+                if _identity_key(alias) in expected_keys
+            }
+            if len(alias_targets) == 1:
+                target_index = alias_targets.pop()
+        if target_index is None and len(inputs) == 1 and not matched:
+            target_index = 0
+        if target_index is None or target_index in matched:
+            continue
+        matched[target_index] = item
+
+    reconciled: list[CompetitorAliasResolution] = []
+    for index, input_item in enumerate(inputs):
+        item = matched.get(index)
+        if item is None:
+            reconciled.append(
+                CompetitorAliasResolution(
+                    primary_name=input_item.name,
+                    aliases=[],
+                    source="PRIMARY_NAME_FALLBACK",
+                    assignee_scope=input_item.assignee_scope,
+                )
+            )
+            continue
+        aliases: list[str] = []
+        seen: set[str] = set()
+        input_key = _identity_key(input_item.name)
+        for raw_alias in [item.primary_name, *item.aliases]:
+            alias = " ".join(raw_alias.split())
+            key = _identity_key(alias)
+            if not alias or key == input_key:
+                continue
+            # Never let a model alias silently become another user-owned
+            # company in a multi-company request.
+            if key in primary_keys and key != input_key:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            aliases.append(alias)
+            if len(aliases) == 12:
+                break
+        reconciled.append(
+            CompetitorAliasResolution(
+                primary_name=input_item.name,
+                aliases=aliases,
+                source="MODEL_INFERRED",
+                assignee_scope=input_item.assignee_scope,
+            )
+        )
+    return CompetitorAliasPlan(competitors=reconciled)
+
+
+def _identity_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return re.sub(r"[^\w\u3400-\u9fff]+", "", normalized, flags=re.UNICODE)
+
+
 def fallback_alias_plan(competitors: list[CompetitorInput]) -> CompetitorAliasPlan:
     return CompetitorAliasPlan(
         competitors=[
@@ -121,6 +200,7 @@ def fallback_alias_plan(competitors: list[CompetitorInput]) -> CompetitorAliasPl
                 primary_name=item.name,
                 aliases=[],
                 source="PRIMARY_NAME_FALLBACK",
+                assignee_scope=item.assignee_scope,
             )
             for item in competitors
         ]
@@ -128,6 +208,14 @@ def fallback_alias_plan(competitors: list[CompetitorInput]) -> CompetitorAliasPl
 
 
 def scope_with_alias_plan(scope: LandscapeScope, plan: CompetitorAliasPlan) -> LandscapeScope:
+    """Build the validated runtime registry used for query, filter and assignment.
+
+    The model may contribute cross-language aliases for the user-selected
+    competitor, while the primary name and assignee-scope setting remain
+    user-owned.  The resulting registry is intentionally shared by every
+    downstream assignee decision so the candidate set and company partition use
+    the same contract.
+    """
     resolved = {
         item.primary_name.casefold(): item for item in plan.competitors
     }
@@ -136,7 +224,13 @@ def scope_with_alias_plan(scope: LandscapeScope, plan: CompetitorAliasPlan) -> L
             "competitors": [
                 CompetitorInput(
                     name=competitor.name,
-                    aliases=resolved[competitor.name.casefold()].aliases,
+                    aliases=_unique(
+                        [
+                            *competitor.aliases,
+                            *resolved[competitor.name.casefold()].aliases,
+                        ]
+                    ),
+                    assignee_scope=competitor.assignee_scope,
                 )
                 for competitor in scope.competitors
             ]
@@ -182,11 +276,9 @@ def build_deterministic_query_plan(
             else:
                 candidates.append(
                     (
-                        _bounded_or(
-                            names, prefix="assignee:", max_names=8, max_chars=440
-                        ),
+                        name_group,
                         _language(name_group),
-                        f"友商申请人名称组：{competitor.name}",
+                        f"友商中英文别名组：{competitor.name}",
                     )
                 )
     else:

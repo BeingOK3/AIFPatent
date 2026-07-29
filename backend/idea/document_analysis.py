@@ -453,10 +453,11 @@ class DocumentAnalysisService:
             for item in packet:
                 connection.execute(
                     """
-                    INSERT OR IGNORE INTO evidence(
+                    INSERT INTO evidence(
                         evidence_id,run_id,document_id,section_type,section_label,
                         quote_text,start_offset,end_offset,content_hash,created_at
                     ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT (evidence_id) DO NOTHING
                     """,
                     (
                         item.evidence_id,
@@ -505,7 +506,7 @@ class DocumentAnalysisService:
             connection.execute(
                 """
                 UPDATE run_documents SET relevance = ?, screening_status = 'ANALYZED',
-                    deep_reviewed = 1
+                    deep_reviewed = TRUE
                 WHERE run_id = ? AND document_id = ?
                 """,
                 (output.relevance, run_id, document_id),
@@ -521,7 +522,7 @@ class DocumentAnalysisService:
             pending = connection.execute(
                 """SELECT 1 FROM run_documents rd
                 JOIN idea_runs r ON r.run_id = rd.run_id
-                WHERE rd.document_id = ? AND rd.deep_reviewed = 0
+                WHERE rd.document_id = ? AND rd.deep_reviewed = FALSE
                   AND r.status IN ('QUEUED','RUNNING') LIMIT 1""",
                 (document_id,),
             ).fetchone()

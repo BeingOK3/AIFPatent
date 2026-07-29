@@ -1,15 +1,6 @@
 {
   "$schema": "./ai4patent.schema.json",
-  "app": {
-    "host": "127.0.0.1",
-    "port": 8001
-  },
   "features": {
-    "idea": true,
-    "deepdive": false,
-    "pct": false,
-    "value": false,
-    "cfp": false,
     "patent_corpus": true,
     "initial_review_rag": true,
     "followup_rag": true
@@ -46,21 +37,14 @@
     }
   },
   "storage": {
-    "database": "data/aifpatent/aifpatent.db",
-    "langgraph_database": "data/langgraph/checkpoints.db",
     "runs_dir": "workspace/idea-runs",
     "uploads_dir": "workspace/uploads",
     "cache_dir": "workspace/cache",
-    "document_store_dir": "workspace/cache/documents",
     "cache": {
       "max_bytes": 1073741824,
       "low_watermark_bytes": 966367642,
       "eviction_policy": "fifo",
       "cleanup_after_write": true
-    },
-    "history": {
-      "auto_delete": false,
-      "manual_delete_enabled": true
     }
   },
   "workflow": {
@@ -109,25 +93,22 @@
         "user_agent": "AIFPatent/1.0 (internal patent research)",
         "trust_environment_proxy": true,
         "fallback_to_direct": true
-      },
-      "local_cache": {
-        "enabled": true
       }
     },
     "default_mode": "standard",
     "modes": {
       "quick": {
-        "candidate_max": 30,
+        "candidate_max": 60,
         "deep_review_min": 10,
         "deep_review_max": 10
       },
       "standard": {
-        "candidate_max": 80,
+        "candidate_max": 200,
         "deep_review_min": 10,
         "deep_review_max": 20
       },
       "deep": {
-        "candidate_max": 150,
+        "candidate_max": 400,
         "deep_review_min": 20,
         "deep_review_max": 40
       }
@@ -136,16 +117,5 @@
       "consecutive_rounds": 2,
       "max_new_high_relevance_families": 1
     }
-  },
-  "outputs": {
-    "always_save_markdown": true,
-    "always_save_json": true,
-    "generate_docx_by_default": false,
-    "generate_xlsx_by_default": false
-  },
-  "logging": {
-    "level": "INFO",
-    "log_full_user_input": false,
-    "log_full_model_output": false
   }
 }

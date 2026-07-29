@@ -5,8 +5,10 @@ from datetime import date
 
 from pydantic import ValidationError
 
+from landscape.api import LandscapeRuntimeRequest
 from landscape.schemas import (
     AnalysisMode,
+    AssigneeScope,
     CompetitorInput,
     LandscapeScope,
     PeriodPreset,
@@ -14,6 +16,19 @@ from landscape.schemas import (
 
 
 class LandscapeSchemaTests(unittest.TestCase):
+    def test_runtime_model_url_rejects_accidentally_concatenated_urls(self) -> None:
+        with self.assertRaisesRegex(ValidationError, "exactly one URL"):
+            LandscapeRuntimeRequest.model_validate(
+                {
+                    "api_key": "test-token",
+                    "base_url": (
+                        "https://ark.cn-beijing.volces.com/api/coding/v3"
+                        "https://ark.cn-beijing.volces.com/api/coding/v3"
+                    ),
+                    "model": "kimi-k2.6",
+                }
+            )
+
     def test_mode_is_derived_from_supplied_inputs(self) -> None:
         values = {
             "publication_start": date(2026, 4, 1),
@@ -64,6 +79,16 @@ class LandscapeSchemaTests(unittest.TestCase):
         )
         self.assertEqual(competitor.aliases, ["华为", "HUAWEI"])
         self.assertEqual(competitor.confirmed_names(), ("huawei", "华为"))
+
+    def test_assignee_scope_defaults_to_entity_and_accepts_explicit_group(self) -> None:
+        self.assertEqual(
+            CompetitorInput(name="华为").assignee_scope,
+            AssigneeScope.ENTITY,
+        )
+        self.assertEqual(
+            CompetitorInput(name="华为", assignee_scope="GROUP").assignee_scope,
+            AssigneeScope.GROUP,
+        )
 
     def test_publication_window_is_inclusive_and_bounded(self) -> None:
         scope = LandscapeScope(

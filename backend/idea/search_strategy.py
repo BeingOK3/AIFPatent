@@ -82,6 +82,7 @@ class DeepReviewSelection:
     selected: tuple[ScreenedCandidate, ...]
     target: int
     minimum: int
+    backfilled_count: int
     limitation: dict | None
 
 
@@ -224,19 +225,43 @@ def select_deep_review(
         and item.relevance_score >= relevance_threshold
         and normalize_publication_number(item.hit.publication_number) is not None
     ]
-    selected = tuple(eligible[: budget.deep_review_target])
+    selected_items = list(eligible[: budget.deep_review_target])
+    selected_keys = {item.hit.merge_key for item in selected_items}
+    weak_backfill = [
+        item
+        for item in screened
+        if item.date_status != "AFTER_EVALUATION_DATE"
+        and item.hit.merge_key not in selected_keys
+        and normalize_publication_number(item.hit.publication_number) is not None
+    ]
+    required_backfill = max(0, budget.deep_review_min - len(selected_items))
+    backfilled = weak_backfill[:required_backfill]
+    selected_items.extend(backfilled)
+    selected = tuple(selected_items)
     limitation = None
+    if backfilled:
+        limitation = {
+            "code": "LOW_CONFIDENCE_RECALL_BACKFILL",
+            "required": budget.deep_review_min,
+            "strong_selected": len(selected) - len(backfilled),
+            "backfilled": len(backfilled),
+            "message": (
+                "标题摘要相关性不足，已按高召回策略补入低置信候选进行全文核验；"
+                "补入候选不得仅凭摘要进入最终结论。"
+            ),
+        }
     if len(selected) < budget.deep_review_min:
         limitation = {
             "code": "INSUFFICIENT_RELEVANT_DEEP_REVIEWS",
             "required": budget.deep_review_min,
             "selected": len(selected),
-            "message": "相关文献数量不足；系统未使用弱相关文献凑足深读数量。",
+            "message": "可识别且日期合格的候选总量仍不足，无法达到深读下限。",
         }
     return DeepReviewSelection(
         selected=selected,
         target=budget.deep_review_target,
         minimum=budget.deep_review_min,
+        backfilled_count=len(backfilled),
         limitation=limitation,
     )
 

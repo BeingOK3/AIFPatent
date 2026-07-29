@@ -1,15 +1,15 @@
 # AIFPatent 本地/单机 RAG 栈
 
-标准入口是仓库根目录的 `./start.sh` 与 `./stop.sh`。栈包含应用、PostgreSQL 17 + pgvector 0.8.2、Redis 8.4.4 和固定版本 MinIO，全部只绑定 `127.0.0.1`。
+标准入口是仓库根目录的 `./start.sh` 与 `./stop.sh`。栈包含应用、PostgreSQL 17 + pgvector 0.8.2 和固定版本 MinIO，全部只绑定 `127.0.0.1`。
 
-`start.sh` 会创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env`，生成本机随机基础设施凭证，先启动 PostgreSQL/Redis/MinIO，执行当前 `020`～`055` 幂等迁移，再启动应用并确保 Bucket。这样应用启动钩子不会在旧 PostgreSQL 数据卷尚未迁移时查询新表。该文件不保存模型 Base URL、Model 或 API Key。
+`start.sh` 会创建 Git 忽略且权限为 `0600` 的 `deploy/rag/rag.env`，生成本机随机基础设施凭证，先启动 PostgreSQL/MinIO，执行当前全部幂等迁移（含 Landscape `070`～`075`），再启动应用并确保 Bucket。这样应用启动钩子不会在旧 PostgreSQL 数据卷尚未迁移时查询新表。该文件不保存模型 Base URL、Model 或 API Key。
 
 ```bash
 ./start.sh
 ./stop.sh
 ```
 
-`stop.sh` 不使用 `--volumes`，所以数据库、对象、Redis 和应用数据均保留。项目没有自动删除卷的命令。
+`stop.sh` 不使用 `--volumes`，所以数据库、对象和应用数据均保留。项目没有自动删除卷的命令。
 
 底层维护命令：
 
@@ -29,10 +29,12 @@ AIFPATENT_REBUILD_OBJECT_STORE=1 ./start.sh
 受限网络可在启动前设置非秘密构建镜像：
 
 ```bash
-export AIFPATENT_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-export AIFPATENT_GOPROXY=https://goproxy.cn,direct
+export AIFPATENT_PIP_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple
+export AIFPATENT_GOPROXY=https://mirrors.tencent.com/go/,direct
 ./start.sh
 ```
+
+默认构建已将 Python 依赖切换到腾讯云 PyPI 镜像，将 MinIO Go 依赖切换到腾讯云 Go 镜像；Docker/ PostgreSQL 基础镜像仍使用原始固定版本，不引入额外镜像仓库前提。需要使用其他软件源时，只修改 Git 忽略的 `rag.env`。
 
 默认应用端口为 8001；需要避免本机冲突时，只修改 Git 忽略的 `rag.env` 中 `AIFPATENT_APP_PORT`。此 Compose 基线适合本地或单服务器经 SSH 隧道使用，不是公网、多 Worker、多租户生产部署。
 

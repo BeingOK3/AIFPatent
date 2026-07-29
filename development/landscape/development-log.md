@@ -2,6 +2,420 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-29 — LANDSCAPE-BASE01-MAIN-GRAPH-FIXTURE-041
+
+- 类型：BASE-01 合成 Fixture 主 Graph 契约。
+- 输入：Fixture Scope、Graph Case 的预期审计决策和固定 Case ID；不访问网络、不调用模型。
+- 断言：实际编译 Graph 经过全部活动步骤，按预期 PASS 进入 BUILD_REPORT，并生成受 Manifest 校验的报告文件。
+- 验证：Fixture 聚焦 8 项、Landscape 全量 159 项通过。
+- 未完成：尚未将 Fixture Provider/Analysis/Profile/Trend JSON 注入真实 Execution Service 的 PostgreSQL 适配层。
+
+## 2026-07-29 — LANDSCAPE-GRAPH-REPAIR-ROUTE-E2E-040
+
+- 类型：主 Graph 修复条件边回归。
+- 场景：用确定性 Handler 模拟 `VERIFY_COVERAGE=REPAIR`、`REPAIR_GAPS=PASS`，通过实际编译 Graph 完成报告。
+- 断言：Repair keyed task 被执行且先于 BUILD_REPORT；旧 `CLUSTER_PATENTS` 未被调用。
+- 验证：Workflow 聚焦 7 项、Landscape 全量 158 项通过；无模型 API 调用。
+- 未完成：下一步将把 `BASE-01` Fixture 的 Provider/Analysis/Profile/Trend 事实接入同一主 Graph 契约测试。
+
+## 2026-07-28 — LANDSCAPE-DEPLOY-MIGRATION-075-FIX-039
+
+- 类型：启动阻断修复。
+- 原因：应用要求迁移 `075`，但已有 PostgreSQL 卷的显式迁移链仅执行至 `074`；容器 init 目录不会在旧卷上自动重放。
+- 修复：`tools/rag_infra.py migrate` 追加 `075_landscape_repair_snapshots.sql`，`./start.sh` 可在 app 启动前完成增量迁移。
+- 验证：迁移/Schema/启动契约 32 项通过。
+
+## 2026-07-28 — LANDSCAPE-REPAIR-ROUTE-RESUME-FIX-038
+
+- 类型：REPAIR_GAPS 恢复路由修复。
+- 修复：恢复已成功 repair task 时读取 task 自身输出的最终 PASS/LIMITED，而非初始 VERIFY 的 REPAIR；防止重启后错误再次路由。
+- 验证：Workflow 聚焦 6 项通过。
+
+## 2026-07-28 — LANDSCAPE-GRAPH-REPAIR-GAPS-037
+
+- 类型：显式 LangGraph 修复条件节点。
+- Graph：`VERIFY_COVERAGE(REPAIR) → REPAIR_GAPS(keyed task) → PASS/LIMITED → BUILD_REPORT`；Repair 节点输出下一轮审计决策，不携带全文或模型凭证。
+- 报告：当前审计值取 immutable Audit history 的最后一轮，确保修复后 PASS/LIMITED 与 UI 一致。
+- 验证：Landscape 全量 157 项、compileall、`git diff --check` 通过。
+
+## 2026-07-28 — LANDSCAPE-REPORT-REPAIR-HISTORY-036
+
+- 类型：自主修复轨迹报告化。
+- 数据：读取按 round 排序的不可变 Audit 历史，发布每轮 decision、coverage、targets 与限制；不从日志或模型文本推断。
+- UI：JSON、Markdown、前端统一展示 `REPAIR → PASS/LIMITED` 轨迹。
+- 验证：Report/Frontend 聚焦 7 项、Landscape 全量 157 项通过；`git diff --check` 通过。
+- 未完成：下一工作单元仍是显式 LangGraph `REPAIR_GAPS` 节点拆分。
+
+## 2026-07-28 — LANDSCAPE-ONE-ROUND-AUTONOMOUS-REPAIR-035
+
+- 类型：一次性受控自主修复与再审计闭环。
+- 流程：round 0 Audit=REPAIR 追加保存 → Repair Executor → round 1 从最新 Repository/repair snapshot 重算并追加保存。
+- 上限：固定一轮；修复不足自动 LIMITED，集合/归属损坏仍 FAIL，避免无界重试或掩盖问题。
+- 验证：测试覆盖无 Profile 的真实 REPAIR→PASS 轨迹和两条不可变 Audit 历史；Landscape 全量 157 项通过。
+- 未完成：Graph 仍将该闭环封装在 VERIFY 节点内；下一工作单元将其显式拆为 `REPAIR_GAPS` LangGraph 条件节点以提高运行可视性。
+
+## 2026-07-28 — LANDSCAPE-BOUNDED-REPAIR-EXECUTOR-034
+
+- 类型：有限修复计划的定向执行器。
+- 执行：仅处理 Plan 的 FETCH/ANALYZE 公开号，再重建其 PRIMARY 公司画像和跨公司趋势；不重跑 Query Plan、Search 或扩大 U。
+- 失败：冻结 selected hit 缺失立即报错；抓取/精读失败留在本轮输出，后续 Audit 决定是否 LIMITED，不伪造修复成功。
+- 报告：修复后优先从 Repository 当前视图读取 Patent Analysis，覆盖新增精读结果。
+- 验证：Company Execution 聚焦 8 项、Landscape 全量 156 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：尚未把 executor 注册为主 Graph `REPAIR_GAPS` 节点并在执行后追加下一轮 Audit。
+
+## 2026-07-28 — LANDSCAPE-FORCE-REBUILD-REPAIR-SNAPSHOTS-033
+
+- 类型：修复轮次的公司画像/趋势强制重建执行边界。
+- 语义：普通执行遇到有效已有快照会恢复；repair round 调用必须重新分类/画像或重新归纳趋势，并写入对应的追加式快照。
+- 安全：repair round 必须大于 0；不改写基础表或旧轮次；输出包含 round，便于后续 Graph/Audit 留痕。
+- 验证：Company Execution 聚焦 7 项、Landscape 全量 155 项通过；零真实模型调用。
+- 未完成：尚未把 Repair Plan 的 FETCH/ANALYZE 和强制重建串成 executor，也未路由回主 Graph。
+
+## 2026-07-28 — LANDSCAPE-APPEND-ONLY-REPAIR-SNAPSHOTS-032
+
+- 类型：有限修复的 PostgreSQL 追加式结果版本。
+- Migration：`075_landscape_repair_snapshots.sql` 新建 `landscape_company_profile_revisions` 和 `landscape_cross_company_analysis_revisions`，主键包含 repair round。
+- 不可变性：同轮同对象仅允许相同 hash/JSON 重放；不同结果拒绝，基础 Profile/Trend 与旧审计不更新、不删除。
+- 读取：公司画像按公司叠加最新修复版本；趋势读取优先最新修复快照，因此 Report/Audit 可直接消费修复后的受控视图。
+- 涉及文件：PostgreSQL Repository、migration、PostgreSQL snapshot 测试和两份追加式日志。
+- 验证：PostgreSQL 聚焦 19 项、Landscape 全量 154 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：Repair executor 尚未调用这些 snapshot 写入方法，LangGraph 尚未添加 REPAIR_GAPS 回边。
+
+## 2026-07-28 — LANDSCAPE-BOUNDED-REPAIR-PLAN-031
+
+- 类型：有限自主修复的确定性计划层。
+- 输入：只接收不可变 Coverage Audit 的 `repair_targets`、冻结 U 和 Company Assignment；不调用模型、不重跑搜索。
+- 依赖：`FETCH` 自动要求后续 `ANALYZE`；任何专利修复映射回其 PRIMARY 公司，要求重建该公司画像；公司变化或 Trend 目标要求重建跨公司趋势。
+- 安全：非 REPAIR、越界公开号、未知公司、未知前缀、格式损坏和非完整 PRIMARY 分区全部立即拒绝。
+- 涉及文件：新增 `landscape/repair.py`、Repair Plan 测试和两份追加式日志。
+- 验证：Repair/Audit 聚焦 7 项、Landscape 全量 152 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：计划尚未执行；必须先为 Profile/Trend 增加追加式修复版本快照，之后才接到 LangGraph `REPAIR_GAPS` 回环。
+
+## 2026-07-28 — LANDSCAPE-REPORT-COVERAGE-AUDIT-030
+
+- 类型：公司趋势 Coverage Audit 报告化。
+- Report：`company_trend_coverage` 保存已持久化审计的 decision、ratio、repair round、缺口与 limitations；Summary 提供决策和比例，避免把搜索覆盖与公司趋势覆盖混为一谈。
+- UI：JSON、Markdown、前端都显示公司趋势审计；旧 Run 不伪造审计结果，而是明确提示历史版本缺少该快照。
+- 控制输入：VERIFY 阶段输出带入 `repair_targets`，只供下一阶段的确定性修复调度使用，不含全文或模型凭证。
+- 涉及文件：Execution、Reporting、Frontend、Report/Frontend/Company Execution 测试和两份追加式日志。
+- 验证：聚焦 13 项、Landscape 全量 149 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：Repair 仍未执行；下一工作单元必须先解决公司 Profile 不可变快照在补分析后的版本化/重建语义，再接入 REPAIR 回环。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-TREND-REPORT-V2-029
+
+- 类型：公司趋势报告契约收口与旧聚类执行代码退场。
+- Schema：新 Report 固定为 `landscape-report/2.0.0`，不再产生 `clusters`/`cluster_count`；公司 Profile 和跨公司趋势成为唯一高阶归纳输出。
+- 执行：移除 Execution 中旧 Cluster 模型构造、Handler 映射、Prompt 调用和 Cluster failure limitation；旧 Cluster 表和历史 JSON 不删除。
+- 前端：2.0 报告不显示旧聚类；1.x 历史报告如自带 Cluster 数据，显示为“历史技术聚类”，不阻断阅读。
+- 涉及文件：Reporting、Execution、Landscape Frontend、Report/Frontend 测试和两份追加式日志。
+- 验证：聚焦 13 项、Landscape 全量 149 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：数据库中的旧 Cluster 表、schema 和独立旧聚类测试仍作为历史兼容物保留；有限 REPAIR 回环和真实端到端验收未完成。
+
+## 2026-07-28 — LANDSCAPE-RETIRE-LEGACY-CLUSTER-028
+
+- 类型：公司趋势主链移除旧全局技术聚类执行依赖。
+- Graph：活动步骤从 `VERIFY_COVERAGE` 直接条件路由到 `BUILD_REPORT`，新 Run 不再执行 `CLUSTER_PATENTS`。
+- 完成门：进度、顺序与 Run 完成校验只要求公司趋势活动步骤成功。
+- 兼容：保留旧枚举、旧数据表与历史 Cluster Snapshot 读取；新 Run 没有旧 Stage Result 时报告仍可生成。
+- 涉及文件：Landscape Workflow、Execution Report 读取、Workflow 测试和两份追加式日志。
+- 验证：Workflow 聚焦 6 项、Landscape 全量 149 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：Report/Frontend 仍保留旧 Cluster 字段和展示兼容；有限 REPAIR 执行器尚未实现。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-TREND-REPORT-027
+
+- 类型：公司技术画像与跨公司趋势 Report Schema/Markdown/Frontend 发布。
+- JSON：`landscape-report/1.3.0` 增加 `company_profiles`、`cross_company_analysis`，保留程序校验后的分类、成员和趋势证据链。
+- Markdown：新增公司画像摘要、技术分类成员和跨公司趋势方向；旧 Cluster 章节暂保留。
+- Frontend：新增画像与趋势卡片、数量指标，兼容无趋势/无 Profile 的历史报告。
+- 涉及文件：Reporting、Execution 报告读取、Landscape Frontend、报告/前端测试和两份追加式日志。
+- 验证：聚焦 7 项、Landscape 全量 149 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：旧 Cluster 尚未移除；下一工作单元处理有限 Repair 或最终端到端夹具。
+
+## 2026-07-28 — LANDSCAPE-MAIN-GRAPH-COVERAGE-026
+
+- 类型：Coverage Audit 主节点、持久化恢复与条件路由。
+- 输入：读取 Candidates(U)、Assignments(C)、Fetched(F)、Analyses(A)、Profiles(T)、Trend 和 Analysis Evidence，程序计算覆盖。
+- 决策：PASS/LIMITED 通过 async conditional edge 进入后续报告；FAIL 抛出 non-retryable 错误并终止 Run。
+- 恢复：Audit Snapshot 存在时复用同一不可变轮次；当前 `max_repair_rounds=0`，不会在缺少修复执行器时声称 REPAIR 成功。
+- 限制：LIMITED 的 Audit limitations 注入最终 Run limitations，驱动 `COMPLETED_WITH_LIMITATIONS`。
+- 涉及文件：Workflow State/Graph、Execution Audit 节点、Runtime Repository 注入、Graph/Audit 测试和两份追加式日志。
+- 验证：聚焦 12 项、Landscape 全量 149 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：定向 REPAIR 执行器和回环尚未实现；下一工作单元先发布公司趋势 Report 数据，随后实现有限修复。
+
+## 2026-07-28 — LANDSCAPE-MAIN-GRAPH-TRENDS-025
+
+- 类型：跨公司趋势执行、恢复与生产主 Graph 节点。
+- 顺序：新增 `ANALYZE_CROSS_COMPANY_TRENDS`，消费已完成公司 Profiles。
+- 输入：Repository 重读 Profiles、Analyses 和 Fetched Documents；时间边界来自冻结 Scope，按季度生成 Time Basis。
+- 恢复：Snapshot 存在时重验 Profile/Analysis 等集、公司 Owner、Evidence Owner、时间基础与方向阈值，合法才零模型跳过。
+- 单公司：程序生成并持久化零 Trend 的受限 Analysis，不把空数组误判为未执行。
+- 涉及文件：Workflow Enum、Execution 趋势节点、Runtime Repository 注入、趋势恢复测试和两份追加式日志。
+- 验证：聚焦 10 项、Landscape 全量 147 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：Coverage Audit 尚未接入主 Graph；下一工作单元实现审计节点和条件终止路由。
+
+## 2026-07-28 — LANDSCAPE-MAIN-GRAPH-COMPANY-STAGE-024
+
+- 类型：公司 `Send` 子图接入生产主 Workflow。
+- 顺序：主步骤新增 `ANALYZE_COMPANIES`，位于全量 Patent Analysis 之后、旧 Cluster/Report 之前。
+- 输入：每次从 PostgreSQL 冻结 Assignment 和成功 Analysis 重建 Batch，只有非空 Batch 进入 fan-out。
+- Runtime：构建 Execution 后创建 `LandscapeCompanyFanout` 并单次绑定，避免循环构造和隐式全局状态。
+- 输出：主 Stage Result 只记录公司数量、目标 IDs 和完成 IDs；Profile/Evidence 仍留在业务表。
+- 涉及文件：Workflow Enum、Execution 主节点、Runtime 接线、公司执行测试和两份追加式日志。
+- 验证：聚焦 12 项、Landscape 全量 146 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：旧 `CLUSTER_PATENTS` 与旧报告仍保留；下一工作单元接入跨公司趋势与 Coverage Audit 后替换旧路径。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-LANGGRAPH-FANOUT-023
+
+- 类型：公司级 LangGraph `Send` 动态并行与 keyed 恢复。
+- 调度：输入 company IDs 必须唯一并稳定排序；每个 `Send` 只携带 run/company 控制坐标。
+- 持久化：分支使用 `ANALYZE_COMPANY + company_id` 记录 attempt，业务结果仍只写 PostgreSQL Profile Repository。
+- 恢复：SUCCEEDED 分支零执行跳过；失败分支单独递增 attempt，其他公司结果不回滚、不覆盖。
+- State：使用 reducer 聚合 `completed_company_ids`，不复制 Profile、Evidence 或专利全文。
+- 兼容：LangGraph 1.2.9 的 async Graph 条件路由改为 async callable，避免短事件循环等待同步路由线程。
+- 涉及文件：`backend/landscape/company_workflow.py`、fan-out 恢复测试和两份追加式日志。
+- 验证：聚焦 3 项、Landscape 全量 145 项通过；compileall、`git diff --check` 通过；零真实模型调用。
+- 未完成：公司子图尚未接入主 Graph；下一工作单元替换旧 Cluster 路径并串联趋势与 Audit。
+
+## 2026-07-28 — LANDSCAPE-FAMILY-IDENTITY-RANKING-022
+
+- 类型：过滤后专利身份组、稳定代表项和场景化排序口径。
+- 集合：新增唯一公开文本 `P`；分析集合 `U` 按一致 Family ID、申请号、公开号依次保守聚合，并保存全部成员公开号。
+- 确定性：代表项优先 A 类公开文本，再按规范化公开号排序；Query/Provider/返回顺序不得改变 Candidate 身份。
+- 冲突：同一公开号或申请号映射多个 Family ID 时撤销冲突身份并隔离，禁止并查集传递式过度合并。
+- 统计：区分确认 Family、申请号组、公开号保守项和身份冲突；排名按分析模式使用技术相关度、同族布局、固定排名、时间活跃度和真实共识加分。
+- 边界：缺 Family 身份不会触发全文抓取；只有缺公开日才执行既有有界详情补全并顺便补充身份。
+- 涉及文件：Search/Execution/Report/Frontend、规范、过滤/补全/报告/前端测试和两份追加式日志。
+- 验证：Landscape 全量 142 项通过；compileall、`git diff --check` 通过；零模型调用。
+- 未完成：生产 Graph 仍未使用公司 `Send` fan-out；下一工作单元先解决当前 LangGraph 动态调度兼容。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-EXECUTION-RECOVERY-021
+
+- 类型：单公司分类、Profile、PostgreSQL 持久化与恢复跳过的执行边界。
+- 输入：每次从 Repository 读取冻结 Assignment 和成功 Patent Analysis，重新构造稳定 Company Batch，不依赖进程内全文状态。
+- 执行：未完成公司调用 Classification 与 Profile 服务，随后通过 `put_company_profile` 原子写入分类、成员、证据、快照和 Manifest。
+- 恢复：已存在 Profile 时零模型调用，但仍按当前 Batch 重验成员和 Evidence；不一致直接拒绝。
+- Runtime：生产构建显式将同一个 PostgreSQL Repository 注入 Assignment/Analysis/Profile 接口。
+- 涉及文件：`backend/landscape/execution.py`、Runtime 注入、公司执行恢复测试和两份追加式日志。
+- 验证：聚焦 3 项、Landscape 全量 135 项通过；compileall、`git diff --check` 通过；测试模型无网络与 API Key。
+- 未完成：该入口尚未由 LangGraph `Send` 调度；下一工作单元实现公司 fan-out、keyed step 日志和 Reducer。
+
+## 2026-07-28 — LANDSCAPE-KEYED-STEP-HARNESS-020
+
+- 类型：Workflow Harness 的 keyed attempt 与恢复行为。
+- 接口：`start_step/complete_step/fail_step/latest_task` 接受显式 `task_key`；主流程默认 `__main__`，现有调用保持兼容。
+- 隔离：Attempt 数量、状态更新和完成读取均包含 task key；错误 key 不能完成另一分支。
+- 主从语义：只有 `__main__` 写 Stage Result、执行主流程顺序门和在重试耗尽时终止 Run；公司子任务由后续 Reducer/Audit 汇总。
+- 测试仓储：内嵌 SQLite Schema 仅用于无外部依赖的 Harness 测试，与 PostgreSQL `074` 保持列和唯一键一致。
+- 涉及文件：`backend/landscape/workflow.py`、测试仓储 Schema、Workflow 测试和两份追加式日志。
+- 验证：聚焦 13 项、Landscape 全量 132 项通过；compileall、`git diff --check` 通过；零模型调用。
+- 未完成：Graph 尚未调用 keyed 公司任务；下一工作单元接入公司批次、Profile Repository 与恢复跳过逻辑。
+
+## 2026-07-28 — LANDSCAPE-KEYED-STEP-SCHEMA-019
+
+- 类型：公司/专利 fan-out 的 PostgreSQL Task Attempt 身份迁移。
+- 迁移：新增 `074_landscape_keyed_steps.sql`；`task_key` 默认 `__main__`，既有主流程记录无需回填脚本。
+- 唯一性：从 `(run_id, step_name, attempt)` 调整为 `(run_id, step_name, task_key, attempt)`，并新增按任务读取最新 attempt 的索引。
+- 部署：已有数据卷迁移链和应用启动版本门同步提升至 `074`。
+- 涉及文件：`074` SQL、PostgreSQL 启动门、迁移工具、Schema/基础设施/启动门测试和两份追加式日志。
+- 验证：Schema/基础设施 28 项、Repository 17 项、Landscape 全量 130 项通过；compileall、`git diff --check` 通过。
+- 未完成：Workflow Harness 尚未读写 `task_key`；下一工作单元实现 keyed start/complete/fail/latest 和恢复语义。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-PROFILE-PERSISTENCE-018
+
+- 类型：Company Categories/Members/Profile/Manifest 的 PostgreSQL 多表事务。
+- 数据库复核：以 PRIMARY Assignment 与成功 Analysis 的 Join 结果作为公司 A；Profile 成员必须恰好覆盖该集合。
+- Evidence：每个 Category Evidence 必须存在于当前 Run，document/publication Owner 必须属于 Category，且每件成员至少贡献一个 Evidence。
+- 原子写入：Categories、Members、`insight_evidence`、Profile Snapshot 和 Manifest 同事务提交。
+- 恢复：同内容重放逐项比较 Profile/Manifest 哈希、Category 哈希、成员 Document 映射和 Evidence 映射；部分或变化数据拒绝。
+- 涉及文件：`backend/landscape/postgres_database.py`、Profile Repository 准备/校验测试和两份追加式日志。
+- 验证：Repository 16 项、Landscape 全量 129 项通过；compileall、`git diff --check` 通过；零模型调用。
+- 未完成：这些 Repository 尚未由新 Workflow 节点调用；下一工作单元实现 keyed task attempt 与执行接入。
+
+## 2026-07-28 — LANDSCAPE-TREND-AUDIT-PERSISTENCE-017
+
+- 类型：跨公司 Analysis 与逐轮 Coverage Audit 的 PostgreSQL 原生 Repository。
+- 趋势事务：Run 行锁后同时写 `landscape_cross_company_trends` 与 Analysis Snapshot；零趋势也写 Snapshot。
+- 恢复：Snapshot JSON、trend_count、内容哈希和逐 Trend 行必须完全一致；相同输入幂等返回，半套或变化结果 fail closed。
+- 审计历史：每个 repair round 只写一次；同轮同内容可重放，不同内容拒绝覆盖，读取按轮次排序并校验哈希/Decision。
+- 涉及文件：`backend/landscape/postgres_database.py`、PostgreSQL Repository 测试和两份追加式日志。
+- 验证：Repository 12 项、Landscape 全量 125 项通过；compileall、`git diff --check` 通过；零模型调用。
+- 未完成：公司 Profile 的 Categories/Members/Profile/Manifest 多表原子写入仍待下一工作单元实现。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-RESULT-MANIFESTS-016
+
+- 类型：公司分析、跨公司结果与 Coverage Audit 的 PostgreSQL 完成标记。
+- 迁移：新增 `073_landscape_company_result_manifests.sql`，不回改已登记的 `070/071/072`。
+- 公司恢复：每个 `(run_id, company_id)` 保存 category/member count 与 content hash，后续公司任务可判断成功结果并跳过模型。
+- 零趋势语义：`landscape_cross_company_analyses` 保存完整 Analysis 快照与 `trend_count=0`，不再把空趋势误判为未执行。
+- 审计历史：`landscape_coverage_audits` 以 `(run_id, repair_round)` 为主键，保留有限修复的逐轮决策。
+- 部署：已有卷迁移命令和启动版本门提升至 `073`。
+- 涉及文件：`073` SQL、PostgreSQL 启动门、迁移工具、Schema/基础设施测试和两份追加式日志。
+- 验证：聚焦 37 项、Landscape 全量 123 项通过；compileall、`git diff --check` 通过。
+- 未完成：本提交未实现 Repository 写入与读取；下一工作单元接入原子、幂等、不可变持久化。
+
+## 2026-07-28 — LANDSCAPE-COVERAGE-AUDIT-015
+
+- 类型：`U/F/A/T` 集合、公司成员与 Evidence 完整性审计。
+- 集合硬门：验证 `T ⊆ A ⊆ F ⊆ U`，PRIMARY Assignment 必须恰好覆盖 U；虚构引用、集合逆序或归属损坏直接 FAIL。
+- 覆盖：程序计算 `|U∩T|/|U|`、缺失、重复/错公司成员和无效 Evidence；空 U 的覆盖率定义为 1。
+- 修复路由：按缺口来源生成 `FETCH/ANALYZE/CLASSIFY/PROFILE/TREND:<target>`，未超轮次返回 REPAIR，超限返回 LIMITED 并清空修复任务。
+- 证据：Category/Trend Evidence 必须属于引用专利，且每件成员专利至少贡献一个自身 Evidence。
+- 涉及文件：`backend/landscape/coverage_audit.py`、Coverage Audit 测试和两份追加式日志。
+- 验证：聚焦 22 项、Landscape 全量 123 项通过；compileall、`git diff --check` 通过；零模型调用。
+- 未完成：Profile/Trend/Audit 仍未接 PostgreSQL 与 Workflow；下一工作单元建立幂等持久化边界。
+
+## 2026-07-28 — LANDSCAPE-CROSS-COMPANY-TRENDS-014
+
+- 类型：证据约束、时间门控的跨公司整体技术方向。
+- 模型边界：新增 Proposal Schema；模型只提议叙述、方向和引用，不返回 Trend ID、精确日期、统计量或斜率。
+- 程序统计：按 MONTH/QUARTER 生成 Bucket；程序稳定分配 `TR-NN` 并附加输入 Time Basis。
+- 证据链：Profile、Analysis 和公开日必须覆盖同一集合；趋势公司必须恰好等于引用专利 Owner，每件引用专利至少贡献一个自身 Evidence。
+- 时间硬门：`EMERGING/GROWING/DECLINING/SHIFTING/ACCELERATING/STABLE` 至少跨两个 Bucket，并满足最少专利数；不足时只能使用 `UNCERTAIN`。
+- 降级：少于两家公司直接产生受限分析且零模型调用。
+- 涉及文件：`backend/landscape/{schemas,company_trends}.py`、跨公司趋势测试和两份追加式日志。
+- 验证：聚焦 21 项、Landscape 全量 119 项通过；compileall、`git diff --check` 通过；未使用真实模型 API。
+- 未完成：趋势和 Profile 尚未持久化；下一工作单元实现 `U/F/A/T` 与证据覆盖审计。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-PROFILE-013
+
+- 类型：公司分类结果与公司级技术方向叙述聚合。
+- 信任拆分：新增 `CompanyTechnologyProfileNarrative`，模型只能生成总结、方向、限制；程序控制 Categories、成员公开号与 Evidence。
+- 输入最小化：Profile Agent 不接收 company/category/publication/evidence ID、专利数、日期或程序统计，只消费验证后分类语义和逐件分析结论。
+- 硬门：最终 Profile 必须逐字段保留已验证 Categories，并继续恰好覆盖公司 Batch；任何成员或分类内容改写均拒绝。
+- 单件路径：直接用唯一分类生成 Profile，不调用模型；多件路径才执行结构化叙述 Agent。
+- 涉及文件：`backend/landscape/{schemas,company_profiles}.py`、公司 Profile 测试和两份追加式日志。
+- 验证：聚焦 20 项、Landscape 全量 115 项通过；compileall、`git diff --check` 通过；未使用真实模型 API。
+- 未完成：Profile 尚未持久化；下一工作单元构建跨公司、时间门控且证据约束的趋势。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-CLASSIFICATION-012
+
+- 类型：单公司内部、证据约束的技术分类。
+- Agent 输入：公司显示名和本公司 Batch 的逐件 Analysis；不传 company ID、其他公司专利、搜索命中或程序统计。
+- 单件路径：确定性生成一个分类，零模型调用；多件路径使用 `landscape-company-technology-classifier` 的严格结构化输出。
+- 稳定性：程序按成员最小公开号排序并重新分配 `TC-<company>-NN`，不信任模型生成的业务标识。
+- 硬门：分类成员必须恰好覆盖公司 `A`，证据只能来自分类成员，且每件成员至少贡献一个 Evidence。
+- 涉及文件：`backend/landscape/{schemas,company_classification}.py`、公司分类测试和两份追加式日志。
+- 验证：聚焦 20 项、Landscape 全量 112 项通过；compileall、`git diff --check` 通过；未使用真实模型 API。
+- 未完成：分类尚未写入 PostgreSQL，也未聚合公司整体技术方向；下一工作单元构建 Company Profile。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-BATCHES-011
+
+- 类型：公司级 Agent fan-out 前的确定性批次。
+- 输入：只消费确定性 `CompanyAssignmentResult` 与已成功的逐件 Analysis 集合 `A`；不调用模型、不读取搜索别名。
+- 分组：只按 PRIMARY company ID 分桶，公司与公开号均稳定排序；输入顺序变化不改变结果，UNKNOWN 与普通公司遵循同一规则。
+- 硬门：每个 `A` 必须恰好出现一次，拒绝重复、越界、未知公司、Analysis 公开号错配、错桶和空 Batch。
+- 失败语义：没有成功 Analysis 的公司不产生空模型任务，`U-F` 和 `F-A` 由后续 Coverage Audit 披露或修复。
+- 涉及文件：`backend/landscape/company_batches.py`、公司批次测试和两份追加式日志。
+- 验证：聚焦 30 项、Landscape 全量 109 项通过；compileall、`git diff --check` 通过。
+- 未完成：尚未实现公司内技术分类、Profile 聚合或 LangGraph `Send`；下一提交进入单公司分类服务。
+
+## 2026-07-28 — LANDSCAPE-COMPLETE-ANALYSIS-010
+
+- 类型：成功抓取集合 `F` 的完整、可恢复逐件精读。
+- 集合：分析目标严格等于 PostgreSQL 可重建的全部 `FETCHED` 文档，不读取 `analysis_limit`，不再重抓全文。
+- 恢复：读取已有 `landscape_patent_analyses` 并校验 JSON 哈希与公开号身份，只把差集发送给单专利 Analyzer；既有与新增结果稳定合并。
+- 硬门：持久化 Analysis 若引用 `F` 外专利立即失败；输出记录 `target_count`、`resumed_analysis_count`、`analyzed_count` 和 `complete`。
+- 涉及文件：Execution/Runtime、PostgreSQL Repository、执行与 Repository 测试及两份追加式日志。
+- 验证：聚焦 16 项、Landscape 全量 106 项通过；compileall、`git diff --check` 通过。
+- 未完成：模型失败仍形成 `F-A` 覆盖缺口；公司批次、覆盖审计和有限修复将在后续工作单元处理。
+
+## 2026-07-28 — LANDSCAPE-RESUMABLE-FETCH-009
+
+- 类型：完整 `U` 的可恢复专利详情抓取。
+- 范围：`FETCH_DETAILS` 的目标数固定为 `|U|`，不再读取 `analysis_limit`、公司配额或补位抽样；失败专利保留明确缺口。
+- 持久化：新增 `072_landscape_document_fetches`，保存可重建 `FetchedDocument` 的完整 JSON、内容哈希、尝试次数和失败信息，并校验 Run、document ID、公开号与 canonical candidate 一致。
+- 恢复：执行前读取所有 `FETCHED` 文档并校验哈希，只对剩余专利调用 Provider；失败可重试并转为成功，成功内容不可覆盖且不被迟到失败降级。
+- 兼容：`landscape_run_documents` 继续保存成功元数据，失败不再写不可变占位元数据。
+- 涉及文件：Execution/Runtime、PostgreSQL Repository、`072`、迁移工具、执行/Repository/Schema/基础设施测试及两份追加式日志。
+- 验证：聚焦 40 项、Landscape 全量 104 项通过；compileall、`git diff --check` 通过。
+- 未完成：尚未真实执行 PostgreSQL 迁移与中断恢复演练；`ANALYZE_PATENTS` 仍需改为覆盖全部成功抓取集合。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-PERSISTENCE-008
+
+- 类型：公司 Registry、完整 PRIMARY 归属与集合 Manifest 的 PostgreSQL 持久化。
+- 原子性：Repository 先锁定 `landscape_runs` 行，校验 Assignment 恰好覆盖 canonical `U`，再在单事务内写公司、归属和 Manifest。
+- 幂等性：同内容重放零新增；Manifest、公司行或归属行存在数量/内容不一致时拒绝覆盖。读取路径重新计算集合哈希，空集合也有明确完成标志。
+- 信任边界：Execution 只把原始 Run Scope 传给公司归属；模型检索别名不能进入 Registry。候选安全门超限前仍会留下完整 `U` 及归属审计。
+- 字段语义：`USER_CONFIRMED_REGISTRY`、`NORMALIZED_OBSERVED_NAME`、`UNRESOLVED` 显式区分来源；confidence 仅表示确定性解析状态。共同申请人缺少 company ID 时拒绝静默丢失。
+- 迁移：新增 `071_landscape_company_assignment_manifest.sql`，并接入已有卷的显式迁移链与 Landscape 启动版本门。
+- 涉及文件：PostgreSQL Repository、Execution/Runtime、`071`、迁移工具、执行/Repository/Schema/基础设施测试及两份追加式日志。
+- 验证：Landscape 103 项、Schema 与部署迁移 25 项通过；compileall、`git diff --check` 通过。
+- 未完成：未运行真实 PostgreSQL 并发/回滚集成测试；下一工作单元实现完整 `U` 的可恢复详情抓取。
+
+## 2026-07-28 — LANDSCAPE-SEARCH-ALIAS-TRUST-007
+
+- 类型：检索扩展别名与业务授权别名的信任边界修复。
+- 搜索：`search_scope` 保留用户确认别名，并加入模型推断别名作为 Provider 检索提示。
+- 硬门：严格过滤、公司统计、详情选择和公司归属只读取原始持久化 Scope；模型别名不能授权专利进入 `U`，也不能创建公司身份。
+- 回归：新增集成用例证明查询同时包含两类别名，但仅模型别名命中的专利以 `COMPETITOR_NOT_CONFIRMED` 排除，用户别名命中正常进入 Huawei 分组。
+- 涉及文件：`backend/landscape/{planning,execution}.py`、规划/执行测试和两份追加式日志。
+- 验证：聚焦 26 项、Landscape 全量 99 项测试通过；compileall、`git diff --check` 通过。
+- 未完成：本提交不写 PostgreSQL 公司表；确定性公司归属的原子持久化在下一工作单元完成。
+
+## 2026-07-28 — LANDSCAPE-DETERMINISTIC-COMPANY-006
+
+- 类型：完整集合 `U` 的确定性公司归属与完整性校验。
+- 信任边界：竞争对手模式必须显式传入原始用户确认 Registry；模型推断别名不得自动获得公司归属权限。
+- 匹配：仅 NFKC、casefold 和空白折叠后的精确相等；不删除标点/法律后缀，不用子串或相似度推断。
+- 技术模式：相同原始 Assignee 使用稳定 `CO-RAW-<hash>`；不同名称不擅自合并；缺失与跨来源冲突进入 UNKNOWN/REVIEW_REQUIRED。
+- 审计：公司 ID、别名全局唯一，Assignment 必须恰好覆盖 `U`，不得重复、越界、引用未知公司或使用不属于该公司的 matched alias。
+- 数据限制：现有 Provider/FetchedDocument 仅保留单 Assignee，本提交不拆分字符串或伪造共同申请人，`co_assignees` 保持空。
+- 涉及文件：`backend/landscape/company_assignment.py`、`backend/landscape/schemas.py`、公司归属/检索测试和两份追加式日志。
+- 验证：Landscape 97 项测试通过；compileall、`git diff --check` 通过。
+- 未完成：尚未接 PostgreSQL 公司表与 Graph；旧搜索 Effective Scope 中模型推断别名仍需在下一切片拆出 search-only 信任级别。
+
+## 2026-07-28 — LANDSCAPE-COMPLETE-ELIGIBLE-SET-005
+
+- 类型：完整去重合格集合 `U` 接入真实检索流程。
+- 去重：按规范化公开号分组后组内合并来源，不再因相同 Application/Family 折叠不同公开号。
+- 预算：`candidate_limit` 从静默截断改为安全门；无论是否超限都先形成完整 `U`，超限时持久化后明确失败。
+- 持久化：生产 Runtime 显式注入 PostgreSQL candidate repository；候选 Metadata 使用精简稳定字段并排序，支持不可变幂等重放。
+- 重试：候选超限属于确定性策略错误，不再重复执行相同 Graph 节点。
+- 涉及文件：`backend/landscape/{search,execution,runtime,workflow}.py`、检索/执行/工作流测试和两份追加式日志。
+- 验证：Landscape 84 项测试通过；compileall、`git diff --check` 通过。
+- 未完成：`FETCH_DETAILS/ANALYZE_PATENTS` 仍按旧 `analysis_limit` 选样；全量抓取与精读在后续独立提交完成。
+
+## 2026-07-28 — LANDSCAPE-CANONICAL-CANDIDATES-004
+
+- 类型：去重合格全集 `U` 的 PostgreSQL 持久化基座。
+- 迁移：新增 `070_landscape_company_analysis.sql`，一次建齐候选、公司、文档归属、公司分类/Profile、跨公司趋势和洞察证据表，避免已登记迁移后再修改同名文件。
+- Repository：新增 `put_candidates/list_candidates`，要求公开号与 normalized key 一致、排名从 1 连续、决策为 ELIGIBLE；完整集合相同可重放，不同内容拒绝覆盖。
+- 安全：候选 Metadata 递归拒绝敏感字段；洞察证据以 Run 复合外键绑定，不能引用其他 Run 的 Evidence。
+- 部署：已有卷显式迁移链增加 `070`，Landscape 初始化要求最新迁移存在。
+- 涉及文件：`070` SQL、`backend/landscape/postgres_database.py`、迁移工具和 PostgreSQL/基础设施测试及两份追加式日志。
+- 验证：相关数据库与迁移测试 42 项通过；compileall、`git diff --check` 通过。
+- 未完成：尚未在真实 PostgreSQL 执行 `070`；生产搜索流程尚未写入 canonical candidates。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-TREND-SCHEMA-003
+
+- 类型：公司技术趋势领域与模型输出契约。
+- 实现：新增 `NormalizedCompany`、`CompanyAssignment`、公司技术分类/Profile、跨公司 Trend/Analysis、TimeBasis 和 CoverageAudit。
+- 边界：LLM Profile 不回显 company ID 和计数，Trend Analysis 不回显程序时间统计；外部全集、公司归属和证据归属由后续上下文 Validator 校验。
+- 硬门：UNKNOWN 身份一致、confirmed alias 必须有匹配依据、公司内主分类不可重复、Trend 引用不可重复、PASS 必须满覆盖且无缺陷、REPAIR 必须有目标。
+- 涉及文件：`backend/landscape/schemas.py`、`backend/tests/test_landscape_company_trend_schemas.py` 和两份追加式日志。
+- 验证：新旧 Landscape Schema、Fixture 和聚类共 30 项通过；compileall、`git diff --check` 通过。
+- 未完成：尚未注册新的模型服务，也未实现依赖 `U` 和证据仓储的上下文校验。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-TREND-FIXTURE-002
+
+- 类型：公司技术趋势 Agent 离线模拟基线。
+- 实现：新增 `BASE-01` 的 Scope、12 条 Provider Hit、7 件详情与逐件分析、公司别名/归属、公司 Profile、趋势、Graph 路径和 Expected 输出。
+- 契约：固定 `R=12`、`E=8`、`U=F=A=T=7`；Huawei/Vertiv 各 2 件，Meta/Metallurgy/UNKNOWN 各 1 件；单季度数据不得输出增长或下降。
+- 测试设施：新增深层只读 JSON/JSONL Loader，路径必须位于 Fixture 根目录，不允许静默跳过空行。
+- 涉及文件：`backend/tests/fixtures/landscape_agent/`、`backend/tests/landscape_agent_fixture_loader.py`、`backend/tests/test_landscape_agent_fixtures.py` 和两份追加式日志。
+- 验证：Fixture 契约测试 7 项通过；`git diff --check` 通过。
+- 未完成：本提交只冻结输入和 Oracle，不修改生产检索、Schema 或 Graph。
+
+## 2026-07-28 — LANDSCAPE-COMPANY-TREND-SPEC-001
+
+- 类型：公司技术趋势 Agent 待审查开发规格。
+- 实态依据：当前 8 节点 Graph 为固定直线；候选和精读分别受 `candidate_limit`、`analysis_limit` 截断；旧聚类 Prompt 明确不按公司分类。
+- 决策草案：持久化完整去重合格集合，确定性完成公司归属，在公司内进行证据约束技术分类，再生成跨公司方向和满足时间门槛的趋势。
+- Graph 草案：新增公司级 `Send`、顺序无关 Reducer、覆盖审计、PASS/REPAIR/LIMITED/FAIL 条件边和有限修复。
+- 开发纪律：审查通过前不改生产代码；通过后每个小功能独立提交，提交同时包含实现、测试、Fixture 和开发日志。
+- 涉及文件：`development/agent-upgrade/05-landscape-company-trend-agent-spec.md`、两处文档索引、Agent 升级 Changelog 和本日志。
+- 验证：`git diff --check` 通过；规格文档共 14 个一级开发章节；敏感字段模式扫描无命中；业务实现和模拟 Fixture 尚未开始。
+
 ## 2026-07-22 — LANDSCAPE-DESIGN-001
 
 - 类型：独立专利态势分析 MVP 技术基线。
@@ -259,3 +673,24 @@
 - 验证：Landscape 54 项测试和 Provider/配置/容器契约/前端/健康/日志安全/合并相关 51 项测试通过；Python 编译、Node 语法和 `git diff --check` 通过。
 - 容器：应用镜像使用本次源码重建，App、PostgreSQL、Redis、MinIO 全部 healthy；`/api/health` 与 `/landscape` 可访问，容器静态资源已包含 `analysis_selection` 和“同族法域”。
 - Git：本实现作为第 26 个工作单元，与第 25 个设计提交组成一对，推送 `origin/develop`。
+
+## 2026-07-27 — LANDSCAPE-COMPETITOR-EMPTY-DESIGN-027
+
+- 类型：友商多别名导致 SerpAPI 空结果的运行事故与修复设计。
+- 现场：最新英伟达 Run `71b23172-67b7-4905-b9e8-cd0d7a6bd41d` 在 15 秒内完成 8 步，但 SerpAPI 唯一调用为 `EMPTY`，原始命中、候选和精读均为 0。
+- 根因：仅友商计划把同一主体的中文名、英文名、公司全称和简称全部转换为多个 SerpAPI `assignee` 参数值，真实语义过度收窄，并非别名 OR。
+- 实测：相同 2026-04-27 至 2026-07-27 窗口下，多别名申请人参数返回 0 条，单一 `assignee:"NVIDIA"` 和普通 `NVIDIA` 查询均返回 50 条。
+- 决策：仅友商模式使用普通名称 OR 组召回，之后继续按返回的申请人字段严格别名过滤；同时区分 `SEARCH_EMPTY` 与“有命中但无合格结果”。
+- 文档：详见 `competitor-alias-empty-result-repair.md`；代码、回归、真实 Run 和容器验收作为第 28 个工作单元。
+
+## 2026-07-27 — LANDSCAPE-COMPETITOR-EMPTY-CORE-028
+
+- 类型：友商别名 OR 召回和空结果语义修复。
+- 查询：仅友商模式从多个 `assignee:` 值改为一条普通名称 OR 组；联合模式、技术方向模式和一家公司一条检索式的 V3 规则保持不变。
+- 严格范围：普通名称查询只扩大 Provider 召回，正式候选仍必须通过当前申请人与主名称/确认别名匹配、公开日窗口和公开号门禁。
+- 报告：新增 `SEARCH_EMPTY`，明确所有已执行 Provider 均为空；新增 `NO_ELIGIBLE_PATENTS`，区分“有原始命中但全部被范围过滤”。Provider 网络、额度或鉴权问题继续单独输出 `PROVIDER_FAILURE`。
+- 回归：Landscape 55 项测试和 SerpAPI/配置/容器契约/前端/健康/日志安全/合并相关 51 项测试通过；Python 编译、Node 语法和 `git diff --check` 通过。
+- 容器：最新源码镜像重建成功，App、PostgreSQL、Redis、MinIO 全部 healthy。
+- 真实检索：修复后同一英伟达别名组、同一 2026-04-27 至 2026-07-27 窗口返回 `SUCCESS`，原始命中 50、严格合格 26、唯一候选 26、公司归并为“英伟达”；样例当前权利人均为 `Nvidia Corporation`。
+- 不可变性：旧 Run `71b23172-67b7-4905-b9e8-cd0d7a6bd41d` 保留原始空结果证据，不回填或改写；用户需从页面新建或重跑以使用新查询。
+- Git：本实现作为第 28 个工作单元，与第 27 个设计提交组成一对，推送 `origin/develop`。

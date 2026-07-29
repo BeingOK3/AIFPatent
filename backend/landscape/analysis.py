@@ -222,6 +222,7 @@ class LandscapeAnalysisService:
         run_id: str,
         documents: list[tuple[str, FetchedDocument]],
         direction_terms: list[str],
+        batch_size: int | None = None,
     ) -> tuple[dict[str, LandscapePatentAnalysis], dict[str, str]]:
         semaphore = asyncio.Semaphore(self.concurrency)
 
@@ -238,7 +239,18 @@ class LandscapeAnalysisService:
                 except Exception as exc:
                     return document.publication_number, None, f"{type(exc).__name__}: {str(exc)[:500]}"
 
-        results = await asyncio.gather(*(one(document_id, document) for document_id, document in documents))
+        size = max(1, batch_size or len(documents) or 1)
+        results = []
+        for offset in range(0, len(documents), size):
+            # Batching bounds task creation without changing the eligible set.
+            results.extend(
+                await asyncio.gather(
+                    *(
+                        one(document_id, document)
+                        for document_id, document in documents[offset : offset + size]
+                    )
+                )
+            )
         analyses = {publication: output for publication, output, _ in results if output is not None}
         failures = {publication: error for publication, _, error in results if error is not None}
         return analyses, failures

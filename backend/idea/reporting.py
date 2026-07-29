@@ -328,7 +328,7 @@ class ReportService:
                           d.publication_date,d.url,rd.relevance,rd.relevance_score,rd.found_by_json,
                           rd.query_ids_json
                 FROM run_documents rd JOIN patent_documents d ON d.document_id = rd.document_id
-                WHERE rd.run_id = ? AND rd.deep_reviewed = 1
+                WHERE rd.run_id = ? AND rd.deep_reviewed = TRUE
                 ORDER BY d.publication_number,d.document_id""",
                 (run_id,),
             ).fetchall()

@@ -57,12 +57,11 @@ class IdeaApiTests(unittest.TestCase):
                 "runs_dir": root / "runs",
                 "uploads_dir": root / "uploads",
                 "cache_dir": root / "cache",
-                "document_store_dir": root / "cache" / "documents",
             }
         )
         self.config = config.model_copy(update={"storage": storage})
         self.config.storage.uploads_dir.mkdir(parents=True)
-        self.db = Database(self.config.storage.database)
+        self.db = Database(root / "idea.db")
         self.db.initialize()
         self.store = RunStore(self.config.storage.runs_dir)
         self.harness = WorkflowHarness(self.db, self.store, max_step_attempts=2)

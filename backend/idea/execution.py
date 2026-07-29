@@ -30,10 +30,10 @@ from .run_store import RunStore, RunStoreError
 from .runtime_debug import RunDebugLog
 from .search_strategy import assess_breadth, build_budget
 from .value_analysis import ValueAnalysisService
-from .workflow import WorkflowHarness, WorkflowStep
+from .workflow import NonRetryableWorkflowError, WorkflowHarness, WorkflowStep
 
 
-class ExecutionGateError(RuntimeError):
+class ExecutionGateError(NonRetryableWorkflowError):
     pass
 
 
@@ -77,7 +77,6 @@ class WorkflowExecutor:
         self.graph = LangGraphWorkflow(
             database=database,
             harness=harness,
-            checkpoint_path=config.storage.langgraph_database,
             step_handler=self._execute_step,
             fingerprint_builder=self._step_input_fingerprint,
             limitation_collector=self._collect_run_limitations,
@@ -174,8 +173,12 @@ class WorkflowExecutor:
                 minimum_documents=self._budget(run_id, self._idea(run_id)).deep_review_min,
             )
             if not output.documents:
+                if not retrieval.selected_publication_numbers:
+                    raise ExecutionGateError(
+                        "检索已完成，但没有日期合格且可识别的专利候选可供全文核验"
+                    )
                 raise ExecutionGateError(
-                    "no patent full text is available for evidence-based analysis"
+                    "已选择专利候选，但所有全文抓取或证据完整性校验均失败"
                 )
             corpus_version_ids: list[str] | None = None
             corpus_snapshot_hash: str | None = None
@@ -247,11 +250,11 @@ class WorkflowExecutor:
                 )
             with self.database.connect() as connection:
                 reviewed = connection.execute(
-                    "SELECT COUNT(*) FROM run_documents WHERE run_id = ? AND deep_reviewed = 1",
+                    "SELECT COUNT(*) FROM run_documents WHERE run_id = ? AND deep_reviewed = TRUE",
                     (run_id,),
                 ).fetchone()[0]
                 pending = connection.execute(
-                    "SELECT COUNT(*) FROM run_documents WHERE run_id = ? AND deep_reviewed = 0",
+                    "SELECT COUNT(*) FROM run_documents WHERE run_id = ? AND deep_reviewed = FALSE",
                     (run_id,),
                 ).fetchone()[0]
             if pending:
@@ -373,7 +376,7 @@ class WorkflowExecutor:
             rows = connection.execute(
                 """SELECT d.* FROM run_documents rd
                 JOIN patent_documents d ON d.document_id = rd.document_id
-                WHERE rd.run_id = ? AND rd.deep_reviewed = 0 ORDER BY d.publication_number""",
+                WHERE rd.run_id = ? AND rd.deep_reviewed = FALSE ORDER BY d.publication_number""",
                 (run_id,),
             ).fetchall()
         documents = []
@@ -533,7 +536,7 @@ class WorkflowExecutor:
     def _clear_fetch_attempt(self, run_id: str) -> None:
         with self.database.connect() as connection:
             connection.execute(
-                "DELETE FROM run_documents WHERE run_id = ? AND deep_reviewed = 0", (run_id,)
+                "DELETE FROM run_documents WHERE run_id = ? AND deep_reviewed = FALSE", (run_id,)
             )
             connection.execute(
                 "DELETE FROM tool_calls WHERE run_id = ? AND step_name = 'NORMALIZE_AND_FETCH'",

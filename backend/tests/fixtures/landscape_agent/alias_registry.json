@@ -1,0 +1,20 @@
+{
+  "schema_version": "landscape-agent-fixture/1.0.0",
+  "case_id": "BASE-01",
+  "companies": [
+    {"company_id":"CO-HUAWEI","canonical_name":"Huawei","aliases":["Huawei Technologies","Huawei Technologies Co., Ltd.","华为","华为技术有限公司"]},
+    {"company_id":"CO-VERTIV","canonical_name":"Vertiv","aliases":["Vertiv Corporation","维谛","维谛技术有限公司"]},
+    {"company_id":"CO-META","canonical_name":"Meta","aliases":["Meta Platforms","Meta Platforms, Inc."]},
+    {"company_id":"CO-METALLURGY","canonical_name":"Metallurgy Systems","aliases":["Metallurgy Systems Ltd."]},
+    {"company_id":"UNKNOWN","canonical_name":"UNKNOWN","aliases":[]}
+  ],
+  "assignments": [
+    {"publication_number":"CN119000001A","primary_company_id":"CO-HUAWEI","observed_assignee":"Huawei Technologies Co., Ltd.","matched_alias":"Huawei Technologies Co., Ltd.","co_assignees":[],"status":"CONFIRMED_ALIAS"},
+    {"publication_number":"CN119000002A","primary_company_id":"CO-HUAWEI","observed_assignee":"华为技术有限公司","matched_alias":"华为技术有限公司","co_assignees":[],"status":"CONFIRMED_ALIAS"},
+    {"publication_number":"US20260100001A1","primary_company_id":"CO-VERTIV","observed_assignee":"Vertiv Corporation","matched_alias":"Vertiv Corporation","co_assignees":[],"status":"CONFIRMED_ALIAS"},
+    {"publication_number":"CN119000003A","primary_company_id":"CO-VERTIV","observed_assignee":"维谛技术有限公司","matched_alias":"维谛技术有限公司","co_assignees":[],"status":"CONFIRMED_ALIAS"},
+    {"publication_number":"US20260100002A1","primary_company_id":"CO-META","observed_assignee":"Meta Platforms, Inc.","matched_alias":"Meta Platforms, Inc.","co_assignees":[],"status":"CONFIRMED_ALIAS"},
+    {"publication_number":"EP4600001A1","primary_company_id":"CO-METALLURGY","observed_assignee":"Metallurgy Systems Ltd.","matched_alias":"Metallurgy Systems Ltd.","co_assignees":[],"status":"CONFIRMED_ALIAS"},
+    {"publication_number":"WO2026123456A1","primary_company_id":"UNKNOWN","observed_assignee":null,"matched_alias":null,"co_assignees":[],"status":"UNKNOWN"}
+  ]
+}

@@ -36,14 +36,14 @@ class ApplicationContainerTests(unittest.TestCase):
 
     def test_runtime_directories_and_assets_are_present(self) -> None:
         for path in (
-            "/app/data/aifpatent",
-            "/app/data/langgraph",
             "/app/logs",
             "/app/workspace/cache",
             "/app/workspace/idea-runs",
             "/app/workspace/uploads",
         ):
             self.assertIn(path, self.dockerfile)
+        self.assertNotIn("/app/data/aifpatent", self.dockerfile)
+        self.assertNotIn("/app/data/langgraph", self.dockerfile)
         self.assertIn("backend /app/backend", self.dockerfile)
         self.assertIn("frontend /app/frontend", self.dockerfile)
         self.assertIn("config /app/config", self.dockerfile)

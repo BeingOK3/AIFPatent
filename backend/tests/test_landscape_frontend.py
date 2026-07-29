@@ -20,13 +20,20 @@ class LandscapeFrontendContractTests(unittest.TestCase):
         self.assertIn('id="technology-direction"', self.html)
         self.assertIn('id="competitors"', self.html)
         self.assertIn("自动识别专利申请人别名", self.html)
+        self.assertIn("GROUP 是集团/品牌名称文本口径", self.html)
+        self.assertIn("assignee_scope", self.javascript)
+        self.assertIn("公司名称 | GROUP", self.javascript)
 
     def test_aliases_and_debug_are_rendered(self) -> None:
         for fragment in (
             "/api/landscape/runs/", "/debug", "searched_competitor_aliases",
             "本次检索到的友商别名", "系统运行调试", "provider_statuses",
             "provider_attempts", "technical_direction_expansion", "中英文技术词",
-            "实际补全",
+            "日期详情补全",
+            "/deep-analyze",
+            "开始精读已选",
+            "待发起精读",
+            "deep_read",
         ):
             self.assertIn(fragment, self.javascript if fragment != "系统运行调试" else self.html)
         self.assertIn("debug-view", self.css)
@@ -47,20 +54,26 @@ class LandscapeFrontendContractTests(unittest.TestCase):
         self.assertIn("getUTCFullYear", self.javascript)
         self.assertIn("getUTCDate", self.javascript)
 
-    def test_v2_report_renders_company_counts_cluster_metadata_and_family_status(self) -> None:
+    def test_company_trend_report_renders_company_data_and_hides_legacy_clusters(self) -> None:
         for fragment in (
             "company_patent_counts",
-            "各公司专利数量",
+            "各公司专利族数量",
             "统计口径：时间与友商条件过滤后",
-            "cluster.members",
-            "member.competitor",
-            "member.filing_date",
             "patent.family_status",
             "item.family_footprint",
             "analysis_selection",
             "公司覆盖",
             "全族状态",
             "overall_legal_status",
+            "company_profiles",
+            "cross_company_analysis",
+            "公司技术画像",
+            "跨公司整体技术趋势",
+            "company_trend_coverage",
+            "company_trend_coverage_history",
+            "公司趋势覆盖审计",
+            "landscape-report/2.0.0",
+            "历史技术聚类",
         ):
             self.assertIn(fragment, self.javascript)
         self.assertNotIn("申请日趋势", self.javascript)

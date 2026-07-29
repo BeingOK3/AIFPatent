@@ -33,4 +33,4 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 "$(command -v python3)" "$ROOT/tools/rag_infra.py" down
-echo "AIFPatent Docker 服务已停止；PostgreSQL、Redis、MinIO 和应用数据卷均已保留。"
+echo "AIFPatent Docker 服务已停止；PostgreSQL、MinIO 和应用数据卷均已保留。"

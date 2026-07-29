@@ -3,10 +3,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 from enum import Enum
-from pathlib import Path
 from typing import Any, Protocol, TypedDict
 
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
 
@@ -49,7 +47,6 @@ class FollowupWorkflow:
         *,
         repository: PostgreSQLFollowupRepository,
         handler: FollowupStepHandler,
-        checkpoint_path: Path,
         step_timeout_seconds: int = 300,
         max_step_attempts: int = 3,
     ) -> None:
@@ -57,12 +54,9 @@ class FollowupWorkflow:
             raise ValueError("follow-up workflow timeout and attempts must be positive")
         self.repository = repository
         self.handler = handler
-        self.checkpoint_path = checkpoint_path
         self.step_timeout_seconds = step_timeout_seconds
         self.max_step_attempts = max_step_attempts
         self._initialize_lock = asyncio.Lock()
-        self._saver_context = None
-        self._saver: AsyncSqliteSaver | None = None
         self._graph = None
         self._attempts: dict[tuple[str, FollowupWorkflowStep], int] = {}
 
@@ -90,7 +84,6 @@ class FollowupWorkflow:
                     "last_completed_step": None,
                     "completed_steps": 0,
                 },
-                {"configurable": {"thread_id": f"followup:{turn.turn_id}"}},
             )
         except asyncio.CancelledError:
             current = await self.repository.get_turn(turn_id)
@@ -128,11 +121,7 @@ class FollowupWorkflow:
         return completed.status
 
     async def aclose(self) -> None:
-        if self._saver_context is not None:
-            await self._saver_context.__aexit__(None, None, None)
-            self._saver_context = None
-            self._saver = None
-            self._graph = None
+        self._graph = None
 
     async def _compiled_graph(self):
         if self._graph is not None:
@@ -140,15 +129,8 @@ class FollowupWorkflow:
         async with self._initialize_lock:
             if self._graph is not None:
                 return self._graph
-            self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-            self._saver_context = AsyncSqliteSaver.from_conn_string(
-                str(self.checkpoint_path)
-            )
-            self._saver = await self._saver_context.__aenter__()
-            await self._saver.setup()
             self._graph = self._build_graph().compile(
-                checkpointer=self._saver,
-                name="aifpatent-followup-workflow",
+                name="aifpatent-followup-workflow"
             )
             return self._graph
 

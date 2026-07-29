@@ -44,6 +44,10 @@ class WorkflowError(RuntimeError):
     pass
 
 
+class NonRetryableWorkflowError(WorkflowError):
+    """A deterministic business gate that cannot succeed on an identical retry."""
+
+
 class CompletionGateError(WorkflowError):
     def __init__(self, issues: list[str]):
         super().__init__("completion gates failed: " + "; ".join(issues))

@@ -9,6 +9,7 @@ from typing import Any
 from .agent_schemas import IdeaParserOutput, QueryPlannerOutput
 from .database import Database, canonical_json, now_ms
 from .model_client import AgentCallResult, StructuredModelClient
+from .query_strategy import expand_recall_plan
 from .runtime_debug import RunDebugLog
 
 
@@ -25,9 +26,14 @@ Do not search, assess novelty, cite patents, or invent missing implementation de
 
 QUERY_PLANNER_PROMPT = """
 You are patent-query-planner. Build executable Chinese and English patent search queries from
-the supplied validated idea analysis. Include at least one technical-means query and one
-problem/effect query. Use real terms, synonyms, broader terms and optional IPC/CPC candidates.
-Do not use placeholders. Do not execute a search and do not claim any result was found.
+the supplied validated idea analysis. Optimize for recall: missing a relevant patent is more
+costly than returning extra candidates. Produce 8-16 queries across Chinese and English. Each
+query must contain only one or two concept groups; never join three or more groups with AND.
+Use separate searches for technical means, problems/effects, distinguishing features, and
+optional IPC/CPC candidates. Put IPC/CPC identifiers in ipc_cpc_candidates instead of using
+provider-specific field syntax such as IPC:(...) in query_text. Use real terms, synonyms and
+broader terms. Do not use placeholders. Do not execute a search and do not claim any result
+was found.
 """
 
 
@@ -121,6 +127,7 @@ class IdeaAgentService:
         for query in output.queries:
             if PLACEHOLDER_PATTERN.search(query.query_text):
                 raise AgentExecutionError(f"query contains placeholder: {query.query_id}")
+        output = expand_recall_plan(output)
         with self.database.connect() as connection:
             existing = connection.execute(
                 "SELECT COUNT(*) FROM search_queries WHERE run_id = ?", (run_id,)

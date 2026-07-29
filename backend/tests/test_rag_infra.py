@@ -52,10 +52,7 @@ class RagInfrastructureTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             values = rag_infra._parse_environment(path)
             self.assertGreaterEqual(len(values["AIFPATENT_POSTGRES_PASSWORD"]), 40)
-            self.assertNotEqual(
-                values["AIFPATENT_POSTGRES_PASSWORD"],
-                values["AIFPATENT_REDIS_PASSWORD"],
-            )
+            self.assertNotIn("AIFPATENT_REDIS_PASSWORD", values)
 
     def test_existing_environment_with_placeholder_or_open_permissions_fails(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -108,7 +105,7 @@ class RagInfrastructureTests(unittest.TestCase):
     def test_compose_template_pins_services_and_contains_no_credentials(self) -> None:
         compose = rag_infra.COMPOSE_PATH.read_text(encoding="utf-8")
         self.assertIn("dockerfile: deploy/app/Dockerfile", compose)
-        self.assertIn("app-data:/app/data", compose)
+        self.assertNotIn("app-data:/app/data", compose)
         self.assertIn("app-workspace:/app/workspace", compose)
         self.assertIn("app-logs:/app/logs", compose)
         self.assertIn("127.0.0.1:${AIFPATENT_APP_PORT:-8001}:8001", compose)
@@ -121,7 +118,7 @@ class RagInfrastructureTests(unittest.TestCase):
         self.assertIn('entrypoint: ["/usr/local/bin/aifpatent-entrypoint"]', compose)
         self.assertIn('command: ["python", "-m", "uvicorn"', compose)
         self.assertIn("pgvector/pgvector:0.8.2-pg17-bookworm", compose)
-        self.assertIn("redis:8.4.4-alpine", compose)
+        self.assertNotIn("redis:", compose)
         self.assertIn("Dockerfile.minio", compose)
         self.assertIn("127.0.0.1:", compose)
         self.assertNotIn("replace-with-a-random", compose)
@@ -133,8 +130,14 @@ class RagInfrastructureTests(unittest.TestCase):
             rag_infra.ensure_environment(path)
             values = rag_infra._parse_environment(path)
             self.assertEqual(values["AIFPATENT_APP_PORT"], "8001")
-            self.assertEqual(values["AIFPATENT_PIP_INDEX_URL"], "https://pypi.org/simple")
-            self.assertEqual(values["AIFPATENT_GOPROXY"], "https://proxy.golang.org,direct")
+        self.assertEqual(
+            values["AIFPATENT_PIP_INDEX_URL"],
+            "https://mirrors.cloud.tencent.com/pypi/simple",
+        )
+        self.assertEqual(
+            values["AIFPATENT_GOPROXY"],
+            "https://mirrors.tencent.com/go/,direct",
+        )
 
     def test_up_builds_only_publicly_configured_images_before_no_build_compose_start(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -149,8 +152,8 @@ class RagInfrastructureTests(unittest.TestCase):
         self.assertIn("deploy/rag/Dockerfile.minio", " ".join(minio))
         self.assertIn("--load", app)
         self.assertEqual(
-            rag_infra._docker_command("up-dependencies")[-7:],
-            ["up", "--detach", "--no-build", "--wait", "postgres", "redis", "object-store"],
+            rag_infra._docker_command("up-dependencies")[-6:],
+            ["up", "--detach", "--no-build", "--wait", "postgres", "object-store"],
         )
         self.assertEqual(
             rag_infra._docker_command("up-app")[-5:],
@@ -171,6 +174,13 @@ class RagInfrastructureTests(unittest.TestCase):
         self.assertIn("035_report_retrieval_schema.sql", migrate)
         self.assertIn("040_report_citation_schema.sql", migrate)
         self.assertIn("055_report_hybrid_schema.sql", migrate)
+        self.assertIn("060_unified_runtime_schema.sql", migrate)
+        self.assertIn("070_landscape_company_analysis.sql", migrate)
+        self.assertIn("071_landscape_company_assignment_manifest.sql", migrate)
+        self.assertIn("072_landscape_document_fetches.sql", migrate)
+        self.assertIn("073_landscape_company_result_manifests.sql", migrate)
+        self.assertIn("074_landscape_keyed_steps.sql", migrate)
+        self.assertIn("075_landscape_repair_snapshots.sql", migrate)
 
     def test_up_migrates_between_dependency_and_application_start(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -190,8 +200,8 @@ class RagInfrastructureTests(unittest.TestCase):
                 self.assertEqual(rag_infra.run("up"), 0)
 
         self.assertEqual(
-            commands[0][-7:],
-            ["up", "--detach", "--no-build", "--wait", "postgres", "redis", "object-store"],
+            commands[0][-6:],
+            ["up", "--detach", "--no-build", "--wait", "postgres", "object-store"],
         )
         self.assertIn("050_followup_schema.sql", commands[1][-1])
         self.assertEqual(

@@ -161,7 +161,7 @@ class InventivenessService:
                 """
                 SELECT d.document_id
                 FROM run_documents rd JOIN patent_documents d ON d.document_id = rd.document_id
-                WHERE rd.run_id = ? AND d.publication_number = ? AND rd.deep_reviewed = 1
+                WHERE rd.run_id = ? AND d.publication_number = ? AND rd.deep_reviewed = TRUE
                 ORDER BY d.document_id LIMIT 1
                 """,
                 (run_id, d1.publication_number),
@@ -268,7 +268,7 @@ class InventivenessService:
             JOIN patent_documents d ON d.document_id = fm.document_id
             JOIN run_documents rd ON rd.run_id = fm.run_id AND rd.document_id = fm.document_id
             WHERE fm.run_id = ? AND fm.feature_id = ? AND fm.document_id != ?
-              AND fm.coverage_status IN ('DISCLOSED','PARTIAL') AND rd.deep_reviewed = 1
+              AND fm.coverage_status IN ('DISCLOSED','PARTIAL') AND rd.deep_reviewed = TRUE
             ORDER BY CASE fm.coverage_status WHEN 'DISCLOSED' THEN 0 ELSE 1 END,
                      fm.confidence DESC,d.publication_number
             LIMIT ?

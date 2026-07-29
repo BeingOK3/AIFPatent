@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, field_validator
 
-from idea.model_client import RuntimeModelConfig
+from idea.model_client import RuntimeModelConfig, runtime_model_config
 
 from .database import LandscapeDatabase
 from .runtime import LandscapeRuntime
@@ -46,6 +46,11 @@ class LandscapeRuntimeRequest(ApiModel):
     def safe_base_url(cls, value: HttpUrl) -> HttpUrl:
         if value.username or value.password or value.query or value.fragment:
             raise ValueError("base_url must not contain credentials, query, or fragment")
+        # HttpUrl accepts a second URL-looking sequence in the path, such as
+        # ``https://host/v3https://host/v3``. That produces opaque 404 errors
+        # from OpenAI-compatible gateways, so reject it before a Run exists.
+        if str(value).count("://") != 1:
+            raise ValueError("base_url must contain exactly one URL")
         return value
 
     def runtime_config(self) -> RuntimeModelConfig:
@@ -184,13 +189,54 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
         except (ValueError, LandscapeStoreError) as exc:
             raise HTTPException(422, str(exc))
 
+    @router.post("/runs/{run_id}/deep-analyze")
+    async def deep_analyze_selected(
+        run_id: str, request: LandscapeRuntimeRequest
+    ):
+        """Run optional deep analysis only for persisted selected patents."""
+        try:
+            run = database.get_run(run_id)
+            if run["status"] not in {"COMPLETED", "COMPLETED_WITH_LIMITATIONS"}:
+                raise HTTPException(
+                    409,
+                    "deep analysis requires a completed landscape run",
+                )
+            with runtime_model_config(request.runtime_config()):
+                result = await runtime.execution.analyze_selected_patents(run_id)
+                report = await runtime.execution.build_report(
+                    run_id, deep_analysis=result, allow_report_revision=True
+                )
+            return {
+                "run_id": run_id,
+                "deep_analysis": result,
+                "report": report["report"],
+            }
+        except KeyError:
+            raise HTTPException(404, "landscape run not found")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(422, str(exc)[:2000])
+
     @router.get("/runs/{run_id}/report")
     async def get_report(run_id: str):
         try:
             database.get_run(run_id)
             paths = store.paths(run_id)
             store.verify(run_id)
-            return json.loads(paths.report_json.read_text(encoding="utf-8"))
+            report = json.loads(paths.report_json.read_text(encoding="utf-8"))
+            # Reports are frozen artifacts, but this field is a presentation
+            # contract added after existing completed Runs.  Rebuilding reads
+            # only already-frozen candidates, documents and analyses; it does
+            # not call a provider or model, and lets old reports expose the
+            # explicit deferred-deep-read action instead of a misleading 0.
+            if "deep_read" not in report:
+                return (
+                    await runtime.execution.build_report(
+                        run_id, allow_report_revision=True
+                    )
+                )["report"]
+            return report
         except KeyError:
             raise HTTPException(404, "landscape run not found")
         except (LandscapeStoreError, OSError, json.JSONDecodeError):

@@ -3,8 +3,8 @@ const STEP_LABELS = {
   PARSE_IDEA: "解析技术特征",
   VALIDATE_IDEA_MODEL: "校验 IDEA 模型",
   PLAN_QUERIES: "规划检索式",
-  RETRIEVE_CANDIDATES: "双路检索候选",
-  NORMALIZE_AND_FETCH: "去重并抓取全文",
+  RETRIEVE_CANDIDATES: "多策略宽召回候选",
+  NORMALIZE_AND_FETCH: "筛选去重并抓取全文",
   ANALYZE_DOCUMENTS: "逐篇证据映射",
   DETERMINE_NOVELTY: "单篇新颖性裁决",
   ANALYZE_INVENTIVENESS: "多 D1 创造性分析",
@@ -13,9 +13,9 @@ const STEP_LABELS = {
 };
 
 const MODE_DEFAULTS = {
-  quick: { candidate_max: 30, deep_review_min: 10, deep_review_max: 10 },
-  standard: { candidate_max: 80, deep_review_min: 10, deep_review_max: 20 },
-  deep: { candidate_max: 150, deep_review_min: 20, deep_review_max: 40 },
+  quick: { candidate_max: 60, deep_review_min: 10, deep_review_max: 10 },
+  standard: { candidate_max: 200, deep_review_min: 10, deep_review_max: 20 },
+  deep: { candidate_max: 400, deep_review_min: 20, deep_review_max: 40 },
 };
 
 const JUDGMENT_LABELS = {
@@ -49,6 +49,7 @@ const LIMITATION_LABELS = {
   DUPLICATE_DEEP_REVIEW_SELECTION: "重复深读候选",
   DEEP_REVIEW_CANDIDATE_NOT_FOUND: "深读候选无法定位",
   INSUFFICIENT_RELEVANT_DEEP_REVIEWS: "相关文献不足",
+  LOW_CONFIDENCE_RECALL_BACKFILL: "低置信候选全文核验",
   NOVELTY_LIMITATION: "新颖性分析限制",
   INVENTIVE_LIMITATION: "创造性分析限制",
   VALUE_LIMITATION: "价值分析限制",
@@ -394,9 +395,23 @@ function subscribeToRun(runId) {
       await loadReport(runId);
     }
   };
-  source.onerror = () => {
-    if (!isTerminal(state.selectedRun?.status)) setMessage("进度连接中断，可重新选择该 Run 恢复查看");
+  source.onerror = async () => {
     closeEvents();
+    try {
+      const run = await api(`/api/idea/runs/${runId}`);
+      state.selectedRun = run;
+      renderProgress(run);
+      renderRunActions(run);
+      if (isTerminal(run.status)) {
+        stopDebugPolling();
+        await loadDebug(runId);
+        await loadReport(runId);
+      } else {
+        setMessage("进度连接中断，已从持久化状态刷新；稍后可重新选择该 Run 继续查看");
+      }
+    } catch (error) {
+      setMessage(`进度连接中断，状态刷新失败：${error.message}`);
+    }
   };
 }
 
