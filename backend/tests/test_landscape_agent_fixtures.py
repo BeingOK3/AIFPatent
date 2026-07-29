@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import unittest
+import asyncio
 from collections import Counter
 from collections.abc import Mapping
 from datetime import date
+import tempfile
+from pathlib import Path
 
 from tests.landscape_agent_fixture_loader import (
     FIXTURE_ROOT,
@@ -11,6 +14,10 @@ from tests.landscape_agent_fixture_loader import (
     load_json,
     load_jsonl,
 )
+from landscape.database import LandscapeDatabase
+from landscape.schemas import AnalysisMode, LandscapeScope
+from landscape.store import LandscapeRunStore
+from landscape.workflow import LandscapeWorkflow, LandscapeWorkflowHarness, LandscapeWorkflowStep
 
 
 class LandscapeAgentFixtureContractTests(unittest.TestCase):
@@ -157,6 +164,60 @@ class LandscapeAgentFixtureContractTests(unittest.TestCase):
             set(self.expected["company_patent_counts"]),
         )
         self.assertEqual(graph_case["expected_audit_decision"], "PASS")
+
+    def test_base_01_fixture_drives_compiled_main_graph_contract(self) -> None:
+        graph_case = load_json("graph_cases.json")["cases"][0]
+        scope_data = load_json("scopes.json")["cases"]["BASE-01"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = LandscapeDatabase(root / "landscape.db")
+            database.initialize()
+            store = LandscapeRunStore(root / "runs")
+            scope = LandscapeScope(
+                mode=AnalysisMode.TECHNOLOGY,
+                technology_direction=scope_data["technology_direction"],
+                publication_start=date.fromisoformat(scope_data["publication_start"]),
+                publication_end=date.fromisoformat(scope_data["publication_end"]),
+            )
+            run = database.create_run(
+                scope=scope, model="fixture", workflow_version="fixture",
+                prompt_version="fixture",
+            )
+            store.initialize_run(
+                run["run_id"], scope=scope, model="fixture",
+                workflow_version="fixture", prompt_version="fixture",
+            )
+            harness = LandscapeWorkflowHarness(database, store, max_step_attempts=2)
+            invoked = []
+
+            async def handler(run_id, step, _attempt):
+                invoked.append(step)
+                if step == LandscapeWorkflowStep.VERIFY_COVERAGE:
+                    return {"decision": graph_case["expected_audit_decision"], "repair_round": 0}
+                if step == LandscapeWorkflowStep.BUILD_REPORT:
+                    store.write_reports(
+                        run_id, report={"fixture": graph_case["case_id"]},
+                        markdown="# fixture\n", patents_csv="publication_number\n",
+                        manifest_metadata={"fixture": graph_case["case_id"]},
+                    )
+                return {"fixture": graph_case["case_id"]}
+
+            workflow = LandscapeWorkflow(
+                database=database, harness=harness, step_handler=handler,
+                limitation_collector=lambda _run_id: [], step_timeout_seconds=5,
+                max_step_attempts=2,
+            )
+            status = asyncio.run(workflow.execute(run["run_id"]))
+
+            self.assertEqual(status, "COMPLETED")
+            self.assertEqual(invoked[-2:], [
+                LandscapeWorkflowStep.VERIFY_COVERAGE,
+                LandscapeWorkflowStep.BUILD_REPORT,
+            ])
+            self.assertEqual(len(invoked), len(tuple(
+                step for step in LandscapeWorkflowStep
+                if step not in {LandscapeWorkflowStep.CLUSTER_PATENTS, LandscapeWorkflowStep.REPAIR_GAPS}
+            )))
 
 
 if __name__ == "__main__":

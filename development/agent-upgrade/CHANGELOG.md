@@ -2,6 +2,17 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-29 — landscape-base01-main-graph-fixture
+
+### 已完成
+
+- 将 `BASE-01` Fixture Scope 和 Graph Case 接入编译后的主 Landscape Graph。
+- 验证固定 PASS 审计、完整活动步骤序列、报告 Manifest 生成以及旧聚类/可选 Repair 步骤不计入正常步骤数。
+
+### 验证
+
+- Fixture 聚焦 8 项、Landscape 全量 159 项测试通过。
+
 ## 2026-07-29 — landscape-graph-repair-route-e2e-test
 
 ### 已完成

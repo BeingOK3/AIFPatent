@@ -2,6 +2,14 @@
 
 本文件只追加，不覆盖历史记录。每条记录包含日期、工作单元、涉及文件、验证和未完成边界。
 
+## 2026-07-29 — LANDSCAPE-BASE01-MAIN-GRAPH-FIXTURE-041
+
+- 类型：BASE-01 合成 Fixture 主 Graph 契约。
+- 输入：Fixture Scope、Graph Case 的预期审计决策和固定 Case ID；不访问网络、不调用模型。
+- 断言：实际编译 Graph 经过全部活动步骤，按预期 PASS 进入 BUILD_REPORT，并生成受 Manifest 校验的报告文件。
+- 验证：Fixture 聚焦 8 项、Landscape 全量 159 项通过。
+- 未完成：尚未将 Fixture Provider/Analysis/Profile/Trend JSON 注入真实 Execution Service 的 PostgreSQL 适配层。
+
 ## 2026-07-29 — LANDSCAPE-GRAPH-REPAIR-ROUTE-E2E-040
 
 - 类型：主 Graph 修复条件边回归。
