@@ -662,8 +662,11 @@ class LandscapeExecutionService:
 
     async def filter_and_select(self, run_id: str) -> dict[str, Any]:
         # The persisted run scope is the authority for hard assignee filtering and
-        # company statistics. Model-inferred aliases are search hints only.
+        # company statistics. The effective search scope contains validated
+        # model-inferred aliases for the user-owned company, so common
+        # cross-language assignee spellings are not discarded after retrieval.
         scope = self.scope(run_id)
+        effective_scope = self.search_scope(run_id)
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.SEARCH_PUBLICATIONS.value)["value"]
         results = [ProviderResult.model_validate(item) for item in raw["results"]]
         results = await self._enrich_missing_dates(run_id, results)
@@ -671,7 +674,7 @@ class LandscapeExecutionService:
         statuses = {f"{result.request_id}:{result.provider}": result.status.value for result in results}
         result = strict_filter_and_select(
             batches,
-            scope=scope,
+            scope=effective_scope,
             provider_statuses=statuses,
             direction_terms=self.load_plan(run_id).direction_terms,
         )
@@ -742,9 +745,9 @@ class LandscapeExecutionService:
             )
         company_result = assign_companies(
             result.candidates,
-            scope,
+            effective_scope,
             user_confirmed_competitors=(
-                scope.competitors if scope.competitors else None
+                effective_scope.competitors if effective_scope.competitors else None
             ),
         )
         if self.company_repository is not None:

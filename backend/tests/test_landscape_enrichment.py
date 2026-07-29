@@ -218,11 +218,11 @@ class LandscapeEnrichmentTests(unittest.TestCase):
 
             self.assertEqual(
                 [item["publication_number"] for item in filtered["candidates"]],
-                ["CN2A"],
+                ["US1A1", "CN2A"],
             )
             self.assertEqual(
                 filtered["coverage"]["excluded_counts"],
-                {"COMPETITOR_NOT_CONFIRMED": 1},
+                {},
             )
             self.assertEqual(
                 filtered["coverage"]["company_patent_counts"][0]["company"],

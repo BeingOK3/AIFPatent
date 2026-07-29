@@ -8,11 +8,14 @@ from idea.providers.base import SearchHit, SearchProvider
 from landscape.schemas import (
     AnalysisBudget,
     AnalysisMode,
+    CompetitorAliasPlan,
+    CompetitorAliasResolution,
     CompetitorInput,
     LandscapePlannedQuery,
     LandscapeQueryPlan,
     LandscapeScope,
 )
+from landscape.planning import scope_with_alias_plan
 from landscape.search import (
     assignee_matches_confirmed_competitor,
     execute_provider_queries,
@@ -193,6 +196,44 @@ class LandscapeSearchTests(unittest.TestCase):
         self.assertEqual(len(result.candidates), 9)
         self.assertEqual(result.candidates[0].query_ids, ["LQ-1", "LQ-2"])
         self.assertTrue(all(item.selected for item in result.ranking))
+
+    def test_model_aliases_keep_cross_language_company_hits_eligible(self) -> None:
+        raw_scope = LandscapeScope(
+            competitors=[CompetitorInput(name="英伟达")],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+            budget=AnalysisBudget(candidate_limit=10, analysis_limit=4),
+        )
+        effective_scope = scope_with_alias_plan(
+            raw_scope,
+            CompetitorAliasPlan(
+                competitors=[
+                    CompetitorAliasResolution(
+                        primary_name="英伟达",
+                        aliases=["NVIDIA Corporation"],
+                        source="MODEL_INFERRED",
+                    )
+                ]
+            ),
+        )
+        result = strict_filter_and_select(
+            [
+                (
+                    "LQ-1",
+                    [
+                        hit(
+                            1,
+                            "US-NVIDIA-A1",
+                            "2026-06-01",
+                            assignee="NVIDIA Corporation",
+                        )
+                    ],
+                )
+            ],
+            scope=effective_scope,
+        )
+        self.assertEqual(result.coverage.eligible_hit_count, 1)
+        self.assertEqual(result.coverage.excluded_counts, {})
 
     def test_deduplication_aggregates_publications_with_shared_family_identity(self) -> None:
         result = strict_filter_and_select(
