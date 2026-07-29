@@ -7,11 +7,13 @@ from .company_batches import CompanyAnalysisBatch
 from .schemas import (
     CompanyTechnologyCategory,
     CompanyTechnologyClassification,
+    CompanyTechnologyClassificationDraft,
 )
 from .schemas import LandscapeDirectionFingerprint, NormalizedCompany
 
 
 COMPANY_CLASSIFIER_NAME = "landscape-company-technology-classifier"
+LIGHTWEIGHT_COMPANY_CLASSIFIER_NAME = "landscape-company-lightweight-classifier"
 COMPANY_CLASSIFIER_PROMPT = """
 Classify patents belonging to exactly one company by technical solution. Return Simplified Chinese
 names and summaries. Every supplied publication_number must appear in exactly one primary category.
@@ -30,6 +32,10 @@ class CompanyTechnologyClassificationService:
         register_agent_output_model(
             COMPANY_CLASSIFIER_NAME,
             CompanyTechnologyClassification,
+        )
+        register_agent_output_model(
+            LIGHTWEIGHT_COMPANY_CLASSIFIER_NAME,
+            CompanyTechnologyClassificationDraft,
         )
         self.model = model
 
@@ -170,7 +176,7 @@ class CompanyTechnologyClassificationService:
             )
         else:
             completion = await self.model.complete(
-                COMPANY_CLASSIFIER_NAME,
+                LIGHTWEIGHT_COMPANY_CLASSIFIER_NAME,
                 system_prompt=(
                     "Classify every supplied patent into technology categories using only "
                     "the lightweight title, abstract/snippet evidence, and keywords. "
@@ -196,7 +202,7 @@ class CompanyTechnologyClassificationService:
                 },
             )
             result = completion.output
-            if not isinstance(result, CompanyTechnologyClassification):
+            if not isinstance(result, CompanyTechnologyClassificationDraft):
                 raise CompanyTechnologyClassificationError(
                     "company fingerprint classifier returned the wrong schema"
                 )
@@ -336,7 +342,8 @@ def _category_id(batch: CompanyAnalysisBatch, index: int) -> str:
 
 def _canonicalize_fingerprint_category_ids(
     company_id: str,
-    result: CompanyTechnologyClassification,
+    result: CompanyTechnologyClassification
+    | CompanyTechnologyClassificationDraft,
 ) -> CompanyTechnologyClassification:
     categories = sorted(
         result.technology_categories,
@@ -388,6 +395,7 @@ def _validate_fingerprint_classification(
 
 __all__ = [
     "COMPANY_CLASSIFIER_NAME",
+    "LIGHTWEIGHT_COMPANY_CLASSIFIER_NAME",
     "CompanyTechnologyClassificationError",
     "CompanyTechnologyClassificationService",
     "validate_company_technology_classification",

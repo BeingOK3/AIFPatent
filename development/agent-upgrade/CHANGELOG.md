@@ -2,6 +2,21 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-29 — landscape-lightweight-classifier-draft-ids
+
+### 已完成
+
+- 轻量公司技术分类改用独立 Draft schema 接收模型输出，不在模型返回阶段强制要求跨类别 `category_id` 唯一。
+- 类别 ID 由程序按公司和稳定排序重新生成，再构造严格的 `CompanyTechnologyClassification` 并校验证据、专利覆盖和唯一归属。
+- 修复模型重复返回类别 ID 时在 `ANALYZE_COMPANIES` 归一化前直接失败的问题。
+- 保留精读分类使用的严格 schema，避免放宽深度分析链路的约束。
+
+### 验证
+
+- 公司分类聚焦测试 5 项通过。
+- Landscape 全量测试 165 项通过。
+- `git diff --check` 与 Python compileall 通过。
+
 ## 2026-07-29 — landscape-base01-main-graph-fixture
 
 ### 已完成

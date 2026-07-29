@@ -15,6 +15,7 @@ from landscape.schemas import (
     CompanyAssignment,
     CompanyTechnologyCategory,
     CompanyTechnologyClassification,
+    CompanyTechnologyClassificationDraft,
     LandscapeEvidenceRef,
     LandscapeDirectionEvidence,
     LandscapeDirectionFingerprint,
@@ -126,6 +127,73 @@ class LandscapeCompanyClassificationTests(unittest.TestCase):
         self.assertEqual(category.category_id, "TC-HUAWEI-01")
         self.assertEqual(category.publication_numbers, ["CN1A"])
         self.assertEqual(category.evidence_ids, ["EV-CN1A"])
+
+    def test_lightweight_duplicate_model_ids_are_normalized_before_strict_validation(
+        self,
+    ) -> None:
+        fingerprints = [
+            LandscapeDirectionFingerprint(
+                publication_number=publication,
+                company_id="CO-HUAWEI",
+                title=title,
+                publication_date="2026-06-01",
+                source_kind="SEARCH_HIT",
+                technical_keywords=[keyword],
+                evidence=[
+                    LandscapeDirectionEvidence(
+                        evidence_id=f"EV-DIR-{publication}",
+                        section_type="SNIPPET",
+                        text=f"{title}相关技术。",
+                        content_hash="b" * 64,
+                    )
+                ],
+            )
+            for publication, title, keyword in (
+                ("CN1A", "微通道冷板", "微通道"),
+                ("US2A1", "负载控制", "控制"),
+            )
+        ]
+        output = CompanyTechnologyClassificationDraft(
+            technology_categories=[
+                CompanyTechnologyCategory(
+                    category_id="TC-DUP",
+                    name="换热结构",
+                    summary="微通道增强换热。",
+                    keywords=["微通道"],
+                    publication_numbers=["CN1A"],
+                    evidence_ids=["EV-DIR-CN1A"],
+                ),
+                CompanyTechnologyCategory(
+                    category_id="TC-DUP",
+                    name="控制策略",
+                    summary="根据负载控制。",
+                    keywords=["控制"],
+                    publication_numbers=["US2A1"],
+                    evidence_ids=["EV-DIR-US2A1"],
+                ),
+            ]
+        )
+        model = StubModel(output)
+        service = CompanyTechnologyClassificationService(model)
+
+        result = asyncio.run(
+            service.classify_fingerprints(
+                company=NormalizedCompany(
+                    company_id="CO-HUAWEI",
+                    canonical_name="Huawei",
+                    aliases=["华为"],
+                ),
+                fingerprints=fingerprints,
+            )
+        )
+
+        self.assertEqual(
+            [category.category_id for category in result.technology_categories],
+            ["TC-HUAWEI-01", "TC-HUAWEI-02"],
+        )
+        self.assertEqual(
+            model.calls[0][0], "landscape-company-lightweight-classifier"
+        )
 
     def test_multi_patent_model_output_is_scoped_validated_and_stably_identified(self) -> None:
         output = CompanyTechnologyClassification(

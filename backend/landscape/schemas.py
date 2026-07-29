@@ -423,6 +423,14 @@ class CompanyTechnologyClassification(LandscapeModel):
         return self
 
 
+class CompanyTechnologyClassificationDraft(LandscapeModel):
+    """Untrusted lightweight classifier output before program-owned IDs."""
+
+    technology_categories: list[CompanyTechnologyCategory] = Field(
+        min_length=1, max_length=20
+    )
+
+
 class CompanyTechnologyProfileNarrative(LandscapeModel):
     """Model-owned prose; category identity and membership remain program-owned."""
 
