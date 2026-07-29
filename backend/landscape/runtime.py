@@ -161,6 +161,7 @@ def build_landscape_runtime(
         company_repository=database,
         fetch_repository=database,
         analysis_repository=database,
+        direction_evidence_repository=database,
         profile_repository=database,
         trend_repository=database,
         audit_repository=database,

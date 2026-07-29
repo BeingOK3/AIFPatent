@@ -17,6 +17,7 @@ class LandscapeRepairPlan:
 
     fetch_publications: tuple[str, ...]
     analyze_publications: tuple[str, ...]
+    rebuild_lightweight_fingerprints: bool
     rebuild_company_ids: tuple[str, ...]
     rebuild_cross_company_trends: bool
 
@@ -51,6 +52,7 @@ def build_repair_plan(
 
     fetch: set[str] = set()
     analyze: set[str] = set()
+    rebuild_lightweight_fingerprints = False
     rebuild_companies: set[str] = set()
     trend_targeted = False
 
@@ -58,7 +60,7 @@ def build_repair_plan(
         prefix, separator, subject = target.partition(":")
         if not separator or not subject:
             raise LandscapeRepairPlanError(f"malformed repair target: {target}")
-        if prefix in {"FETCH", "ANALYZE", "CLASSIFY"}:
+        if prefix in {"FETCH", "ANALYZE", "LIGHTWEIGHT", "CLASSIFY"}:
             if subject not in eligible:
                 raise LandscapeRepairPlanError(
                     f"repair target outside eligible set: {target}"
@@ -68,6 +70,8 @@ def build_repair_plan(
                 analyze.add(subject)
             elif prefix == "ANALYZE":
                 analyze.add(subject)
+            elif prefix == "LIGHTWEIGHT":
+                rebuild_lightweight_fingerprints = True
             rebuild_companies.add(assignment_by_publication[subject])
         elif prefix == "PROFILE":
             if subject not in company_ids:
@@ -83,6 +87,7 @@ def build_repair_plan(
     return LandscapeRepairPlan(
         fetch_publications=tuple(sorted(fetch)),
         analyze_publications=tuple(sorted(analyze)),
+        rebuild_lightweight_fingerprints=rebuild_lightweight_fingerprints,
         rebuild_company_ids=tuple(sorted(rebuild_companies)),
         rebuild_cross_company_trends=bool(rebuild_companies) or trend_targeted,
     )

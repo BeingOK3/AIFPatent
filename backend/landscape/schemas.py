@@ -18,6 +18,17 @@ class AnalysisMode(StrEnum):
     TECHNOLOGY_COMPETITOR = "TECHNOLOGY_COMPETITOR"
 
 
+class AssigneeScope(StrEnum):
+    """How a competitor name may match a patent assignee.
+
+    ``GROUP`` is an explicit name-pattern scope for a user-selected brand or
+    group anchor. It is not a claim about corporate control or shareholding.
+    """
+
+    ENTITY = "ENTITY"
+    GROUP = "GROUP"
+
+
 class PeriodPreset(StrEnum):
     ONE_MONTH = "ONE_MONTH"
     QUARTER = "QUARTER"
@@ -69,6 +80,7 @@ class FamilyDataStatus(StrEnum):
 class CompetitorInput(LandscapeModel):
     name: str = Field(min_length=1, max_length=200)
     aliases: list[str] = Field(default_factory=list, max_length=20)
+    assignee_scope: AssigneeScope = AssigneeScope.ENTITY
 
     @field_validator("aliases")
     @classmethod
@@ -339,6 +351,7 @@ class NormalizedCompany(LandscapeModel):
     company_id: CompanyId
     canonical_name: str = Field(min_length=1, max_length=200)
     aliases: list[str] = Field(default_factory=list, max_length=50)
+    assignee_scope: AssigneeScope = AssigneeScope.ENTITY
 
     @field_validator("aliases")
     @classmethod
@@ -367,6 +380,7 @@ class CompanyAssignment(LandscapeModel):
     co_assignees: list[str] = Field(default_factory=list, max_length=20)
     status: Literal[
         "CONFIRMED_ALIAS",
+        "CONFIRMED_GROUP_SCOPE",
         "NORMALIZED_NAME",
         "UNKNOWN",
         "REVIEW_REQUIRED",
@@ -384,12 +398,12 @@ class CompanyAssignment(LandscapeModel):
 
     @model_validator(mode="after")
     def status_matches_assignment(self) -> "CompanyAssignment":
-        if self.status == "CONFIRMED_ALIAS":
+        if self.status in {"CONFIRMED_ALIAS", "CONFIRMED_GROUP_SCOPE"}:
             if self.primary_company_id == "UNKNOWN":
-                raise ValueError("confirmed alias assignment cannot target UNKNOWN")
+                raise ValueError("confirmed assignment cannot target UNKNOWN")
             if self.observed_assignee is None or self.matched_alias is None:
                 raise ValueError(
-                    "confirmed alias assignment requires observed_assignee and matched_alias"
+                    "confirmed assignment requires observed_assignee and matched_alias"
                 )
         elif self.status == "NORMALIZED_NAME":
             if self.primary_company_id == "UNKNOWN":

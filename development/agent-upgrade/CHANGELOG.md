@@ -2,6 +2,61 @@
 
 本文件采用追加方式。新的记录写在最上方，不删除历史决策。
 
+## 2026-07-29 — landscape-assignee-scope-unification
+
+### 已完成
+
+- 针对真实 Run 的“检索统计华为 12 件、冻结公司归属华为 9 件 + UNKNOWN 3 件”问题，新增统一的确定性申请人解析器，供过滤、排序统计、PRIMARY 归属和命中台账共用。
+- 新增 `ENTITY` / `GROUP` 申请人范围：API 未传时保持保守的 `ENTITY`；前端裸输入默认 `GROUP`，并支持每行 `公司名 | ENTITY` 或 `公司名 | GROUP`。
+- `GROUP` 明确为集团/品牌名称的文本匹配口径，不代表股权穿透或工商控制关系；精确别名优先，多目标匹配 fail-closed 为 `COMPETITOR_AMBIGUOUS` / `REVIEW_REQUIRED`。
+- 集团名称模式归属以 `CONFIRMED_GROUP_SCOPE`、匹配锚点和 0.65 置信度持久化；已有 `resolution_source`、`assignment_status` 与 manifest hash 足以留痕，因此未新增数据库列或迁移。
+- 运行时 Alias Registry 现在保留用户的范围设置，并统一用于候选过滤、公司归属及公司账本；报告侧公司数量在冻结 PRIMARY 分区后再校正，避免源记录冲突时显示口径分叉。
+
+### 验证
+
+- 覆盖 `华为技术有限公司 / 华为终端有限公司 / 华为云计算技术有限公司` 的 ENTITY 与 GROUP 边界、精确优先、英文词边界、歧义 fail-closed、数据库回读和前端 payload。
+- Landscape 全量回归 186 项通过；Python compileall 与 `git diff --check` 通过。
+- 真实 Run `ec36933f-0d99-415e-b2a0-e18b0bb5639d`：英伟达/华为 GROUP 口径下 18 件合格公开文本全部归属（英伟达 6、华为 12；其中华为 9 件精确别名、3 件集团名称模式），`UNKNOWN=0`；10 个主步骤首次完成，Coverage Audit 为 PASS、覆盖率 100%、生成 2 个跨公司趋势。
+
+## 2026-07-29 — landscape-lightweight-trend-input-completion
+
+### 已完成
+
+- 修复真实 Run 中 `ANALYZE_COMPANIES` 成功后，`ANALYZE_CROSS_COMPANY_TRENDS` 仍按空的精读集合校验而失败的问题。
+- Cross-company Trend 现在显式接收全量轻量指纹 L，并在首次运行和恢复校验中均以 `Profile ↔ L ↔ Evidence ↔ 时间窗` 为边界；精读集合 A 仍保留为可选后续 enrichment。
+- 轻量趋势上下文补齐多公司重复成员、公司 ID 不一致和时间窗外公开日的 fail-closed 校验。
+- Coverage Audit 与受限 Repair Plan 统一按 L 而非 A 生成 `CLASSIFY` 目标，并支持 `LIGHTWEIGHT` 目标重建全量方向指纹后再重建公司画像。
+
+### 验证
+
+- 覆盖全量轻量指纹 + 空精读集合的首次趋势生成和恢复、重复归属/时间窗拒绝、轻量分类修复路由。
+- Landscape 全量回归 186 项通过；Python compileall 与 `git diff --check` 通过。
+- 同一真实 Run 的 `ANALYZE_CROSS_COMPANY_TRENDS`、`VERIFY_COVERAGE` 与 `BUILD_REPORT` 均首次成功，确认未再误用空的精读集合。
+
+## 2026-07-29 — landscape-lightweight-evidence-persistence
+
+### 已完成
+
+- 全量合格专利的轻量方向 Evidence 现在在公司分析前以 Run 命名空间持久化；Company Profile 不再错误依赖可选精读 `landscape_patent_analyses` 的成员集。
+- 修复截断文本尾部空白在 Pydantic 标准化后造成 `content_hash` 不一致的问题。
+- 修复大于单批上限时多个轻量分类批次的临时类别 ID 冲突：合并阶段先使用 Draft，再由程序统一生成最终唯一 ID。
+
+### 验证
+
+- 方向指纹命名空间、Evidence 幂等、Hash、轻量 Profile 持久化、跨批次类别 ID 回归均已覆盖。
+- Landscape 全量回归 186 项通过。
+
+## 2026-07-29 — landscape-runtime-url-guard
+
+### 已完成
+
+- 通过实际 PostgreSQL Run 排查确认：模型 Base URL 被重复拼接时，Ark 对别名解析与公司分类均返回 HTTP 404，表面上表现为别名回退和 `ANALYZE_COMPANY` 失败。
+- API 与前端现在拒绝包含两段 URL 的 Base URL，阻止错误配置创建 Run。
+
+### 验证
+
+- 针对重复 Ark URL 的请求模型校验通过；Landscape 全量回归 186 项通过。
+
 ## 2026-07-29 — landscape-company-alias-reconciliation
 
 ### 已完成

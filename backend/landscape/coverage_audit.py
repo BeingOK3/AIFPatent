@@ -66,7 +66,9 @@ def audit_company_trend_coverage(
 
     analyzed = set(analyses)
     lightweight = set(lightweight_fingerprints or {})
-    trend_input = lightweight or analyzed
+    trend_input = (
+        lightweight if lightweight_fingerprints is not None else analyzed
+    )
     classified_members: list[str] = []
     wrong_company_members: set[str] = set()
     invalid_evidence: set[str] = set()
@@ -169,9 +171,12 @@ def audit_company_trend_coverage(
             f"LIGHTWEIGHT:{publication}"
             for publication in (eligible & fetched_publications) - lightweight
         )
+    classification_input = (
+        lightweight if lightweight_fingerprints is not None else analyzed
+    )
     repair_targets.update(
         f"CLASSIFY:{publication}"
-        for publication in (eligible & analyzed) - classified
+        for publication in (eligible & classification_input) - classified
     )
     repair_targets.update(
         f"CLASSIFY:{publication}" for publication in duplicate_memberships

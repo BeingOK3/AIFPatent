@@ -51,6 +51,7 @@ from .schemas import (
     TrendTimeBasis,
 )
 from .search import (
+    CompanyPatentCount,
     LandscapeCandidateLimitExceededError,
     execute_provider_queries,
     exclusion_reason,
@@ -120,6 +121,16 @@ class LandscapeAnalysisRepository(Protocol):
     def list_patent_analyses(
         self, run_id: str
     ) -> dict[str, LandscapePatentAnalysis]: ...
+
+
+class LandscapeDirectionEvidenceRepository(Protocol):
+    """Durably store the bounded evidence used by full-set direction trends."""
+
+    def put_direction_evidence(
+        self,
+        run_id: str,
+        fingerprints: list[LandscapeDirectionFingerprint],
+    ) -> None: ...
 
 
 class LandscapeCompanyProfileRepository(Protocol):
@@ -198,6 +209,7 @@ class LandscapeExecutionService:
         company_repository: "LandscapeCompanyRepository | None" = None,
         fetch_repository: "LandscapeFetchRepository | None" = None,
         analysis_repository: "LandscapeAnalysisRepository | None" = None,
+        direction_evidence_repository: "LandscapeDirectionEvidenceRepository | None" = None,
         profile_repository: "LandscapeCompanyProfileRepository | None" = None,
         company_fanout: "LandscapeCompanyFanoutRunner | None" = None,
         trend_repository: "LandscapeTrendRepository | None" = None,
@@ -221,6 +233,7 @@ class LandscapeExecutionService:
         self.company_repository = company_repository
         self.fetch_repository = fetch_repository
         self.analysis_repository = analysis_repository
+        self.direction_evidence_repository = direction_evidence_repository
         self.profile_repository = profile_repository
         self.company_fanout = company_fanout
         self.trend_repository = trend_repository
@@ -567,6 +580,7 @@ class LandscapeExecutionService:
                 analyses=analyses,
                 publication_dates=publication_dates,
                 time_basis=time_basis,
+                fingerprints=fingerprints or None,
             )
             analysis = existing
         else:
@@ -575,6 +589,7 @@ class LandscapeExecutionService:
                 analyses=analyses,
                 publication_dates=publication_dates,
                 time_basis=time_basis,
+                fingerprints=fingerprints or None,
             )
             if force_rebuild:
                 self.trend_repository.put_repaired_cross_company_analysis(
@@ -693,6 +708,13 @@ class LandscapeExecutionService:
                 status="ANALYZED",
                 metadata=_document_metadata(documents[publication]),
             )
+
+        if plan.rebuild_lightweight_fingerprints:
+            refreshed_fingerprints = self._prepare_direction_fingerprints(run_id)
+            if not refreshed_fingerprints:
+                raise ValueError(
+                    "lightweight repair could not rebuild direction fingerprints"
+                )
 
         rebuilt_companies = []
         for company_id in plan.rebuild_company_ids:
@@ -842,9 +864,24 @@ class LandscapeExecutionService:
                 for index, query in enumerate(plan.queries, start=1)
             ],
         )
+        alias_output = []
+        if alias_plan is not None:
+            scope_by_primary = {
+                competitor.name.casefold(): competitor
+                for competitor in scope.competitors
+            }
+            alias_output = [
+                {
+                    **item,
+                    "assignee_scope": scope_by_primary[
+                        item["primary_name"].casefold()
+                    ].assignee_scope.value,
+                }
+                for item in alias_plan.model_dump(mode="json")["competitors"]
+            ]
         return {
             "plan": plan.model_dump(mode="json"),
-            "competitor_aliases": alias_plan.model_dump(mode="json")["competitors"] if alias_plan else [],
+            "competitor_aliases": alias_output,
             "technical_direction_expansion": (
                 direction_expansion.model_dump(mode="json")
                 if direction_expansion
@@ -866,10 +903,10 @@ class LandscapeExecutionService:
         return {"results": [result.model_dump(mode="json") for result in results]}
 
     async def filter_and_select(self, run_id: str) -> dict[str, Any]:
-        # The persisted run scope is the authority for hard assignee filtering and
-        # company statistics. The effective search scope contains validated
-        # model-inferred aliases for the user-owned company, so common
-        # cross-language assignee spellings are not discarded after retrieval.
+        # The effective registry preserves the user-owned primary company and
+        # assignee scope, while adding reconciled aliases.  It is the one
+        # authority for filter decisions, candidate counts, PRIMARY assignment,
+        # and the durable hit ledger.
         scope = self.scope(run_id)
         effective_scope = self.search_scope(run_id)
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.SEARCH_PUBLICATIONS.value)["value"]
@@ -885,7 +922,7 @@ class LandscapeExecutionService:
         )
         for provider_result in results:
             for hit in provider_result.hits:
-                reason = exclusion_reason(hit, scope)
+                reason = exclusion_reason(hit, effective_scope)
                 decision = "ELIGIBLE" if reason is None else "EXCLUDED"
                 hit_id = _hit_id(run_id, provider_result.request_id, hit)
                 self.database.put_hit(
@@ -955,10 +992,11 @@ class LandscapeExecutionService:
                 effective_scope.competitors if effective_scope.competitors else None
             ),
         )
+        result = _reconcile_search_company_view(result, company_result)
         if self.company_repository is not None:
             self.company_repository.put_company_assignments(
                 run_id,
-                scope=scope,
+                scope=effective_scope,
                 result=company_result,
             )
         if result.coverage.candidate_limit_exceeded:
@@ -1269,7 +1307,7 @@ class LandscapeExecutionService:
         return raw.get("technical_direction_expansion")
 
     def search_scope(self, run_id: str) -> LandscapeScope:
-        """Return a provider-query scope expanded with non-authoritative aliases."""
+        """Return the shared runtime registry expanded with reconciled aliases."""
         from .schemas import CompetitorAliasPlan
 
         scope = self.scope(run_id)
@@ -1328,9 +1366,15 @@ class LandscapeExecutionService:
                 hit,
                 company_id=company_by_publication[publication],
                 document=documents.get(publication),
+                evidence_namespace=run_id,
             )
         if not output:
             return None
+        if self.direction_evidence_repository is not None:
+            self.direction_evidence_repository.put_direction_evidence(
+                run_id,
+                [output[publication] for publication in sorted(output)],
+            )
         self.direction_fingerprints[run_id] = output
         return output
 
@@ -1597,6 +1641,7 @@ def _validate_recovered_trends(
     analyses: dict[str, LandscapePatentAnalysis],
     publication_dates: dict[str, date],
     time_basis: TrendTimeBasis,
+    fingerprints: dict[str, LandscapeDirectionFingerprint] | None = None,
 ) -> None:
     company_by_publication = {
         publication: company_id
@@ -1604,20 +1649,40 @@ def _validate_recovered_trends(
         for category in profile.technology_categories
         for publication in category.publication_numbers
     }
-    if set(company_by_publication) != set(analyses):
+    source_publications = set(fingerprints or analyses)
+    if set(company_by_publication) != source_publications:
         raise ValueError(
-            "recovered trend profiles do not cover current analyses"
+            "recovered trend profiles do not cover current trend inputs"
         )
-    if set(publication_dates) != set(analyses):
+    if set(publication_dates) != source_publications:
         raise ValueError(
-            "recovered trend dates do not cover current analyses"
+            "recovered trend dates do not cover current trend inputs"
         )
-    evidence_by_publication = {
-        publication: {
-            reference.evidence_id for reference in patent.evidence_refs
+    if fingerprints:
+        for publication, fingerprint in fingerprints.items():
+            if fingerprint.company_id != company_by_publication[publication]:
+                raise ValueError(
+                    "recovered lightweight fingerprint company does not match profile"
+                )
+        evidence_by_publication = {
+            publication: {
+                evidence.evidence_id for evidence in fingerprint.evidence
+            }
+            for publication, fingerprint in fingerprints.items()
         }
+    else:
+        evidence_by_publication = {
+            publication: {
+                reference.evidence_id for reference in patent.evidence_refs
+            }
         for publication, patent in analyses.items()
     }
+    for publication, published in publication_dates.items():
+        if published < time_basis.start or published > time_basis.end:
+            raise ValueError(
+                "recovered trend publication date is outside run scope: "
+                f"{publication}"
+            )
     bucket_by_publication = {
         publication: (
             f"{published.year:04d}-Q{(published.month - 1) // 3 + 1}"
@@ -1648,6 +1713,70 @@ def _validate_recovered_trends(
         evidence_by_publication=evidence_by_publication,
         bucket_by_publication=bucket_by_publication,
         minimum_patents_for_time_trend=3,
+    )
+
+
+def _reconcile_search_company_view(
+    result: Any,
+    assignments: CompanyAssignmentResult,
+) -> Any:
+    """Make report-facing counts and ranking labels follow frozen PRIMARY IDs.
+
+    Search filtering and assignment use the same resolver, but merged source
+    conflicts can still be deliberately routed to UNKNOWN during attribution.
+    This final program-owned reconciliation prevents a report from displaying
+    a different company count than the persisted company profiles.
+    """
+
+    company_by_id = {
+        company.company_id: company.canonical_name
+        for company in assignments.companies
+    }
+    assignment_by_publication = {
+        assignment.publication_number: assignment.primary_company_id
+        for assignment in assignments.assignments
+    }
+    counts: dict[str, int] = {}
+    for assignment in assignments.assignments:
+        counts[assignment.primary_company_id] = (
+            counts.get(assignment.primary_company_id, 0) + 1
+        )
+    total = len(assignments.assignments)
+    company_counts = [
+        CompanyPatentCount(
+            company=company_by_id[company_id],
+            patent_count=count,
+            share=round(count / total, 6) if total else 0.0,
+            source="PRIMARY_ASSIGNMENT",
+        )
+        for company_id, count in sorted(
+            counts.items(),
+            key=lambda item: (
+                -item[1],
+                company_by_id[item[0]].casefold(),
+                company_by_id[item[0]],
+            ),
+        )
+    ]
+    ranking = [
+        item.model_copy(
+            update={
+                "company": company_by_id[
+                    assignment_by_publication.get(
+                        item.publication_number, "UNKNOWN"
+                    )
+                ]
+            }
+        )
+        for item in result.ranking
+    ]
+    return result.model_copy(
+        update={
+            "ranking": ranking,
+            "coverage": result.coverage.model_copy(
+                update={"company_patent_counts": company_counts}
+            ),
+        }
     )
 
 

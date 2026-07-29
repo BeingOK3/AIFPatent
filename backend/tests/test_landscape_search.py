@@ -8,6 +8,7 @@ from idea.providers.base import SearchHit, SearchProvider
 from landscape.schemas import (
     AnalysisBudget,
     AnalysisMode,
+    AssigneeScope,
     CompetitorAliasPlan,
     CompetitorAliasResolution,
     CompetitorInput,
@@ -17,7 +18,9 @@ from landscape.schemas import (
 )
 from landscape.planning import scope_with_alias_plan
 from landscape.search import (
+    ExclusionReason,
     assignee_matches_confirmed_competitor,
+    exclusion_reason,
     execute_provider_queries,
     family_footprint,
     family_publication_numbers,
@@ -128,15 +131,16 @@ class LandscapeSearchTests(unittest.TestCase):
         self.assertEqual(result.coverage.excluded_counts["PUBLICATION_DATE_INVALID"], 1)
         self.assertEqual(result.coverage.excluded_counts["INVALID_PUBLICATION_NUMBER"], 1)
 
-    def test_competitor_mode_uses_only_confirmed_aliases_and_avoids_substring_false_positive(self) -> None:
+    def test_group_scope_uses_explicit_name_patterns_and_avoids_latin_substrings(self) -> None:
         scope = LandscapeScope(
             mode=AnalysisMode.COMPETITOR,
-            competitors=[CompetitorInput(name="Meta", aliases=["元宇宙公司"])],
+            competitors=[
+                CompetitorInput(name="Meta", assignee_scope=AssigneeScope.GROUP)
+            ],
             publication_start=date(2026, 4, 1),
             publication_end=date(2026, 6, 30),
         )
         self.assertTrue(assignee_matches_confirmed_competitor("Meta Platforms, Inc.", scope))
-        self.assertTrue(assignee_matches_confirmed_competitor("北京元宇宙公司有限公司", scope))
         self.assertFalse(assignee_matches_confirmed_competitor("Metallurgy Systems Ltd.", scope))
         result = strict_filter_and_select(
             [
@@ -153,6 +157,53 @@ class LandscapeSearchTests(unittest.TestCase):
         )
         self.assertEqual([item.publication_number for item in result.candidates], ["US1A1"])
         self.assertEqual(result.coverage.excluded_counts["COMPETITOR_NOT_CONFIRMED"], 2)
+
+    def test_entity_and_group_scopes_have_explicit_chinese_boundaries(self) -> None:
+        entity_scope = LandscapeScope(
+            competitors=[CompetitorInput(name="华为")],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+        )
+        group_scope = entity_scope.model_copy(
+            update={
+                "competitors": [
+                    CompetitorInput(
+                        name="华为", assignee_scope=AssigneeScope.GROUP
+                    )
+                ]
+            }
+        )
+        for assignee in (
+            "华为技术有限公司",
+            "华为终端有限公司",
+            "华为云计算技术有限公司",
+        ):
+            self.assertFalse(
+                assignee_matches_confirmed_competitor(assignee, entity_scope)
+            )
+            self.assertTrue(
+                assignee_matches_confirmed_competitor(assignee, group_scope)
+            )
+
+    def test_ambiguous_group_match_is_excluded_fail_closed(self) -> None:
+        scope = LandscapeScope(
+            competitors=[
+                CompetitorInput(name="华为", assignee_scope=AssigneeScope.GROUP),
+                CompetitorInput(name="华为云", assignee_scope=AssigneeScope.GROUP),
+            ],
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+        )
+        candidate = hit(
+            1,
+            "CN-1-A",
+            "2026-05-01",
+            assignee="华为云计算技术有限公司",
+        )
+        self.assertEqual(
+            exclusion_reason(candidate, scope),
+            ExclusionReason.COMPETITOR_AMBIGUOUS,
+        )
 
     def test_candidate_limit_marks_complete_set_for_fail_closed_execution(self) -> None:
         batches = [
@@ -523,8 +574,16 @@ class LandscapeSearchTests(unittest.TestCase):
         scope = LandscapeScope(
             mode=AnalysisMode.COMPETITOR,
             competitors=[
-                CompetitorInput(name="Huawei", aliases=["华为"]),
-                CompetitorInput(name="Vertiv", aliases=["维谛"]),
+                CompetitorInput(
+                    name="Huawei",
+                    aliases=["华为"],
+                    assignee_scope=AssigneeScope.GROUP,
+                ),
+                CompetitorInput(
+                    name="Vertiv",
+                    aliases=["维谛"],
+                    assignee_scope=AssigneeScope.GROUP,
+                ),
             ],
             publication_start=date(2026, 4, 1),
             publication_end=date(2026, 6, 30),
@@ -616,7 +675,13 @@ class LandscapeSearchTests(unittest.TestCase):
     def test_combined_mode_enforces_competitor_assignee_filter(self) -> None:
         scope = LandscapeScope(
             technology_direction="liquid cooling",
-            competitors=[CompetitorInput(name="Huawei", aliases=["华为"])],
+            competitors=[
+                CompetitorInput(
+                    name="Huawei",
+                    aliases=["华为"],
+                    assignee_scope=AssigneeScope.GROUP,
+                )
+            ],
             publication_start=date(2026, 4, 1),
             publication_end=date(2026, 6, 30),
         )

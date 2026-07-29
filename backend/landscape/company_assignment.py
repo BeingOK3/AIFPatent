@@ -8,6 +8,11 @@ from typing import Iterable, Sequence
 
 from idea.merge import MergedHit, normalize_publication_number
 
+from .assignee_matching import (
+    AssigneeResolutionStatus,
+    normalize_assignee_name,
+    resolve_competitor_assignee,
+)
 from .schemas import (
     AnalysisMode,
     CompanyAssignment,
@@ -40,7 +45,6 @@ class CompanyAssignmentResult:
 @dataclass(frozen=True)
 class _CompetitorIdentity:
     company: NormalizedCompany
-    confirmed_names: tuple[str, ...]
 
 
 def assign_companies(
@@ -51,12 +55,12 @@ def assign_companies(
 ) -> CompanyAssignmentResult:
     """Assign every unique eligible publication to one deterministic company.
 
-    Competitor-containing scopes only recognize names explicitly supplied by the
-    user. Competitor modes deliberately require a separate
-    ``user_confirmed_competitors`` argument so a search-only effective scope
-    containing model-inferred aliases cannot be used by accident. Pure technology
-    scopes group equal normalized source assignee strings; they never infer
-    parents, subsidiaries, abbreviations, or similar names.
+    Competitor modes deliberately receive an explicit, validated runtime
+    registry.  The same registry is used by search filtering so candidate
+    selection, PRIMARY assignment, company statistics, and the durable ledger
+    cannot silently use different assignee rules. Pure technology scopes group
+    equal normalized source assignee strings; they never infer parents,
+    subsidiaries, abbreviations, or similar names.
     """
 
     hits = _ordered_unique_hits(eligible_hits)
@@ -65,7 +69,7 @@ def assign_companies(
     else:
         if user_confirmed_competitors is None:
             raise CompanyAssignmentValidationError(
-                "competitor assignment requires raw user_confirmed_competitors"
+                "competitor assignment requires user_confirmed_competitors registry"
             )
         result = _assign_confirmed_competitors(
             hits,
@@ -156,33 +160,50 @@ def validate_company_assignments(
             + ", ".join(unknown_references)
         )
     for assignment in assignments:
-        if assignment.status != "CONFIRMED_ALIAS":
+        if assignment.status not in {
+            "CONFIRMED_ALIAS",
+            "CONFIRMED_GROUP_SCOPE",
+        }:
             continue
         company = company_by_id[assignment.primary_company_id]
-        allowed = {
-            normalize_assignee_name(name)
-            for name in (company.canonical_name, *company.aliases)
-        }
-        if normalize_assignee_name(assignment.matched_alias or "") not in allowed:
-            raise CompanyAssignmentValidationError(
-                "matched_alias is not registered to primary company: "
-                f"{assignment.publication_number}"
-            )
-        if not _is_exact_name_match(
-            assignment.observed_assignee or "",
-            assignment.matched_alias or "",
+        if assignment.status == "CONFIRMED_ALIAS":
+            allowed = {
+                normalize_assignee_name(name)
+                for name in (company.canonical_name, *company.aliases)
+            }
+            if normalize_assignee_name(assignment.matched_alias or "") not in allowed:
+                raise CompanyAssignmentValidationError(
+                    "matched_alias is not registered to primary company: "
+                    f"{assignment.publication_number}"
+                )
+            if not _is_exact_name_match(
+                assignment.observed_assignee or "",
+                assignment.matched_alias or "",
+            ):
+                raise CompanyAssignmentValidationError(
+                    "matched_alias does not match observed assignee: "
+                    f"{assignment.publication_number}"
+                )
+            continue
+        resolution = resolve_competitor_assignee(
+            assignment.observed_assignee,
+            [
+                CompetitorInput(
+                    name=company.canonical_name,
+                    aliases=company.aliases,
+                    assignee_scope=company.assignee_scope,
+                )
+            ],
+        )
+        if (
+            resolution.status != AssigneeResolutionStatus.CONFIRMED_GROUP_SCOPE
+            or normalize_assignee_name(resolution.matched_alias or "")
+            != normalize_assignee_name(assignment.matched_alias or "")
         ):
             raise CompanyAssignmentValidationError(
-                "matched_alias does not match observed assignee: "
+                "group-scope assignment is not justified by the company registry: "
                 f"{assignment.publication_number}"
             )
-
-
-def normalize_assignee_name(value: str) -> str:
-    """Return the conservative equality key used by pure technology mode."""
-
-    value = unicodedata.normalize("NFKC", value).casefold()
-    return " ".join(value.split())
 
 
 def _ordered_unique_hits(hits: Iterable[MergedHit]) -> tuple[MergedHit, ...]:
@@ -205,26 +226,22 @@ def _assign_confirmed_competitors(
     hits: Sequence[MergedHit],
     competitors: Sequence[CompetitorInput],
 ) -> CompanyAssignmentResult:
-    raw_identities = [
-        (competitor.name, tuple([competitor.name, *competitor.aliases]))
-        for competitor in competitors
-    ]
-    ids = _stable_competitor_ids(name for name, _ in raw_identities)
+    ids = _stable_competitor_ids(competitor.name for competitor in competitors)
     identities = tuple(
         _CompetitorIdentity(
             company=NormalizedCompany(
-                company_id=ids[name],
-                canonical_name=name,
+                company_id=ids[competitor.name],
+                canonical_name=competitor.name,
                 aliases=[
                     alias
-                    for alias in confirmed_names[1:]
+                    for alias in competitor.aliases
                     if normalize_assignee_name(alias)
-                    != normalize_assignee_name(name)
+                    != normalize_assignee_name(competitor.name)
                 ],
-            ),
-            confirmed_names=confirmed_names,
+                assignee_scope=competitor.assignee_scope,
+            )
         )
-        for name, confirmed_names in raw_identities
+        for competitor in competitors
     )
 
     assignments: list[CompanyAssignment] = []
@@ -258,28 +275,8 @@ def _assign_confirmed_competitors(
             )
             continue
 
-        matches: list[tuple[_CompetitorIdentity, str]] = []
-        for identity in identities:
-            matching_names = [
-                name
-                for name in identity.confirmed_names
-                if _is_exact_name_match(primary, name)
-            ]
-            if matching_names:
-                matches.append(
-                    (
-                        identity,
-                        min(
-                            matching_names,
-                            key=lambda name: (
-                                -len(normalize_assignee_name(name)),
-                                name.casefold(),
-                                name,
-                            ),
-                        ),
-                    )
-                )
-        if len(matches) != 1:
+        resolution = resolve_competitor_assignee(primary, competitors)
+        if not resolution.is_confirmed or resolution.competitor is None:
             needs_unknown = True
             assignments.append(
                 CompanyAssignment(
@@ -287,20 +284,29 @@ def _assign_confirmed_competitors(
                     primary_company_id="UNKNOWN",
                     observed_assignee=primary,
                     co_assignees=co_assignees,
-                    status="REVIEW_REQUIRED" if matches else "UNKNOWN",
+                    status=(
+                        "REVIEW_REQUIRED"
+                        if resolution.status == AssigneeResolutionStatus.AMBIGUOUS
+                        else "UNKNOWN"
+                    ),
                 )
             )
             continue
 
-        identity, matched_name = matches[0]
+        identity = next(
+            identity
+            for identity in identities
+            if normalize_assignee_name(identity.company.canonical_name)
+            == normalize_assignee_name(resolution.competitor.name)
+        )
         assignments.append(
             CompanyAssignment(
                 publication_number=publication,
                 primary_company_id=identity.company.company_id,
                 observed_assignee=primary,
-                matched_alias=matched_name,
+                matched_alias=resolution.matched_alias,
                 co_assignees=co_assignees,
-                status="CONFIRMED_ALIAS",
+                status=resolution.status.value,
             )
         )
 

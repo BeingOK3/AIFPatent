@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import unittest
 from datetime import date
 from types import SimpleNamespace
@@ -15,6 +16,8 @@ from landscape.schemas import (
     CompanyTechnologyProfile,
     CrossCompanyTrendProposal,
     CrossCompanyTrendProposalAnalysis,
+    LandscapeDirectionEvidence,
+    LandscapeDirectionFingerprint,
     LandscapeEvidenceRef,
     LandscapePatentAnalysis,
     TrendTimeBasis,
@@ -61,6 +64,30 @@ def profile(
                 evidence_ids=[
                     f"EV-{publication}" for publication in publications
                 ],
+            )
+        ],
+    )
+
+
+def fingerprint(
+    company_id: str,
+    publication: str,
+    published: str,
+) -> LandscapeDirectionFingerprint:
+    text = f"{publication} 的轻量技术方向证据。"
+    return LandscapeDirectionFingerprint(
+        publication_number=publication,
+        company_id=company_id,
+        title=f"{publication} 轻量方向",
+        publication_date=published,
+        source_kind="SEARCH_HIT",
+        technical_keywords=["轻量方向"],
+        evidence=[
+            LandscapeDirectionEvidence(
+                evidence_id=f"EV-DIR-{publication}",
+                section_type="SNIPPET",
+                text=text,
+                content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
             )
         ],
     )
@@ -131,6 +158,96 @@ class LandscapeCompanyTrendTests(unittest.TestCase):
         self.assertIn("time_bucket", str(payload))
         self.assertNotIn("publication_date", str(payload))
         self.assertNotIn("trend_id", str(payload))
+
+    def test_lightweight_fingerprints_are_a_complete_trend_input(self) -> None:
+        fingerprints = {
+            "CN1A": fingerprint("CO-A", "CN1A", "2026-01-10"),
+            "US3A1": fingerprint("CO-B", "US3A1", "2026-05-10"),
+        }
+        profiles = {
+            company_id: CompanyTechnologyProfile(
+                overall_summary=f"{company_id} 的轻量技术画像。",
+                technology_directions=["轻量方向"],
+                technology_categories=[
+                    CompanyTechnologyCategory(
+                        category_id=f"TC-{company_id}-01",
+                        name="轻量方向",
+                        summary="根据摘要与检索文本形成的方向。",
+                        publication_numbers=[publication],
+                        evidence_ids=[f"EV-DIR-{publication}"],
+                    )
+                ],
+            )
+            for company_id, publication in (("CO-A", "CN1A"), ("CO-B", "US3A1"))
+        }
+        proposal = CrossCompanyTrendProposalAnalysis(
+            overall_summary="两家公司都涉及轻量方向。",
+            trends=[
+                CrossCompanyTrendProposal(
+                    name="轻量方向布局",
+                    summary="两个公司各有一件公开文本作为证据。",
+                    direction="UNCERTAIN",
+                    company_ids=["CO-A", "CO-B"],
+                    publication_numbers=["CN1A", "US3A1"],
+                    evidence_ids=["EV-DIR-CN1A", "EV-DIR-US3A1"],
+                )
+            ],
+        )
+        model = StubTrendModel(proposal)
+
+        result = asyncio.run(
+            CrossCompanyTrendService(model).analyze(
+                profiles=profiles,
+                analyses={},
+                publication_dates={
+                    "CN1A": date(2026, 1, 10),
+                    "US3A1": date(2026, 5, 10),
+                },
+                time_basis=self.time_basis,
+                fingerprints=fingerprints,
+            )
+        )
+
+        self.assertEqual(result.trends[0].publication_numbers, ["CN1A", "US3A1"])
+        payload = model.calls[0][2]
+        self.assertIn("technical_keywords", str(payload))
+        self.assertNotIn("core_invention_points", str(payload))
+
+    def test_lightweight_context_rejects_duplicate_owner_and_out_of_window_date(self) -> None:
+        one_fingerprint = {
+            "CN1A": fingerprint("CO-A", "CN1A", "2026-01-10"),
+        }
+        duplicate_profiles = {
+            "CO-A": profile("A", ["CN1A"]),
+            "CO-B": profile("B", ["CN1A"]),
+        }
+        service = CrossCompanyTrendService(StubTrendModel())
+
+        with self.assertRaisesRegex(
+            CrossCompanyTrendValidationError, "multiple company profiles"
+        ):
+            asyncio.run(
+                service.analyze(
+                    profiles=duplicate_profiles,
+                    analyses={},
+                    publication_dates={"CN1A": date(2026, 1, 10)},
+                    time_basis=self.time_basis,
+                    fingerprints=one_fingerprint,
+                )
+            )
+
+        with self.assertRaisesRegex(
+            CrossCompanyTrendValidationError, "outside time basis"
+        ):
+            asyncio.run(
+                service.analyze(
+                    profiles={"CO-A": profile("A", ["CN1A"])},
+                    analyses={},
+                    publication_dates={"CN1A": date(2025, 12, 31)},
+                    time_basis=self.time_basis,
+                    fingerprints=one_fingerprint,
+                )
+            )
 
     def test_directional_claim_requires_patent_and_bucket_thresholds(self) -> None:
         proposal = CrossCompanyTrendProposalAnalysis(

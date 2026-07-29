@@ -16,10 +16,13 @@ from landscape.postgres_database import (
     _prepare_profile_rows,
 )
 from landscape.schemas import (
+    AssigneeScope,
     CompanyAssignment,
     CompetitorInput,
     CrossCompanyTrendAnalysis,
     LandscapeCoverageAudit,
+    LandscapeDirectionEvidence,
+    LandscapeDirectionFingerprint,
     LandscapeScope,
     LandscapeEvidenceRef,
     LandscapePatentAnalysis,
@@ -197,6 +200,108 @@ class LandscapePostgreSQLCandidateTests(unittest.TestCase):
         self.assertEqual(self.connection.rows, [])
 
 
+class _DirectionEvidenceConnection:
+    def __init__(self):
+        self.candidates = [
+            {"document_id": "LD-CN1A", "publication_number": "CN1A"},
+        ]
+        self.evidence: list[dict] = []
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        if normalized.startswith("SELECT run_id FROM landscape_runs"):
+            return _Cursor([{"run_id": params[0]}])
+        if normalized.startswith(
+            "SELECT document_id,publication_number FROM landscape_candidates"
+        ):
+            return _Cursor(self.candidates)
+        if normalized.startswith(
+            "SELECT evidence_id,document_id,section_type,section_label"
+        ):
+            return _Cursor(self.evidence)
+        if normalized.startswith("INSERT INTO landscape_evidence"):
+            (
+                evidence_id,
+                run_id,
+                document_id,
+                section_type,
+                section_label,
+                quote_text,
+                start_offset,
+                end_offset,
+                content_hash,
+                _created_at,
+            ) = params
+            self.evidence.append(
+                {
+                    "evidence_id": evidence_id,
+                    "run_id": run_id,
+                    "document_id": document_id,
+                    "section_type": section_type,
+                    "section_label": section_label,
+                    "quote_text": quote_text,
+                    "start_offset": start_offset,
+                    "end_offset": end_offset,
+                    "content_hash": content_hash,
+                }
+            )
+            return _Cursor()
+        raise AssertionError(f"unexpected SQL: {normalized}")
+
+
+class LandscapePostgreSQLDirectionEvidenceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.database = LandscapePostgreSQLDatabase(
+            "postgresql://test:test@localhost/test"
+        )
+        self.connection = _DirectionEvidenceConnection()
+
+        @contextmanager
+        def connect():
+            yield self.connection
+
+        self.database.connect = connect  # type: ignore[method-assign]
+
+    @staticmethod
+    def fingerprint() -> LandscapeDirectionFingerprint:
+        text = "微通道冷板提高换热效率。"
+        return LandscapeDirectionFingerprint(
+            publication_number="CN1A",
+            company_id="CO-HUAWEI",
+            title="微通道冷板",
+            publication_date="2026-06-01",
+            source_kind="FETCHED_DOCUMENT",
+            technical_keywords=["微通道", "冷板"],
+            evidence=[
+                LandscapeDirectionEvidence(
+                    evidence_id="EV-DIR-RUN1-CN1A",
+                    section_type="ABSTRACT",
+                    text=text,
+                    content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                )
+            ],
+        )
+
+    def test_direction_evidence_is_candidate_bound_and_idempotent(self) -> None:
+        fingerprint = self.fingerprint()
+
+        self.database.put_direction_evidence("run-1", [fingerprint])
+        self.database.put_direction_evidence("run-1", [fingerprint])
+
+        self.assertEqual(len(self.connection.evidence), 1)
+        stored = self.connection.evidence[0]
+        self.assertEqual(stored["document_id"], "LD-CN1A")
+        self.assertEqual(stored["section_label"], "LIGHTWEIGHT_ABSTRACT")
+        self.assertEqual(stored["end_offset"], len(stored["quote_text"]))
+
+    def test_direction_evidence_rejects_unknown_candidate(self) -> None:
+        invalid = self.fingerprint().model_copy(
+            update={"publication_number": "US2A1"}
+        )
+        with self.assertRaisesRegex(ValueError, "outside canonical candidate"):
+            self.database.put_direction_evidence("run-1", [invalid])
+
+
 class _CompanyConnection:
     def __init__(self):
         self.candidates = [
@@ -352,6 +457,45 @@ class LandscapePostgreSQLCompanyAssignmentTests(unittest.TestCase):
         ]
         self.assertEqual(len(company_inserts), 1)
         self.assertIn("%s::jsonb,%s::jsonb", company_inserts[0])
+
+    def test_group_scope_is_durably_labeled_without_a_schema_migration(self) -> None:
+        scope = self.scope.model_copy(
+            update={
+                "competitors": [
+                    CompetitorInput(
+                        name="华为", assignee_scope=AssigneeScope.GROUP
+                    )
+                ]
+            }
+        )
+        result = CompanyAssignmentResult(
+            companies=(
+                NormalizedCompany(
+                    company_id="CO-HUAWEI",
+                    canonical_name="华为",
+                    assignee_scope=AssigneeScope.GROUP,
+                ),
+            ),
+            assignments=(
+                CompanyAssignment(
+                    publication_number="CN1A",
+                    primary_company_id="CO-HUAWEI",
+                    observed_assignee="华为终端有限公司",
+                    matched_alias="华为",
+                    status="CONFIRMED_GROUP_SCOPE",
+                ),
+            ),
+        )
+
+        self.database.put_company_assignments("run-1", scope=scope, result=result)
+
+        self.assertEqual(
+            self.connection.companies[0]["resolution_source"],
+            "USER_CONFIGURED_GROUP_SCOPE",
+        )
+        self.assertEqual(self.connection.companies[0]["confidence"], 0.65)
+        self.assertEqual(self.connection.assignments[0]["confidence"], 0.65)
+        self.assertEqual(self.database.list_company_assignments("run-1"), result)
 
     def test_changed_or_partial_set_fails_closed(self) -> None:
         self.database.put_company_assignments(
@@ -885,8 +1029,10 @@ class _CompanyProfileConnection:
         self.insights = []
         self.profile = None
         self.manifest = None
+        self.statements: list[str] = []
 
     def execute(self, sql, params=()):
+        self.statements.append(sql)
         normalized = " ".join(sql.split())
         if normalized.startswith("SELECT run_id FROM landscape_runs"):
             return _Cursor([{"run_id": params[0]}])
@@ -1039,6 +1185,12 @@ class LandscapePostgreSQLCompanyProfilePersistenceTests(unittest.TestCase):
         self.assertEqual(len(self.connection.members), 2)
         self.assertEqual(len(self.connection.insights), 2)
         self.assertEqual(self.connection.manifest["member_count"], 2)
+        self.assertFalse(
+            any(
+                "JOIN landscape_patent_analyses" in statement
+                for statement in self.connection.statements
+            )
+        )
 
     def test_profile_replay_detects_granular_category_mutation(self) -> None:
         company_profile = profile("A", ["CN1A", "CN2A"])

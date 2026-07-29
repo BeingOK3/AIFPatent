@@ -150,7 +150,11 @@ class CompanyTechnologyClassificationService:
                         )
             result = _canonicalize_fingerprint_category_ids(
                 company.company_id,
-                CompanyTechnologyClassification(
+                # Every recursive batch has already received program-owned
+                # IDs starting at ``01``.  Before the whole-company merge is
+                # renumbered those IDs can collide across batches, so keep
+                # this intermediate representation permissive.
+                CompanyTechnologyClassificationDraft(
                     technology_categories=list(merged.values())
                 ),
             )

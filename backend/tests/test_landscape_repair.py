@@ -43,6 +43,7 @@ class LandscapeRepairPlanTests(unittest.TestCase):
             repair_targets=[
                 "FETCH:CN1A",
                 "ANALYZE:US2A1",
+                "LIGHTWEIGHT:US2A1",
                 "CLASSIFY:US2A1",
                 "PROFILE:CO-A",
                 "TREND:TR-1",
@@ -57,6 +58,7 @@ class LandscapeRepairPlanTests(unittest.TestCase):
 
         self.assertEqual(plan.fetch_publications, ("CN1A",))
         self.assertEqual(plan.analyze_publications, ("CN1A", "US2A1"))
+        self.assertTrue(plan.rebuild_lightweight_fingerprints)
         self.assertEqual(plan.rebuild_company_ids, ("CO-A", "CO-B"))
         self.assertTrue(plan.rebuild_cross_company_trends)
 

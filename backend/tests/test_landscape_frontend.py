@@ -20,6 +20,9 @@ class LandscapeFrontendContractTests(unittest.TestCase):
         self.assertIn('id="technology-direction"', self.html)
         self.assertIn('id="competitors"', self.html)
         self.assertIn("自动识别专利申请人别名", self.html)
+        self.assertIn("GROUP 是集团/品牌名称文本口径", self.html)
+        self.assertIn("assignee_scope", self.javascript)
+        self.assertIn("公司名称 | GROUP", self.javascript)
 
     def test_aliases_and_debug_are_rendered(self) -> None:
         for fragment in (

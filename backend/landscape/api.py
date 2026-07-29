@@ -46,6 +46,11 @@ class LandscapeRuntimeRequest(ApiModel):
     def safe_base_url(cls, value: HttpUrl) -> HttpUrl:
         if value.username or value.password or value.query or value.fragment:
             raise ValueError("base_url must not contain credentials, query, or fragment")
+        # HttpUrl accepts a second URL-looking sequence in the path, such as
+        # ``https://host/v3https://host/v3``. That produces opaque 404 errors
+        # from OpenAI-compatible gateways, so reject it before a Run exists.
+        if str(value).count("://") != 1:
+            raise ValueError("base_url must contain exactly one URL")
         return value
 
     def runtime_config(self) -> RuntimeModelConfig:

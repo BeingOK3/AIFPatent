@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import unittest
 from datetime import date
 from types import SimpleNamespace
 
+from idea.merge import MergedHit
 from idea.providers.base import FetchedDocument
 from landscape.company_assignment import CompanyAssignmentResult
 from landscape.company_classification import COMPANY_CLASSIFIER_NAME
@@ -13,7 +15,10 @@ from landscape.execution import LandscapeExecutionService
 from landscape.schemas import (
     AnalysisMode,
     CompanyTechnologyProfileNarrative,
+    CrossCompanyTrendAnalysis,
     LandscapeCoverageAudit,
+    LandscapeDirectionEvidence,
+    LandscapeDirectionFingerprint,
     LandscapeScope,
 )
 from tests.test_landscape_company_classification import company_batch
@@ -53,6 +58,7 @@ class _CompanyExecutionRepository:
         self.trend_analysis = None
         self.audits = []
         self.put_calls = 0
+        self.direction_evidence_calls = []
         self.repair_profile_calls = []
         self.trend_put_calls = 0
         self.repair_trend_calls = []
@@ -76,6 +82,9 @@ class _CompanyExecutionRepository:
         self.put_calls += 1
         self.profiles[company_id] = profile
         return profile
+
+    def put_direction_evidence(self, run_id, fingerprints):
+        self.direction_evidence_calls.append((run_id, list(fingerprints)))
 
     def put_repaired_company_profile(
         self, _run_id, *, repair_round, company_id, profile
@@ -125,6 +134,17 @@ class _CompanyFanoutRecorder:
         return list(company_ids)
 
 
+class _RecordingTrendService:
+    def __init__(self):
+        self.calls = []
+
+    async def analyze(self, **kwargs):
+        self.calls.append(kwargs)
+        return CrossCompanyTrendAnalysis(
+            overall_summary="当前没有足够的共同方向可形成跨公司趋势。"
+        )
+
+
 class LandscapeCompanyExecutionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.model = _CompanyExecutionModel()
@@ -141,6 +161,7 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
             company_repository=self.repository,
             fetch_repository=self.repository,
             analysis_repository=self.repository,
+            direction_evidence_repository=self.repository,
             profile_repository=self.repository,
             trend_repository=self.repository,
             audit_repository=self.repository,
@@ -247,6 +268,41 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "already bound"):
             self.service.bind_company_fanout(fanout)
 
+    def test_full_set_fingerprints_persist_lightweight_evidence_before_fanout(self):
+        self.service.selected_hits = lambda _run_id: [  # type: ignore[method-assign]
+            MergedHit(
+                merge_key=publication,
+                publication_number=publication,
+                title=f"{publication} 液冷结构",
+                snippet=f"{publication} 的微通道液冷技术。",
+                publication_date="2026-05-01",
+                assignee="Huawei",
+                found_by=["fixture"],
+                query_ids=["LQ-1"],
+                sources=[],
+            )
+            for publication in sorted(self.repository.analyses)
+        ]
+
+        fingerprints = self.service._prepare_direction_fingerprints("run-1")
+
+        self.assertIsNotNone(fingerprints)
+        self.assertEqual(set(fingerprints or {}), set(self.repository.analyses))
+        self.assertEqual(len(self.repository.direction_evidence_calls), 1)
+        run_id, persisted = self.repository.direction_evidence_calls[0]
+        self.assertEqual(run_id, "run-1")
+        self.assertEqual(
+            {item.publication_number for item in persisted},
+            set(self.repository.analyses),
+        )
+        self.assertTrue(
+            all(
+                evidence.evidence_id.startswith("EV-DIR-")
+                for item in persisted
+                for evidence in item.evidence
+            )
+        )
+
     def test_single_company_trend_is_persisted_and_resumed_without_model(self):
         asyncio.run(self.service.analyze_company("run-1", "CO-HUAWEI"))
         calls_before_trend = len(self.model.calls)
@@ -269,6 +325,45 @@ class LandscapeCompanyExecutionTests(unittest.TestCase):
         self.assertEqual(first["trend_count"], 0)
         self.assertEqual(self.repository.trend_put_calls, 1)
         self.assertEqual(len(self.model.calls), calls_before_trend)
+
+    def test_lightweight_fingerprints_drive_trend_and_resume_validation(self):
+        asyncio.run(self.service.analyze_company("run-1", "CO-HUAWEI"))
+        fingerprints = {}
+        for publication in ("CN1A", "US2A1"):
+            text = f"{publication} 的轻量方向证据。"
+            fingerprints[publication] = LandscapeDirectionFingerprint(
+                publication_number=publication,
+                company_id="CO-HUAWEI",
+                title=f"{publication} 轻量方向",
+                publication_date="2026-05-01",
+                source_kind="SEARCH_HIT",
+                technical_keywords=["轻量方向"],
+                evidence=[
+                    LandscapeDirectionEvidence(
+                        evidence_id=f"EV-DIR-{publication}",
+                        section_type="SNIPPET",
+                        text=text,
+                        content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    )
+                ],
+            )
+        self.service.direction_fingerprints["run-1"] = fingerprints
+        recorder = _RecordingTrendService()
+        self.service.company_trends = recorder
+        self.service.scope = lambda _run_id: LandscapeScope(  # type: ignore[method-assign]
+            mode=AnalysisMode.TECHNOLOGY,
+            technology_direction="液冷",
+            publication_start=date(2026, 4, 1),
+            publication_end=date(2026, 6, 30),
+        )
+
+        first = asyncio.run(self.service.analyze_cross_company_trends("run-1"))
+        second = asyncio.run(self.service.analyze_cross_company_trends("run-1"))
+
+        self.assertFalse(first["recovered"])
+        self.assertTrue(second["recovered"])
+        self.assertEqual(recorder.calls[0]["fingerprints"], fingerprints)
+        self.assertEqual(self.repository.trend_put_calls, 1)
 
     def test_coverage_audit_pass_is_persisted_and_resumed(self):
         asyncio.run(self.service.analyze_company("run-1", "CO-HUAWEI"))

@@ -26,6 +26,10 @@ from idea.providers.base import (
     SearchQuery,
 )
 
+from .assignee_matching import (
+    AssigneeResolutionStatus,
+    resolve_competitor_assignee,
+)
 from .planning import validate_query_plan_scope
 from .schemas import AnalysisMode, LandscapeModel, LandscapeQueryPlan, LandscapeScope
 from .workflow import NonRetryableLandscapeWorkflowError
@@ -36,6 +40,7 @@ class ExclusionReason(StrEnum):
     PUBLICATION_DATE_MISSING = "PUBLICATION_DATE_MISSING"
     PUBLICATION_DATE_INVALID = "PUBLICATION_DATE_INVALID"
     PUBLICATION_DATE_OUTSIDE_WINDOW = "PUBLICATION_DATE_OUTSIDE_WINDOW"
+    COMPETITOR_AMBIGUOUS = "COMPETITOR_AMBIGUOUS"
     COMPETITOR_NOT_CONFIRMED = "COMPETITOR_NOT_CONFIRMED"
 
 
@@ -424,22 +429,9 @@ def family_publication_numbers(hit: MergedHit) -> list[str]:
 def matched_competitor_name(
     assignee: str | None, scope: LandscapeScope
 ) -> str | None:
-    if not assignee:
-        return None
-    normalized_assignee = _normalize_text(assignee)
-    for competitor in scope.competitors:
-        for alias in [competitor.name, *competitor.aliases]:
-            normalized_alias = _normalize_text(alias)
-            if not normalized_alias:
-                continue
-            if _contains_cjk(normalized_alias):
-                if normalized_alias in normalized_assignee:
-                    return competitor.name
-            elif re.search(
-                rf"(?<![a-z0-9]){re.escape(normalized_alias)}(?![a-z0-9])",
-                normalized_assignee,
-            ):
-                return competitor.name
+    resolution = resolve_competitor_assignee(assignee, scope.competitors)
+    if resolution.is_confirmed and resolution.competitor is not None:
+        return resolution.competitor.name
     return None
 
 
@@ -454,10 +446,12 @@ def exclusion_reason(hit: SearchHit, scope: LandscapeScope) -> ExclusionReason |
         return ExclusionReason.PUBLICATION_DATE_INVALID
     if not scope.publication_start <= publication_date <= scope.publication_end:
         return ExclusionReason.PUBLICATION_DATE_OUTSIDE_WINDOW
-    if scope.mode in {AnalysisMode.COMPETITOR, AnalysisMode.TECHNOLOGY_COMPETITOR} and not assignee_matches_confirmed_competitor(
-        hit.assignee, scope
-    ):
-        return ExclusionReason.COMPETITOR_NOT_CONFIRMED
+    if scope.mode in {AnalysisMode.COMPETITOR, AnalysisMode.TECHNOLOGY_COMPETITOR}:
+        resolution = resolve_competitor_assignee(hit.assignee, scope.competitors)
+        if resolution.status == AssigneeResolutionStatus.AMBIGUOUS:
+            return ExclusionReason.COMPETITOR_AMBIGUOUS
+        if not resolution.is_confirmed:
+            return ExclusionReason.COMPETITOR_NOT_CONFIRMED
     return None
 
 
@@ -591,10 +585,6 @@ def _normalize_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).casefold()
     normalized = re.sub(r"[^\w\u3400-\u9fff]+", " ", normalized)
     return " ".join(normalized.split())
-
-
-def _contains_cjk(value: str) -> bool:
-    return any("\u3400" <= character <= "\u9fff" for character in value)
 
 
 def _company_for_hit(hit: MergedHit, scope: LandscapeScope) -> tuple[str, str]:

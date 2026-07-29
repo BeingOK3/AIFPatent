@@ -11,6 +11,7 @@ from landscape.company_assignment import (
 )
 from landscape.schemas import (
     AnalysisMode,
+    AssigneeScope,
     CompanyAssignment,
     CompetitorInput,
     LandscapeScope,
@@ -115,6 +116,75 @@ class LandscapeCompanyAssignmentTests(unittest.TestCase):
         )
         self.assertEqual(result.assignments[0].status, "UNKNOWN")
         self.assertEqual(result.assignments[0].primary_company_id, "UNKNOWN")
+
+    def test_group_scope_assigns_legal_entities_with_auditable_status(self) -> None:
+        value = scope(
+            competitors=[
+                CompetitorInput(
+                    name="华为", assignee_scope=AssigneeScope.GROUP
+                )
+            ]
+        )
+        result = assign_companies(
+            [
+                hit("P1", "华为技术有限公司"),
+                hit("P2", "华为终端有限公司"),
+                hit("P3", "华为云计算技术有限公司"),
+            ],
+            value,
+            user_confirmed_competitors=value.competitors,
+        )
+
+        self.assertEqual(
+            len({assignment.primary_company_id for assignment in result.assignments}),
+            1,
+        )
+        self.assertTrue(
+            all(
+                assignment.primary_company_id != "UNKNOWN"
+                and assignment.status == "CONFIRMED_GROUP_SCOPE"
+                and assignment.matched_alias == "华为"
+                for assignment in result.assignments
+            )
+        )
+        self.assertEqual(result.companies[0].assignee_scope, AssigneeScope.GROUP)
+
+    def test_group_scope_ambiguous_match_is_review_required(self) -> None:
+        value = scope(
+            competitors=[
+                CompetitorInput(name="华为", assignee_scope=AssigneeScope.GROUP),
+                CompetitorInput(name="华为云", assignee_scope=AssigneeScope.GROUP),
+            ]
+        )
+        result = assign_companies(
+            [hit("P1", "华为云计算技术有限公司")],
+            value,
+            user_confirmed_competitors=value.competitors,
+        )
+        self.assertEqual(result.assignments[0].primary_company_id, "UNKNOWN")
+        self.assertEqual(result.assignments[0].status, "REVIEW_REQUIRED")
+
+    def test_validator_rejects_forged_group_scope_assignment(self) -> None:
+        companies = [
+            NormalizedCompany(
+                company_id="CO-HUAWEI",
+                canonical_name="华为",
+                assignee_scope=AssigneeScope.ENTITY,
+            )
+        ]
+        assignment = CompanyAssignment(
+            publication_number="P1",
+            primary_company_id="CO-HUAWEI",
+            observed_assignee="华为终端有限公司",
+            matched_alias="华为",
+            status="CONFIRMED_GROUP_SCOPE",
+        )
+        with self.assertRaisesRegex(
+            CompanyAssignmentValidationError, "group-scope assignment"
+        ):
+            validate_company_assignments(
+                [hit("P1", "华为终端有限公司")], companies, [assignment]
+            )
 
     def test_unconfirmed_composite_company_name_stays_unknown(self) -> None:
         value = scope(

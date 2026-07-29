@@ -120,7 +120,7 @@ def _analysis(publication_number: str) -> LandscapePatentAnalysis:
 
 
 class LandscapeEnrichmentTests(unittest.TestCase):
-    def test_model_alias_expands_search_but_cannot_authorize_filtering(self) -> None:
+    def test_effective_alias_registry_is_shared_but_entity_scope_stays_exact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             database = LandscapeDatabase(root / "landscape.db")
@@ -218,11 +218,11 @@ class LandscapeEnrichmentTests(unittest.TestCase):
 
             self.assertEqual(
                 [item["publication_number"] for item in filtered["candidates"]],
-                ["US1A1", "CN2A"],
+                ["CN2A"],
             )
             self.assertEqual(
                 filtered["coverage"]["excluded_counts"],
-                {},
+                {"COMPETITOR_NOT_CONFIRMED": 1},
             )
             self.assertEqual(
                 filtered["coverage"]["company_patent_counts"][0]["company"],
@@ -231,7 +231,7 @@ class LandscapeEnrichmentTests(unittest.TestCase):
             _, assignment_scope, assignment_result = company_repository.calls[0]
             self.assertEqual(
                 assignment_scope.competitors[0].aliases,
-                ["华为", "华为技术有限公司"],
+                ["华为", "华为技术有限公司", "Model Search Alias"],
             )
             self.assertEqual(
                 assignment_result.assignments[0].primary_company_id,

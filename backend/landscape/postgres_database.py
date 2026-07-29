@@ -12,10 +12,12 @@ from idea.providers.base import FetchedDocument
 from .company_assignment import CompanyAssignmentResult
 from .database import LandscapeDatabase, assert_no_secrets, canonical_json, now_ms
 from .schemas import (
+    AssigneeScope,
     CompanyAssignment,
     CompanyTechnologyProfile,
     CrossCompanyTrendAnalysis,
     LandscapeCoverageAudit,
+    LandscapeDirectionFingerprint,
     LandscapePatentAnalysis,
     LandscapeScope,
     NormalizedCompany,
@@ -120,8 +122,14 @@ def _prepare_company_assignment_rows(
             resolution_source = "UNRESOLVED"
             confidence = 0.0
         elif scope.competitors:
-            resolution_source = "USER_CONFIRMED_REGISTRY"
-            confidence = 1.0
+            resolution_source = (
+                f"USER_CONFIGURED_{company.assignee_scope.value}_SCOPE"
+            )
+            confidence = (
+                0.65
+                if company.assignee_scope == AssigneeScope.GROUP
+                else 1.0
+            )
         else:
             resolution_source = "NORMALIZED_OBSERVED_NAME"
             confidence = 1.0
@@ -166,6 +174,8 @@ def _prepare_company_assignment_rows(
         confidence = (
             1.0
             if assignment.status in {"CONFIRMED_ALIAS", "NORMALIZED_NAME"}
+            else 0.65
+            if assignment.status == "CONFIRMED_GROUP_SCOPE"
             else 0.0
         )
         semantic = {
@@ -318,6 +328,131 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             row["metadata"] = json.loads(metadata) if isinstance(metadata, str) else metadata
             result.append(row)
         return result
+
+    def put_direction_evidence(
+        self,
+        run_id: str,
+        fingerprints: list[LandscapeDirectionFingerprint],
+    ) -> None:
+        """Persist the bounded evidence backing all-patent lightweight trends.
+
+        Lightweight direction classification deliberately runs before optional
+        deep patent analysis.  Its evidence therefore cannot depend on
+        ``landscape_patent_analyses`` or the old deep-analysis evidence packet.
+        The fingerprints are deterministic, run-scoped, and use canonical
+        candidate document IDs so later profile/category evidence references
+        remain fully auditable.
+        """
+        by_publication: dict[str, LandscapeDirectionFingerprint] = {}
+        for fingerprint in fingerprints:
+            publication = normalize_publication_number(fingerprint.publication_number)
+            if publication is None or publication != fingerprint.publication_number:
+                raise ValueError("direction fingerprint publication must be canonical")
+            if publication in by_publication:
+                raise ValueError("direction fingerprints must have unique publications")
+            by_publication[publication] = fingerprint
+
+        with self.connect() as connection:
+            _lock_landscape_run(connection, run_id)
+            candidate_rows = connection.execute(
+                """
+                SELECT document_id,publication_number
+                FROM landscape_candidates
+                WHERE run_id=%s
+                ORDER BY publication_number
+                """,
+                (run_id,),
+            ).fetchall()
+            document_by_publication = {
+                row["publication_number"]: row["document_id"]
+                for row in candidate_rows
+            }
+            missing = sorted(set(by_publication) - set(document_by_publication))
+            if missing:
+                raise ValueError(
+                    "direction evidence is outside canonical candidate set: "
+                    + ", ".join(missing)
+                )
+
+            prepared: list[dict[str, Any]] = []
+            seen_ids: set[str] = set()
+            for publication in sorted(by_publication):
+                fingerprint = by_publication[publication]
+                for evidence in fingerprint.evidence:
+                    actual_hash = hashlib.sha256(
+                        evidence.text.encode("utf-8")
+                    ).hexdigest()
+                    if actual_hash != evidence.content_hash:
+                        raise ValueError(
+                            "direction evidence content hash does not match text"
+                        )
+                    if evidence.evidence_id in seen_ids:
+                        raise ValueError("direction evidence IDs must be unique")
+                    seen_ids.add(evidence.evidence_id)
+                    prepared.append(
+                        {
+                            "evidence_id": evidence.evidence_id,
+                            "document_id": document_by_publication[publication],
+                            "section_type": evidence.section_type,
+                            "section_label": f"LIGHTWEIGHT_{evidence.section_type}",
+                            "quote_text": evidence.text,
+                            "start_offset": 0,
+                            "end_offset": len(evidence.text),
+                            "content_hash": evidence.content_hash,
+                        }
+                    )
+
+            existing_rows = connection.execute(
+                """
+                SELECT evidence_id,document_id,section_type,section_label,
+                       quote_text,start_offset,end_offset,content_hash
+                FROM landscape_evidence
+                WHERE run_id=%s
+                ORDER BY evidence_id
+                """,
+                (run_id,),
+            ).fetchall()
+            existing_by_id = {
+                row["evidence_id"]: {
+                    "evidence_id": row["evidence_id"],
+                    "document_id": row["document_id"],
+                    "section_type": row["section_type"],
+                    "section_label": row["section_label"],
+                    "quote_text": row["quote_text"],
+                    "start_offset": row["start_offset"],
+                    "end_offset": row["end_offset"],
+                    "content_hash": row["content_hash"],
+                }
+                for row in existing_rows
+            }
+            for evidence in prepared:
+                existing = existing_by_id.get(evidence["evidence_id"])
+                if existing is not None:
+                    if existing != evidence:
+                        raise ValueError(
+                            "landscape direction evidence is immutable or corrupt"
+                        )
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO landscape_evidence(
+                        evidence_id,run_id,document_id,section_type,section_label,
+                        quote_text,start_offset,end_offset,content_hash,created_at
+                    ) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        evidence["evidence_id"],
+                        run_id,
+                        evidence["document_id"],
+                        evidence["section_type"],
+                        evidence["section_label"],
+                        evidence["quote_text"],
+                        evidence["start_offset"],
+                        evidence["end_offset"],
+                        evidence["content_hash"],
+                        now_ms(),
+                    ),
+                )
 
     def put_company_assignments(
         self,
@@ -546,6 +681,9 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
                 company_id=row["company_id"],
                 canonical_name=row["canonical_name"],
                 aliases=_json_value(row["aliases_json"]),
+                assignee_scope=_assignee_scope_from_resolution_source(
+                    row["resolution_source"]
+                ),
             )
             for row in company_rows
         )
@@ -796,15 +934,13 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             ).fetchone()
             if company is None:
                 raise ValueError(f"unknown landscape company: {company_id}")
-            analyzed_rows = connection.execute(
+            assigned_rows = connection.execute(
                 """
                 SELECT c.document_id,c.publication_number
                 FROM landscape_candidates c
                 JOIN landscape_document_companies dc
                   ON dc.run_id=c.run_id AND dc.document_id=c.document_id
                  AND dc.relationship='PRIMARY'
-                JOIN landscape_patent_analyses pa
-                  ON pa.run_id=c.run_id AND pa.document_id=c.document_id
                 WHERE c.run_id=%s AND dc.company_id=%s
                 ORDER BY c.publication_number
                 """,
@@ -812,7 +948,7 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             ).fetchall()
             document_by_publication = {
                 row["publication_number"]: row["document_id"]
-                for row in analyzed_rows
+                for row in assigned_rows
             }
             members = [
                 publication
@@ -821,7 +957,7 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             ]
             if set(members) != set(document_by_publication):
                 raise ValueError(
-                    "company profile must cover all analyzed company patents exactly"
+                    "company profile must cover all assigned company candidates exactly"
                 )
             evidence_rows = connection.execute(
                 """
@@ -1325,6 +1461,14 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
 
 def _json_value(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
+
+
+def _assignee_scope_from_resolution_source(value: str) -> AssigneeScope:
+    """Recover the scope without changing the legacy manifest projection."""
+
+    if value == "USER_CONFIGURED_GROUP_SCOPE":
+        return AssigneeScope.GROUP
+    return AssigneeScope.ENTITY
 
 
 def _company_projection(row: dict[str, Any]) -> dict[str, Any]:

@@ -290,12 +290,18 @@ def _build_lightweight_trend_context(
     publication_dates: Mapping[str, date],
     time_basis: TrendTimeBasis,
 ) -> dict:
-    company_by_publication = {
-        publication: company_id
-        for company_id, profile in profiles.items()
-        for category in profile.technology_categories
-        for publication in category.publication_numbers
-    }
+    company_by_publication: dict[str, str] = {}
+    for company_id, profile in profiles.items():
+        for category in profile.technology_categories:
+            for publication in category.publication_numbers:
+                owner = company_by_publication.setdefault(
+                    publication, company_id
+                )
+                if owner != company_id:
+                    raise CrossCompanyTrendValidationError(
+                        "publication belongs to multiple company profiles: "
+                        f"{publication}"
+                    )
     publications = set(fingerprints)
     if publications != set(company_by_publication):
         raise CrossCompanyTrendValidationError(
@@ -305,6 +311,17 @@ def _build_lightweight_trend_context(
         raise CrossCompanyTrendValidationError(
             "lightweight publication dates must cover the trend input exactly"
         )
+    for publication, fingerprint in fingerprints.items():
+        if fingerprint.company_id != company_by_publication[publication]:
+            raise CrossCompanyTrendValidationError(
+                "lightweight fingerprint company does not match company profile: "
+                f"{publication}"
+            )
+    for publication, published in publication_dates.items():
+        if published < time_basis.start or published > time_basis.end:
+            raise CrossCompanyTrendValidationError(
+                f"publication date is outside time basis: {publication}"
+            )
     evidence_by_publication = {
         publication: {item.evidence_id for item in fingerprint.evidence}
         for publication, fingerprint in fingerprints.items()

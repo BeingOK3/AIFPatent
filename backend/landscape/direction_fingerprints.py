@@ -18,6 +18,7 @@ def build_direction_fingerprint(
     *,
     company_id: str,
     document: FetchedDocument | None = None,
+    evidence_namespace: str | None = None,
     max_text_per_section: int = 2_000,
 ) -> LandscapeDirectionFingerprint:
     """Build a bounded, deterministic technology signal for one eligible patent.
@@ -26,9 +27,20 @@ def build_direction_fingerprint(
     available, only the abstract, the beginning of claims, and a short
     description excerpt are included. This function never invokes an LLM.
     """
+    # ``landscape_evidence`` historically uses a globally unique evidence ID.
+    # A run namespace keeps otherwise identical lightweight excerpts from two
+    # runs distinct once they are persisted, while leaving callers that only
+    # need a deterministic in-memory fingerprint unchanged.
+    evidence_namespace = (evidence_namespace or "").strip() or None
     evidence: list[LandscapeDirectionEvidence] = []
     title = (document.title if document else hit.title) or ""
-    _append_evidence(evidence, "TITLE", title, hit.publication_number)
+    _append_evidence(
+        evidence,
+        "TITLE",
+        title,
+        hit.publication_number,
+        evidence_namespace=evidence_namespace,
+    )
     if document is not None:
         _append_evidence(
             evidence,
@@ -36,6 +48,7 @@ def build_direction_fingerprint(
             document.abstract_text,
             hit.publication_number,
             max_text_per_section,
+            evidence_namespace=evidence_namespace,
         )
         _append_evidence(
             evidence,
@@ -43,6 +56,7 @@ def build_direction_fingerprint(
             document.claims_text,
             hit.publication_number,
             max_text_per_section,
+            evidence_namespace=evidence_namespace,
         )
         _append_evidence(
             evidence,
@@ -50,6 +64,7 @@ def build_direction_fingerprint(
             document.description_text,
             hit.publication_number,
             max_text_per_section // 2,
+            evidence_namespace=evidence_namespace,
         )
     else:
         _append_evidence(
@@ -58,6 +73,7 @@ def build_direction_fingerprint(
             hit.snippet,
             hit.publication_number,
             max_text_per_section,
+            evidence_namespace=evidence_namespace,
         )
     if not evidence:
         _append_evidence(
@@ -66,6 +82,7 @@ def build_direction_fingerprint(
             hit.snippet or hit.title or hit.publication_number,
             hit.publication_number,
             max_text_per_section,
+            evidence_namespace=evidence_namespace,
         )
     corpus = " ".join(item.text for item in evidence)
     keywords = _keywords(corpus)
@@ -87,6 +104,7 @@ def build_direction_fingerprints(
     *,
     company_by_publication: dict[str, str],
     documents: dict[str, FetchedDocument] | None = None,
+    evidence_namespace: str | None = None,
 ) -> list[LandscapeDirectionFingerprint]:
     """Build a stable fingerprint for every eligible publication."""
     documents = documents or {}
@@ -95,6 +113,7 @@ def build_direction_fingerprints(
             hit,
             company_id=company_by_publication[hit.publication_number or ""],
             document=documents.get(hit.publication_number or ""),
+            evidence_namespace=evidence_namespace,
         )
         for hit in hits
     ]
@@ -107,14 +126,21 @@ def _append_evidence(
     value: str,
     publication_number: str | None,
     limit: int = 2_000,
+    *,
+    evidence_namespace: str | None = None,
 ) -> None:
-    text = " ".join((value or "").split())[: max(1, limit)]
+    # Truncation can leave a trailing space.  ``LandscapeModel`` strips text
+    # fields during validation, so normalize once more before hashing to keep
+    # the persisted content hash identical to the validated evidence text.
+    text = " ".join((value or "").split())[: max(1, limit)].strip()
     if not text:
         return
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    evidence_id = "EV-DIR-" + hashlib.sha256(
-        f"{publication_number or ''}|{section_type}|{digest}".encode("utf-8")
-    ).hexdigest()[:24]
+    identity = f"{publication_number or ''}|{section_type}|{digest}"
+    if evidence_namespace is not None:
+        namespace = hashlib.sha256(evidence_namespace.encode("utf-8")).hexdigest()[:16]
+        identity = f"{namespace}|{identity}"
+    evidence_id = "EV-DIR-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
     output.append(
         LandscapeDirectionEvidence(
             evidence_id=evidence_id,

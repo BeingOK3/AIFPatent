@@ -84,6 +84,36 @@ class StubModel:
         return SimpleNamespace(output=self.output)
 
 
+class BatchingStubModel:
+    """Return one category for the first 8-item lightweight batch."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def complete(self, agent_name, *, system_prompt, input_payload):
+        self.calls.append((agent_name, system_prompt, input_payload))
+        patents = input_payload["patents"]
+        return SimpleNamespace(
+            output=CompanyTechnologyClassificationDraft(
+                technology_categories=[
+                    CompanyTechnologyCategory(
+                        category_id="TC-MODEL-01",
+                        name="批次一方向",
+                        summary="第一批专利的技术方向。",
+                        keywords=["批次一"],
+                        publication_numbers=[
+                            item["publication_number"] for item in patents
+                        ],
+                        evidence_ids=[
+                            item["evidence"][0]["evidence_id"]
+                            for item in patents
+                        ],
+                    )
+                ]
+            )
+        )
+
+
 class LandscapeCompanyClassificationTests(unittest.TestCase):
     def test_single_lightweight_fingerprint_uses_deterministic_category(self) -> None:
         service = CompanyTechnologyClassificationService(StubModel())
@@ -193,6 +223,56 @@ class LandscapeCompanyClassificationTests(unittest.TestCase):
         )
         self.assertEqual(
             model.calls[0][0], "landscape-company-lightweight-classifier"
+        )
+
+    def test_cross_batch_temporary_category_ids_are_renumbered_before_validation(
+        self,
+    ) -> None:
+        fingerprints = [
+            LandscapeDirectionFingerprint(
+                publication_number=f"P{index:02d}",
+                company_id="CO-HUAWEI",
+                title=f"专利 {index}",
+                publication_date="2026-06-01",
+                source_kind="SEARCH_HIT",
+                technical_keywords=["批次一" if index <= 8 else "批次二"],
+                evidence=[
+                    LandscapeDirectionEvidence(
+                        evidence_id=f"EV-DIR-P{index:02d}",
+                        section_type="SNIPPET",
+                        text=f"专利 {index} 的技术摘要。",
+                        content_hash="c" * 64,
+                    )
+                ],
+            )
+            for index in range(1, 10)
+        ]
+        model = BatchingStubModel()
+        service = CompanyTechnologyClassificationService(model)
+
+        result = asyncio.run(
+            service.classify_fingerprints(
+                company=NormalizedCompany(
+                    company_id="CO-HUAWEI",
+                    canonical_name="Huawei",
+                    aliases=["华为"],
+                ),
+                fingerprints=fingerprints,
+            )
+        )
+
+        self.assertEqual(len(model.calls), 1)
+        self.assertEqual(
+            [category.category_id for category in result.technology_categories],
+            ["TC-HUAWEI-01", "TC-HUAWEI-02"],
+        )
+        self.assertEqual(
+            {
+                publication
+                for category in result.technology_categories
+                for publication in category.publication_numbers
+            },
+            {f"P{index:02d}" for index in range(1, 10)},
         )
 
     def test_multi_patent_model_output_is_scoped_validated_and_stably_identified(self) -> None:

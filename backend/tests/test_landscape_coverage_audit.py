@@ -10,7 +10,7 @@ from landscape.schemas import (
     CompanyTechnologyProfile,
     NormalizedCompany,
 )
-from tests.test_landscape_company_trends import patent_analysis, profile
+from tests.test_landscape_company_trends import fingerprint, patent_analysis, profile
 
 
 class LandscapeCoverageAuditTests(unittest.TestCase):
@@ -167,6 +167,29 @@ class LandscapeCoverageAuditTests(unittest.TestCase):
         self.assertEqual(audit.invalid_evidence_refs, ["EV-INVENTED"])
         self.assertIn("CLASSIFY:CN1A", audit.repair_targets)
         self.assertIn("PROFILE:CO-B", audit.repair_targets)
+
+    def test_lightweight_mode_routes_unclassified_members_to_classify(self) -> None:
+        lightweight = {
+            "CN1A": fingerprint("CO-A", "CN1A", "2026-01-10"),
+            "CN2A": fingerprint("CO-A", "CN2A", "2026-04-10"),
+            "US3A1": fingerprint("CO-B", "US3A1", "2026-05-10"),
+        }
+        audit = self.audit(
+            analyses={},
+            profiles={"CO-A": self.profiles["CO-A"]},
+            valid_evidence_ids_by_publication={
+                publication: {
+                    f"EV-{publication}",
+                    f"EV-DIR-{publication}",
+                }
+                for publication in self.eligible
+            },
+            lightweight_fingerprints=lightweight,
+        )
+
+        self.assertEqual(audit.decision, "REPAIR")
+        self.assertEqual(audit.missing_publications, ["US3A1"])
+        self.assertIn("CLASSIFY:US3A1", audit.repair_targets)
 
 
 if __name__ == "__main__":

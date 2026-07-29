@@ -32,19 +32,31 @@
     };
     $("derived-mode").textContent = mode ? `当前分析模式：${labels[mode]}（系统自动判定）` : "当前分析模式：等待输入";
   }
-  function parseCompetitors() {
-    return $("competitors").value.split("\n").map((line) => line.trim()).filter(Boolean).map((name) => ({ name, aliases: [] }));
+  function parseCompetitors(strict = false) {
+    return $("competitors").value.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+      const fields = line.split("|").map((value) => value.trim());
+      const name = fields[0]; const rawScope = (fields[1] || "GROUP").toUpperCase();
+      if (!name || fields.length > 2 || !["ENTITY", "GROUP"].includes(rawScope)) {
+        if (strict) throw new Error("重点友商每行应为“公司名称 | GROUP”或“公司名称 | ENTITY”。");
+        return { name: name || line, aliases: [], assignee_scope: "GROUP" };
+      }
+      return { name, aliases: [], assignee_scope: rawScope };
+    });
   }
   function collectPayload() {
     const mode = derivedMode();
+    const baseUrl = $("base-url").value.trim();
+    if ((baseUrl.match(/:\/\//g) || []).length !== 1) {
+      throw new Error("模型 Base URL 必须是一条完整地址；请不要重复粘贴 URL。");
+    }
     return {
       api_key: $("api-key").value,
-      base_url: $("base-url").value.trim(),
+      base_url: baseUrl,
       model: $("model").value.trim(),
       scope: {
         mode,
         technology_direction: $("technology-direction").value.trim() || null,
-        competitors: parseCompetitors(),
+        competitors: parseCompetitors(true),
         period_preset: $("period-preset").value,
         publication_start: $("publication-start").value,
         publication_end: $("publication-end").value,
@@ -84,7 +96,7 @@
       const debug = await jsonRequest(`/api/landscape/runs/${encodeURIComponent(runId)}/debug`);
       const steps = (debug.steps || []).map((step) => `<div class="debug-row"><b>${escapeHtml(step.step_name)}</b><span>${escapeHtml(step.status)} · 尝试 ${step.attempt} · ${step.duration_ms == null ? "进行中" : `${step.duration_ms} ms`}</span>${step.error_message ? `<em>${escapeHtml(step.error_code || "ERROR")}：${escapeHtml(step.error_message)}</em>` : ""}</div>`).join("") || `<p class="muted">暂无步骤记录。</p>`;
       const queries = (debug.queries || []).map((query) => `<li><code>${escapeHtml(query.query_text)}</code><span>${escapeHtml(query.rationale)}</span></li>`).join("") || `<li class="muted">暂无检索式。</li>`;
-      const aliases = (debug.competitor_aliases || []).map((item) => `<div class="alias-row"><b>${escapeHtml(item.primary_name)}</b><span>已用于检索：${item.searched_aliases?.length ? escapeHtml(item.searched_aliases.join("、")) : "仅主名称"}${item.unsearched_aliases?.length ? `<br><em>未纳入查询：${escapeHtml(item.unsearched_aliases.join("、"))}</em>` : ""}</span><small>${escapeHtml(item.source)}</small></div>`).join("") || `<p class="muted">本次未填写友商。</p>`;
+      const aliases = (debug.competitor_aliases || []).map((item) => `<div class="alias-row"><b>${escapeHtml(item.primary_name)}</b><span>已用于检索：${item.searched_aliases?.length ? escapeHtml(item.searched_aliases.join("、")) : "仅主名称"}${item.unsearched_aliases?.length ? `<br><em>未纳入查询：${escapeHtml(item.unsearched_aliases.join("、"))}</em>` : ""}</span><small>${escapeHtml(item.source)} · ${item.assignee_scope === "GROUP" ? "集团名称文本口径" : "实体精确口径"}</small></div>`).join("") || `<p class="muted">本次未填写友商。</p>`;
       const expansion = debug.technical_direction_expansion; const direction = expansion ? `<div class="direction-expansion"><p><b>原始：</b>${escapeHtml(expansion.original_term)}</p><p><b>中文：</b>${escapeHtml((expansion.chinese_terms || []).join("、"))}</p><p><b>英文：</b>${escapeHtml((expansion.english_terms || []).join("、"))}</p></div>` : `<p class="muted">本次未填写技术方向。</p>`;
       const provider = Object.entries(debug.provider_statuses || {}).map(([name, status]) => `<span class="debug-chip">${escapeHtml(name)}：${escapeHtml(status)}</span>`).join("") || `<span class="muted">暂无 Provider 结果。</span>`;
       const attempts = (debug.provider_attempts || []).map((item) => `<div class="debug-row"><b>${escapeHtml(item.request_id)} · ${escapeHtml(item.provider)}</b><span>${escapeHtml(item.status)} · ${item.duration_ms || 0} ms · ${item.hit_count || 0} 条</span>${item.error_code ? `<em>${escapeHtml(item.error_code)}：${escapeHtml(item.error_message || "")}</em>` : ""}</div>`).join("") || `<p class="muted">暂无 Provider 调用。</p>`;
@@ -102,7 +114,7 @@
     const maxCompany = Math.max(1, ...companyCounts.map((item) => Number(item.patent_count || 0)));
     const companyBars = companyCounts.map((item) => `<div class="bar-row"><span title="${escapeHtml(item.company)}">${escapeHtml(item.company)}</span><div class="bar"><i style="width:${Math.round(Number(item.patent_count || 0) / maxCompany * 100)}%"></i></div><b>${Number(item.patent_count || 0)}</b></div>`).join("") || `<p class="muted">暂无权利人数据。</p>`;
     const jurisdictions = Object.entries(summary.publication_jurisdictions || {}).map(([name, count]) => `<span class="jurisdiction-chip">${escapeHtml(name)} ${Number(count)}</span>`).join("") || `<span class="muted">暂无可用公开号法域数据。</span>`;
-    const aliases = (report.searched_competitor_aliases || []).map((item) => `<div class="alias-row"><b>${escapeHtml(item.primary_name)}</b><span>${item.searched_aliases?.length ? escapeHtml(item.searched_aliases.join("、")) : "仅主名称"}</span><small>${escapeHtml(item.source)}</small></div>`).join("") || `<p class="muted">本次未填写友商。</p>`;
+    const aliases = (report.searched_competitor_aliases || []).map((item) => `<div class="alias-row"><b>${escapeHtml(item.primary_name)}</b><span>${item.searched_aliases?.length ? escapeHtml(item.searched_aliases.join("、")) : "仅主名称"}</span><small>${escapeHtml(item.source)} · ${item.assignee_scope === "GROUP" ? "集团名称文本口径" : "实体精确口径"}</small></div>`).join("") || `<p class="muted">本次未填写友商。</p>`;
     const companyProfiles = (report.company_profiles || []).map((profile) => `<div class="cluster-card"><h3>${escapeHtml(profile.company_id)}</h3><p>${escapeHtml(profile.overall_summary)}</p><p class="muted">技术方向：${escapeHtml((profile.technology_directions || []).join("、") || "暂无")}</p>${(profile.technology_categories || []).map((category) => `<div class="cluster-member"><b>${escapeHtml(category.name)}</b><span>${escapeHtml(category.summary)}</span><span>${escapeHtml((category.publication_numbers || []).join("、"))}</span></div>`).join("")}</div>`).join("") || `<p class="muted">暂无公司技术画像。</p>`;
     const trendAnalysis = report.cross_company_analysis;
     const companyTrends = trendAnalysis ? `<p>${escapeHtml(trendAnalysis.overall_summary)}</p>${(trendAnalysis.trends || []).map((trend) => `<div class="cluster-member"><b>${escapeHtml(trend.trend_id)} · ${escapeHtml(trend.name)}</b><span>${escapeHtml(trend.direction)}</span><span>${escapeHtml(trend.summary)}</span></div>`).join("")}` : `<p class="muted">暂无跨公司趋势。</p>`;

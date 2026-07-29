@@ -205,11 +205,13 @@ def fallback_alias_plan(competitors: list[CompetitorInput]) -> CompetitorAliasPl
 
 
 def scope_with_alias_plan(scope: LandscapeScope, plan: CompetitorAliasPlan) -> LandscapeScope:
-    """Build a search-only scope without weakening user-owned entity boundaries.
+    """Build the validated runtime registry used for query, filter and assignment.
 
-    CompetitorInput aliases in the persisted run scope are user-confirmed. Aliases
-    returned by the model may expand provider queries, but must not replace those
-    confirmed names or become authoritative inputs to filtering and attribution.
+    The model may contribute cross-language aliases for the user-selected
+    competitor, while the primary name and assignee-scope setting remain
+    user-owned.  The resulting registry is intentionally shared by every
+    downstream assignee decision so the candidate set and company partition use
+    the same contract.
     """
     resolved = {
         item.primary_name.casefold(): item for item in plan.competitors
@@ -225,6 +227,7 @@ def scope_with_alias_plan(scope: LandscapeScope, plan: CompetitorAliasPlan) -> L
                             *resolved[competitor.name.casefold()].aliases,
                         ]
                     ),
+                    assignee_scope=competitor.assignee_scope,
                 )
                 for competitor in scope.competitors
             ]

@@ -19,6 +19,7 @@ from landscape.planning import (
 )
 from landscape.schemas import (
     AnalysisMode,
+    AssigneeScope,
     CompetitorAliasPlan,
     CompetitorAliasResolution,
     CompetitorInput,
@@ -226,6 +227,7 @@ class LandscapePlanningTests(unittest.TestCase):
                 CompetitorInput(
                     name="Huawei",
                     aliases=["华为", "Huawei Technologies"],
+                    assignee_scope=AssigneeScope.GROUP,
                 )
             ],
             publication_start=date(2026, 4, 1),
@@ -248,6 +250,10 @@ class LandscapePlanningTests(unittest.TestCase):
             ["华为", "Huawei Technologies", "华为技术"],
         )
         self.assertEqual(scope.competitors[0].aliases, ["华为", "Huawei Technologies"])
+        self.assertEqual(
+            search_scope.competitors[0].assignee_scope,
+            AssigneeScope.GROUP,
+        )
 
     def test_alias_failure_falls_back_to_primary_names(self) -> None:
         fallback = fallback_alias_plan([CompetitorInput(name="Huawei")])
