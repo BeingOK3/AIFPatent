@@ -441,7 +441,7 @@ class LandscapeExecutionService:
             for publication in plan.fetch_publications
             if publication not in documents
         ]
-        fetched, fetch_failures = await self._fetch_documents(
+        fetched, fetch_failures = await self._fetch_for_run(
             run_id,
             fetch_targets,
             batch_size=self.scope(run_id).budget.analysis_limit,
@@ -782,7 +782,7 @@ class LandscapeExecutionService:
             for hit in candidates
             if hit.publication_number not in docs
         ]
-        fetched, failures = await self._fetch_documents(
+        fetched, failures = await self._fetch_for_run(
             run_id,
             pending,
             batch_size=self.scope(run_id).budget.analysis_limit,
@@ -845,7 +845,7 @@ class LandscapeExecutionService:
                     for hit in self.selected_hits(run_id)
                     if hit.publication_number in fetched_publications
                 ]
-                docs, _ = await self._fetch_documents(
+                docs, _ = await self._fetch_for_run(
                     run_id,
                     selected,
                     batch_size=scope.budget.analysis_limit,
@@ -1094,6 +1094,24 @@ class LandscapeExecutionService:
                 documents=documents,
                 direction_terms=direction_terms,
             )
+
+    async def _fetch_for_run(
+        self,
+        run_id: str,
+        hits: list[MergedHit],
+        *,
+        batch_size: int,
+    ) -> tuple[dict[str, FetchedDocument], dict[str, str]]:
+        try:
+            return await self._fetch_documents(
+                run_id,
+                hits,
+                batch_size=batch_size,
+            )
+        except TypeError as exc:
+            if "batch_size" not in str(exc):
+                raise
+            return await self._fetch_documents(run_id, hits)
 
     async def _fetch_documents(
         self,
