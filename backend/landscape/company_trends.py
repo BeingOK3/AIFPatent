@@ -15,6 +15,7 @@ from .schemas import (
     LandscapePatentAnalysis,
     TrendTimeBasis,
 )
+from .schemas import LandscapeDirectionFingerprint
 
 
 CROSS_COMPANY_TREND_AGENT_NAME = "landscape-cross-company-trend-analyzer"
@@ -56,14 +57,23 @@ class CrossCompanyTrendService:
         analyses: Mapping[str, LandscapePatentAnalysis],
         publication_dates: Mapping[str, date],
         time_basis: TrendTimeBasis,
+        fingerprints: Mapping[str, LandscapeDirectionFingerprint] | None = None,
         minimum_patents_for_time_trend: int = 3,
     ) -> CrossCompanyTrendAnalysis:
-        context = _build_trend_context(
-            profiles=profiles,
-            analyses=analyses,
-            publication_dates=publication_dates,
-            time_basis=time_basis,
-        )
+        if fingerprints:
+            context = _build_lightweight_trend_context(
+                profiles=profiles,
+                fingerprints=fingerprints,
+                publication_dates=publication_dates,
+                time_basis=time_basis,
+            )
+        else:
+            context = _build_trend_context(
+                profiles=profiles,
+                analyses=analyses,
+                publication_dates=publication_dates,
+                time_basis=time_basis,
+            )
         if len(profiles) < 2:
             return CrossCompanyTrendAnalysis(
                 overall_summary="当前成功分析结果不足两家公司，无法进行跨公司比较。",
@@ -266,6 +276,73 @@ def _build_trend_context(
                     "evidence_ids": sorted(
                         evidence_by_publication[publication]
                     ),
+                }
+                for publication in sorted(publications)
+            ],
+        },
+    }
+
+
+def _build_lightweight_trend_context(
+    *,
+    profiles: Mapping[str, CompanyTechnologyProfile],
+    fingerprints: Mapping[str, LandscapeDirectionFingerprint],
+    publication_dates: Mapping[str, date],
+    time_basis: TrendTimeBasis,
+) -> dict:
+    company_by_publication = {
+        publication: company_id
+        for company_id, profile in profiles.items()
+        for category in profile.technology_categories
+        for publication in category.publication_numbers
+    }
+    publications = set(fingerprints)
+    if publications != set(company_by_publication):
+        raise CrossCompanyTrendValidationError(
+            "lightweight company profiles and fingerprints must cover the same publications"
+        )
+    if publications != set(publication_dates):
+        raise CrossCompanyTrendValidationError(
+            "lightweight publication dates must cover the trend input exactly"
+        )
+    evidence_by_publication = {
+        publication: {item.evidence_id for item in fingerprint.evidence}
+        for publication, fingerprint in fingerprints.items()
+    }
+    bucket_by_publication = {
+        publication: _bucket_key(published, time_basis.bucket)
+        for publication, published in publication_dates.items()
+    }
+    return {
+        "company_by_publication": company_by_publication,
+        "evidence_by_publication": evidence_by_publication,
+        "bucket_by_publication": bucket_by_publication,
+        "model_payload": {
+            "companies": [
+                {
+                    "company_id": company_id,
+                    "overall_summary": profile.overall_summary,
+                    "technology_directions": profile.technology_directions,
+                    "categories": [
+                        {
+                            "name": category.name,
+                            "summary": category.summary,
+                            "publication_numbers": category.publication_numbers,
+                            "evidence_ids": category.evidence_ids,
+                        }
+                        for category in profile.technology_categories
+                    ],
+                }
+                for company_id, profile in sorted(profiles.items())
+            ],
+            "patents": [
+                {
+                    "publication_number": publication,
+                    "company_id": company_by_publication[publication],
+                    "title": fingerprints[publication].title,
+                    "technical_keywords": fingerprints[publication].technical_keywords,
+                    "time_bucket": bucket_by_publication[publication],
+                    "evidence_ids": sorted(evidence_by_publication[publication]),
                 }
                 for publication in sorted(publications)
             ],

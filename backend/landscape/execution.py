@@ -25,6 +25,7 @@ from .company_trends import (
 )
 from .coverage_audit import audit_company_trend_coverage
 from .database import LandscapeDatabase
+from .direction_fingerprints import build_direction_fingerprint
 from .planning import (
     CompetitorAliasService,
     TechnicalDirectionService,
@@ -41,6 +42,7 @@ from .schemas import (
     CrossCompanyTrendProposal,
     CrossCompanyTrendProposalAnalysis,
     LandscapeCoverageAudit,
+    LandscapeDirectionFingerprint,
     LandscapePatentAnalysis,
     LandscapeQueryPlan,
     LandscapeScope,
@@ -213,6 +215,9 @@ class LandscapeExecutionService:
         self.company_fanout = company_fanout
         self.trend_repository = trend_repository
         self.audit_repository = audit_repository
+        self.direction_fingerprints: dict[
+            str, dict[str, LandscapeDirectionFingerprint]
+        ] = {}
         self.documents: dict[str, dict[str, FetchedDocument]] = {}
         self.prefetched_documents: dict[str, dict[str, FetchedDocument]] = {}
         self.enrichment_stats: dict[str, dict[str, int]] = {}
@@ -244,12 +249,76 @@ class LandscapeExecutionService:
         )
         analyses = self.analysis_repository.list_patent_analyses(run_id)
         batches = build_company_analysis_batches(assignment_result, analyses)
+        fingerprints = self._load_direction_fingerprints(run_id)
         batch = next(
             (candidate for candidate in batches if candidate.company_id == company_id),
             None,
         )
+        if fingerprints and any(
+            item.company_id == company_id for item in fingerprints.values()
+        ):
+            batch = None
         if batch is None:
-            raise ValueError(f"unknown or empty company analysis batch: {company_id}")
+            fingerprint_batch = [
+                item
+                for item in fingerprints.values()
+                if item.company_id == company_id
+            ]
+            if not fingerprint_batch:
+                raise ValueError(
+                    f"unknown or empty company analysis batch: {company_id}"
+                )
+            company = next(
+                (
+                    candidate
+                    for candidate in assignment_result.companies
+                    if candidate.company_id == company_id
+                ),
+                None,
+            )
+            if company is None:
+                raise ValueError(f"unknown lightweight company: {company_id}")
+            existing_profile = self.profile_repository.list_company_profiles(run_id).get(
+                company_id
+            )
+            if existing_profile is not None and repair_round is None:
+                return {
+                    "company_id": company_id,
+                    "publication_count": len(fingerprint_batch),
+                    "category_count": len(existing_profile.technology_categories),
+                    "recovered": True,
+                    "input_mode": "LIGHTWEIGHT_DIRECTION",
+                    "repair_round": repair_round,
+                }
+            classification = await self.company_classifier.classify_fingerprints(
+                company=company,
+                fingerprints=sorted(
+                    fingerprint_batch,
+                    key=lambda item: item.publication_number,
+                ),
+            )
+            categories = classification.technology_categories
+            profile = CompanyTechnologyProfile(
+                overall_summary="；".join(category.summary for category in categories),
+                technology_directions=[
+                    category.name for category in categories
+                ],
+                technology_categories=categories,
+                limitations=[],
+            )
+            self.profile_repository.put_company_profile(
+                run_id,
+                company_id=company_id,
+                profile=profile,
+            )
+            return {
+                "company_id": company_id,
+                "publication_count": len(fingerprint_batch),
+                "category_count": len(categories),
+                "recovered": False,
+                "input_mode": "LIGHTWEIGHT_DIRECTION",
+                "repair_round": repair_round,
+            }
 
         existing = self.profile_repository.list_company_profiles(run_id)
         profile = existing.get(company_id)
@@ -317,15 +386,35 @@ class LandscapeExecutionService:
             raise RuntimeError(
                 "company fan-out requires assignment, analysis and fan-out services"
             )
+        fingerprints = self._prepare_direction_fingerprints(run_id)
         assignments = self.company_repository.list_company_assignments(run_id)
         analyses = self.analysis_repository.list_patent_analyses(run_id)
-        batches = build_company_analysis_batches(assignments, analyses)
-        company_ids = [batch.company_id for batch in batches]
+        if fingerprints:
+            company_ids = sorted(
+                {item.company_id for item in fingerprints.values()}
+            )
+        else:
+            batches = build_company_analysis_batches(assignments, analyses)
+            company_ids = [batch.company_id for batch in batches]
         completed = await self.company_fanout.execute(run_id, company_ids)
         return {
             "company_count": len(company_ids),
             "company_ids": company_ids,
             "completed_company_ids": completed,
+            "input_mode": (
+                "LIGHTWEIGHT_DIRECTION" if fingerprints else "DEEP_ANALYSIS"
+            ),
+            "direction_fingerprints": (
+                [
+                    item.model_dump(mode="json")
+                    for item in sorted(
+                        fingerprints.values(),
+                        key=lambda item: item.publication_number,
+                    )
+                ]
+                if fingerprints
+                else []
+            ),
         }
 
     async def analyze_cross_company_trends(
@@ -344,16 +433,28 @@ class LandscapeExecutionService:
         profiles = self.profile_repository.list_company_profiles(run_id)
         analyses = self.analysis_repository.list_patent_analyses(run_id)
         documents = self.fetch_repository.list_fetched_documents(run_id)
-        publication_dates: dict[str, date] = {}
-        for publication in analyses:
-            document = documents.get(publication)
-            if document is None or not document.publication_date:
-                raise ValueError(
-                    f"trend input lacks publication date: {publication}"
+        fingerprints = self._load_direction_fingerprints(run_id)
+        if fingerprints:
+            publication_dates = {}
+            for publication, fingerprint in fingerprints.items():
+                raw_date = fingerprint.publication_date
+                if not raw_date:
+                    raise ValueError(
+                        f"trend input lacks publication date: {publication}"
+                    )
+                publication_dates[publication] = date.fromisoformat(raw_date[:10])
+        else:
+            publication_dates = {}
+            source_publications = analyses
+            for publication in source_publications:
+                document = documents.get(publication)
+                if document is None or not document.publication_date:
+                    raise ValueError(
+                        f"trend input lacks publication date: {publication}"
+                    )
+                publication_dates[publication] = date.fromisoformat(
+                    document.publication_date[:10]
                 )
-            publication_dates[publication] = date.fromisoformat(
-                document.publication_date[:10]
-            )
         time_basis = TrendTimeBasis(
             start=scope.publication_start,
             end=scope.publication_end,
@@ -1067,6 +1168,58 @@ class LandscapeExecutionService:
     def selected_hits(self, run_id: str) -> list[MergedHit]:
         raw = self.database.get_stage_result(run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value)["value"]
         return [MergedHit.model_validate(item) for item in raw["result"]["candidates"]]
+
+    def _load_direction_fingerprints(
+        self, run_id: str
+    ) -> dict[str, LandscapeDirectionFingerprint]:
+        cached = self.direction_fingerprints.get(run_id)
+        if cached is not None:
+            return cached
+        try:
+            raw = self.database.get_stage_result(
+                run_id, LandscapeWorkflowStep.ANALYZE_COMPANIES.value
+            )["value"].get("direction_fingerprints", [])
+        except (AttributeError, KeyError, TypeError):
+            return {}
+        loaded = {
+            item.publication_number: LandscapeDirectionFingerprint.model_validate(item)
+            for item in raw
+        }
+        self.direction_fingerprints[run_id] = loaded
+        return loaded
+
+    def _prepare_direction_fingerprints(
+        self, run_id: str
+    ) -> dict[str, LandscapeDirectionFingerprint] | None:
+        """Prepare all eligible direction signals when durable run data exists."""
+        try:
+            assignments = self.company_repository.list_company_assignments(run_id)
+            hits = self.selected_hits(run_id)
+            documents = (
+                self.fetch_repository.list_fetched_documents(run_id)
+                if self.fetch_repository is not None
+                else {}
+            )
+        except (AttributeError, KeyError, TypeError):
+            return None
+        company_by_publication = {
+            assignment.publication_number: assignment.primary_company_id
+            for assignment in assignments.assignments
+        }
+        output: dict[str, LandscapeDirectionFingerprint] = {}
+        for hit in hits:
+            publication = hit.publication_number
+            if not publication or publication not in company_by_publication:
+                continue
+            output[publication] = build_direction_fingerprint(
+                hit,
+                company_id=company_by_publication[publication],
+                document=documents.get(publication),
+            )
+        if not output:
+            return None
+        self.direction_fingerprints[run_id] = output
+        return output
 
     async def _analyze_many(
         self,
