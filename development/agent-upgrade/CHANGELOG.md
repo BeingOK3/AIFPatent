@@ -778,3 +778,16 @@
 - 公司趋势覆盖率计算 `L/U`，不能继续使用 `A/U` 作为唯一成功标准；
 - 重点专利选择结果必须保存分数、排名、选择理由和公司/方向/时间覆盖信息；
 - 未经本架构文档更新和独立测试，不得把全量趋势重新绑定到逐件深度精读。
+## 2026-07-29 — landscape-lightweight-direction-fingerprint
+
+### 实现
+
+- 新增 `LandscapeDirectionFingerprint` 和 `LandscapeDirectionEvidence`；
+- 支持仅使用 SearchHit 的标题/摘要片段生成轻量方向指纹；
+- 有详情时只补充摘要、权利要求开头和短说明书片段，不执行逐件深度精读；
+- 指纹生成完全确定性、可复现，不调用大模型，适合作为 U/F 全量趋势输入。
+
+### 验证
+
+- 新增 SearchHit 回退和 FetchedDocument 轻量提取测试；
+- `python3 -m compileall -q backend/landscape`：通过。

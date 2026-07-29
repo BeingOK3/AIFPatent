@@ -216,6 +216,27 @@ class EvidenceItem(LandscapeModel):
         return self
 
 
+class LandscapeDirectionEvidence(LandscapeModel):
+    """Small, auditable text fragments used for all-patent trend analysis."""
+
+    evidence_id: str = Field(pattern=r"^EV-DIR-[A-Za-z0-9._-]+$")
+    section_type: Literal["TITLE", "SNIPPET", "ABSTRACT", "CLAIM", "DESCRIPTION"]
+    text: str = Field(min_length=1, max_length=8_000)
+    content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class LandscapeDirectionFingerprint(LandscapeModel):
+    """Lightweight direction signal; deliberately smaller than deep analysis."""
+
+    publication_number: str = Field(min_length=1, max_length=100)
+    company_id: str = Field(min_length=1, max_length=120)
+    title: str = Field(default="", max_length=1_000)
+    publication_date: str | None = None
+    source_kind: Literal["SEARCH_HIT", "FETCHED_DOCUMENT"]
+    technical_keywords: list[str] = Field(default_factory=list, max_length=30)
+    evidence: list[LandscapeDirectionEvidence] = Field(min_length=1, max_length=6)
+
+
 class LandscapeEvidenceRef(LandscapeModel):
     evidence_id: str = Field(pattern=r"^EV-[A-Za-z0-9._-]+$")
     supports: list[
