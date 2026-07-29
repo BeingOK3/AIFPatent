@@ -558,7 +558,21 @@ class LandscapeDatabase:
                 )
             elif existing["analysis_json"] != encoded or existing["content_hash"] != content_hash:
                 raise ValueError(f"landscape patent analysis is immutable: {document_id}")
-        return content_hash
+            return content_hash
+
+    def put_patent_analysis(
+        self,
+        run_id: str,
+        *,
+        document_id: str,
+        analysis: "LandscapePatentAnalysis",
+    ) -> None:
+        self.put_analysis(
+            run_id,
+            document_id,
+            analysis.publication_number,
+            analysis.model_dump(mode="json"),
+        )
 
     def put_clusters(
         self,

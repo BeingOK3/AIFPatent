@@ -834,3 +834,11 @@
 ### 验证
 
 - Landscape 全量回归：`164` 项通过。
+
+## 2026-07-29 — landscape-selected-deep-analysis-entrypoint
+
+### 实现
+
+- 新增 `analyze_selected_patents()`，只消费已持久化的重点专利选择结果；
+- 深度分析结果支持写入 SQLite 兼容仓储和 PostgreSQL 唯一事实源；
+- 深度分析写入保持内容哈希幂等和不可变，重复执行不会覆盖不同结果。

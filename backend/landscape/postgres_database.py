@@ -733,6 +733,47 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             analyses[row["publication_number"]] = analysis
         return analyses
 
+    def put_patent_analysis(
+        self,
+        run_id: str,
+        *,
+        document_id: str,
+        analysis: LandscapePatentAnalysis,
+    ) -> None:
+        value = analysis.model_dump(mode="json")
+        assert_no_secrets(value)
+        encoded = canonical_json(value)
+        content_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        publication = analysis.publication_number
+        with self.connect() as connection:
+            existing = connection.execute(
+                """
+                SELECT analysis_json,content_hash
+                FROM landscape_patent_analyses
+                WHERE run_id=%s AND document_id=%s
+                """,
+                (run_id, document_id),
+            ).fetchone()
+            if existing is not None:
+                stored = canonical_json(_json_value(existing["analysis_json"]))
+                if (
+                    existing["content_hash"] != content_hash
+                    or stored != encoded
+                ):
+                    raise ValueError(
+                        f"landscape patent analysis is immutable: {publication}"
+                    )
+                return
+            connection.execute(
+                """
+                INSERT INTO landscape_patent_analyses(
+                    run_id,document_id,publication_number,analysis_json,
+                    content_hash,created_at
+                ) VALUES(%s,%s,%s,%s::jsonb,%s,%s)
+                """,
+                (run_id, document_id, publication, encoded, content_hash, now_ms()),
+            )
+
     def put_company_profile(
         self,
         run_id: str,

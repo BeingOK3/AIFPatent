@@ -109,6 +109,14 @@ class LandscapeFetchRepository(Protocol):
 
 
 class LandscapeAnalysisRepository(Protocol):
+    def put_patent_analysis(
+        self,
+        run_id: str,
+        *,
+        document_id: str,
+        analysis: LandscapePatentAnalysis,
+    ) -> None: ...
+
     def list_patent_analyses(
         self, run_id: str
     ) -> dict[str, LandscapePatentAnalysis]: ...
@@ -392,6 +400,49 @@ class LandscapeExecutionService:
             "analyzed_count": 0,
             "failures": {},
             "complete": True,
+        }
+
+    async def analyze_selected_patents(self, run_id: str) -> dict[str, Any]:
+        """Deep-analyze only the persisted deterministic selection."""
+        raw = self.database.get_stage_result(
+            run_id, LandscapeWorkflowStep.ANALYZE_COMPANIES.value
+        )["value"]
+        selected = [
+            item["publication_number"]
+            for item in raw.get("deep_selection", [])
+            if item.get("publication_number")
+        ]
+        docs = (
+            self.fetch_repository.list_fetched_documents(run_id)
+            if self.fetch_repository is not None
+            else {}
+        )
+        pending = [
+            (document_id(publication), docs[publication])
+            for publication in selected
+            if publication in docs
+        ]
+        direction_terms = self.load_plan(run_id).direction_terms
+        analyses, failures = await self._analyze_many(
+            run_id=run_id,
+            documents=pending,
+            direction_terms=direction_terms,
+            batch_size=self.scope(run_id).budget.analysis_limit,
+        )
+        if self.analysis_repository is not None:
+            for publication, analysis in analyses.items():
+                self.analysis_repository.put_patent_analysis(
+                    run_id,
+                    document_id=document_id(publication),
+                    analysis=analysis,
+                )
+        return {
+            "input_mode": "SELECTED_DEEP_ANALYSIS",
+            "selected_count": len(selected),
+            "attempted_count": len(pending),
+            "analyzed_count": len(analyses),
+            "failures": failures,
+            "missing_documents": sorted(set(selected) - set(docs)),
         }
 
     async def analyze_companies(self, run_id: str) -> dict[str, Any]:
