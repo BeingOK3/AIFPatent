@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Iterable
+from dataclasses import asdict
 from datetime import date
 from typing import Any, Protocol
 
@@ -26,6 +27,7 @@ from .company_trends import (
 from .coverage_audit import audit_company_trend_coverage
 from .database import LandscapeDatabase
 from .direction_fingerprints import build_direction_fingerprint
+from .deep_selection import select_deep_patents
 from .planning import (
     CompetitorAliasService,
     TechnicalDirectionService,
@@ -397,6 +399,32 @@ class LandscapeExecutionService:
             batches = build_company_analysis_batches(assignments, analyses)
             company_ids = [batch.company_id for batch in batches]
         completed = await self.company_fanout.execute(run_id, company_ids)
+        deep_selection = []
+        if fingerprints:
+            try:
+                ranking_rows = self.database.get_stage_result(
+                    run_id, LandscapeWorkflowStep.FILTER_AND_SELECT.value
+                )["value"]["result"]["ranking"]
+                ranking = {
+                    item["publication_number"]: {
+                        "technical_relevance": item.get("technical_relevance", 0.5),
+                        "query_consensus": min(
+                            1.0, float(item.get("query_coverage", 1)) / 3
+                        ),
+                        "recency": item.get("recency_score", 0.5),
+                    }
+                    for item in ranking_rows
+                }
+            except (AttributeError, KeyError, TypeError):
+                ranking = {}
+            deep_selection = [
+                asdict(item)
+                for item in select_deep_patents(
+                    fingerprints,
+                    ranking=ranking,
+                    limit=self.scope(run_id).budget.analysis_limit,
+                )
+            ]
         return {
             "company_count": len(company_ids),
             "company_ids": company_ids,
@@ -415,6 +443,7 @@ class LandscapeExecutionService:
                 if fingerprints
                 else []
             ),
+            "deep_selection": deep_selection,
         }
 
     async def analyze_cross_company_trends(
