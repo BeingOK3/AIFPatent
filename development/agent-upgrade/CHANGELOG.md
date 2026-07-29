@@ -737,3 +737,10 @@
 
 - `python3 -m compileall -q backend/landscape`：通过。
 - 依赖未安装的裸环境无法执行 Pydantic 测试套件，待项目运行环境恢复后补跑。
+
+## 2026-07-29 — landscape-report-coverage-counters
+
+### 变更
+
+- Report 2.0 的 `coverage` 增加合格集合、公司归属、抓取、精读、公司分类和未覆盖公开号计数。
+- 这些字段从已持久化的过滤结果、抓取文档、精读结果和公司分类结果确定性计算，不由模型生成。

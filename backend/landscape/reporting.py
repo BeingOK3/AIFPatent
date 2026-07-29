@@ -32,6 +32,39 @@ def build_report(
     company_trend_coverage: dict[str, Any] | None = None,
     company_trend_coverage_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    # Keep the frozen search metrics and add explicit downstream counters so a
+    # report can explain where the complete eligible set stopped being covered.
+    coverage = dict(coverage)
+    eligible_count = int(
+        coverage.get("unique_candidate_count", coverage.get("unique_family_count", 0))
+    )
+    fetched_count = len(documents)
+    analyzed_count = len(analyses)
+    company_assigned_count = sum(
+        int(item.get("patent_count", 0))
+        for item in coverage.get("company_patent_counts", [])
+    )
+    classified_count = len(
+        {
+            publication
+            for profile in (company_profiles or {}).values()
+            for category in profile.technology_categories
+            for publication in category.publication_numbers
+        }
+    )
+    coverage.update(
+        {
+            "unique_eligible_count": eligible_count,
+            "company_assigned_count": company_assigned_count,
+            "fetch_succeeded_count": fetched_count,
+            "analysis_attempted_count": fetched_count,
+            "analysis_succeeded_count": analyzed_count,
+            "company_classified_count": classified_count,
+            "unclassified_publications": sorted(
+                set(documents) - set(analyses)
+            ),
+        }
+    )
     publication_jurisdictions: Counter[str] = Counter()
     patents = []
     for publication, analysis in analyses.items():

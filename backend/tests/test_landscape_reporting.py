@@ -109,6 +109,11 @@ class LandscapeReportingTests(unittest.TestCase):
         self.assertEqual(report["summary"]["company_patent_counts"], coverage["company_patent_counts"])
         self.assertEqual(report["summary"]["company_trend_coverage_decision"], "LIMITED")
         self.assertEqual(report["summary"]["company_trend_coverage_ratio"], 0.5)
+        self.assertEqual(report["coverage"]["unique_eligible_count"], 3)
+        self.assertEqual(report["coverage"]["company_assigned_count"], 3)
+        self.assertEqual(report["coverage"]["fetch_succeeded_count"], 1)
+        self.assertEqual(report["coverage"]["analysis_succeeded_count"], 1)
+        self.assertEqual(report["coverage"]["unclassified_publications"], [])
         self.assertEqual(report["company_trend_coverage"]["repair_round"], 1)
         self.assertEqual(
             [item["decision"] for item in report["company_trend_coverage_history"]],
