@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from landscape.company_batches import CompanyAnalysisBatch, CompanyAnalysisItem
 from landscape.company_classification import (
+    COMPANY_CATEGORY_CONSOLIDATOR_NAME,
     COMPANY_CLASSIFIER_NAME,
     CompanyTechnologyClassificationError,
     CompanyTechnologyClassificationService,
@@ -109,6 +110,69 @@ class BatchingStubModel:
                             for item in patents
                         ],
                     )
+                ]
+            )
+        )
+
+
+class ConsolidatingBatchingStubModel:
+    """Return distinct batch labels, then merge them through the new stage."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def complete(self, agent_name, *, system_prompt, input_payload):
+        self.calls.append((agent_name, system_prompt, input_payload))
+        if agent_name == COMPANY_CATEGORY_CONSOLIDATOR_NAME:
+            source_categories = input_payload["source_categories"]
+            first, *remaining = source_categories
+            merged_publications = [
+                *first["publication_numbers"],
+                *remaining[0]["publication_numbers"],
+            ]
+            merged_evidence = [
+                *first["evidence_ids"],
+                *remaining[0]["evidence_ids"],
+            ]
+            return SimpleNamespace(
+                output=CompanyTechnologyClassificationDraft(
+                    technology_categories=[
+                        CompanyTechnologyCategory(
+                            category_id="TC-MODEL-MERGED",
+                            name="合并方向",
+                            summary="相近的首两个轻量方向。",
+                            keywords=["合并"],
+                            publication_numbers=merged_publications,
+                            evidence_ids=merged_evidence,
+                        ),
+                        *[
+                            CompanyTechnologyCategory(
+                                category_id=f"TC-MODEL-{index:02d}",
+                                name=category["name"],
+                                summary=category["summary"],
+                                keywords=category["keywords"],
+                                publication_numbers=category["publication_numbers"],
+                                evidence_ids=category["evidence_ids"],
+                            )
+                            for index, category in enumerate(remaining[1:], start=2)
+                        ],
+                    ]
+                )
+            )
+
+        patents = input_payload["patents"]
+        return SimpleNamespace(
+            output=CompanyTechnologyClassificationDraft(
+                technology_categories=[
+                    CompanyTechnologyCategory(
+                        category_id=f"TC-MODEL-{item['publication_number']}",
+                        name=f"方向-{item['publication_number']}",
+                        summary=f"{item['publication_number']} 的轻量技术方向。",
+                        keywords=[item["publication_number"]],
+                        publication_numbers=[item["publication_number"]],
+                        evidence_ids=[item["evidence"][0]["evidence_id"]],
+                    )
+                    for item in patents
                 ]
             )
         )
@@ -273,6 +337,56 @@ class LandscapeCompanyClassificationTests(unittest.TestCase):
                 for publication in category.publication_numbers
             },
             {f"P{index:02d}" for index in range(1, 10)},
+        )
+
+    def test_oversized_cross_batch_categories_are_consolidated_before_validation(
+        self,
+    ) -> None:
+        fingerprints = [
+            LandscapeDirectionFingerprint(
+                publication_number=f"P{index:02d}",
+                company_id="CO-HUAWEI",
+                title=f"专利 {index}",
+                publication_date="2026-06-01",
+                source_kind="SEARCH_HIT",
+                technical_keywords=[f"方向{index}"],
+                evidence=[
+                    LandscapeDirectionEvidence(
+                        evidence_id=f"EV-DIR-P{index:02d}",
+                        section_type="SNIPPET",
+                        text=f"专利 {index} 的技术摘要。",
+                        content_hash="d" * 64,
+                    )
+                ],
+            )
+            for index in range(1, 22)
+        ]
+        model = ConsolidatingBatchingStubModel()
+        service = CompanyTechnologyClassificationService(model)
+
+        result = asyncio.run(
+            service.classify_fingerprints(
+                company=NormalizedCompany(
+                    company_id="CO-HUAWEI",
+                    canonical_name="Huawei",
+                    aliases=["华为"],
+                ),
+                fingerprints=fingerprints,
+            )
+        )
+
+        self.assertEqual(len(result.technology_categories), 20)
+        self.assertIn(
+            COMPANY_CATEGORY_CONSOLIDATOR_NAME,
+            [call[0] for call in model.calls],
+        )
+        self.assertEqual(
+            {
+                publication
+                for category in result.technology_categories
+                for publication in category.publication_numbers
+            },
+            {f"P{index:02d}" for index in range(1, 22)},
         )
 
     def test_multi_patent_model_output_is_scoped_validated_and_stably_identified(self) -> None:

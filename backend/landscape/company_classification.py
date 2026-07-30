@@ -14,12 +14,29 @@ from .schemas import LandscapeDirectionFingerprint, NormalizedCompany
 
 COMPANY_CLASSIFIER_NAME = "landscape-company-technology-classifier"
 LIGHTWEIGHT_COMPANY_CLASSIFIER_NAME = "landscape-company-lightweight-classifier"
+COMPANY_CATEGORY_CONSOLIDATOR_NAME = "landscape-company-category-consolidator"
 COMPANY_CLASSIFIER_PROMPT = """
 Classify patents belonging to exactly one company by technical solution. Return Simplified Chinese
 names and summaries. Every supplied publication_number must appear in exactly one primary category.
 Do not invent publications or evidence IDs. Each category must cite evidence from every member
 patent. Categories describe technology, never corporate structure, geography, or filing volume.
 Use the supplied per-patent analyses only; do not add facts absent from them.
+"""
+
+COMPANY_CATEGORY_CONSOLIDATOR_PROMPT = """
+You are consolidating already validated, lightweight technology categories for one
+company. Return Simplified Chinese. Reduce the supplied source categories to no
+more than 20 coherent technology categories. Merge only categories that have a
+compatible technical meaning; do not add facts, companies, dates, publication
+numbers, or evidence IDs.
+
+Every supplied publication_number must occur in exactly one returned category.
+For every returned member publication, retain at least one of its supplied
+evidence_ids in that category. A returned category may contain the union of the
+source categories' publication numbers, keywords, and evidence IDs. category_id
+is a temporary value and will be replaced by the program, but it must match the
+required TC-* format. Keep the result concise and do not create categories for
+corporate structure, geography, or filing volume.
 """
 
 
@@ -35,6 +52,10 @@ class CompanyTechnologyClassificationService:
         )
         register_agent_output_model(
             LIGHTWEIGHT_COMPANY_CLASSIFIER_NAME,
+            CompanyTechnologyClassificationDraft,
+        )
+        register_agent_output_model(
+            COMPANY_CATEGORY_CONSOLIDATOR_NAME,
             CompanyTechnologyClassificationDraft,
         )
         self.model = model
@@ -148,16 +169,28 @@ class CompanyTechnologyClassificationService:
                                 ),
                             }
                         )
-            result = _canonicalize_fingerprint_category_ids(
-                company.company_id,
-                # Every recursive batch has already received program-owned
-                # IDs starting at ``01``.  Before the whole-company merge is
-                # renumbered those IDs can collide across batches, so keep
-                # this intermediate representation permissive.
-                CompanyTechnologyClassificationDraft(
-                    technology_categories=list(merged.values())
-                ),
-            )
+            categories = list(merged.values())
+            if len(categories) > 20:
+                # A full-company result has a deliberately bounded shape.
+                # Do not loosen the strict schema merely because several
+                # otherwise valid batches produced distinct labels.  Instead,
+                # give the model the already verified category memberships and
+                # make it perform a controlled semantic consolidation.
+                result = await self._consolidate_fingerprint_categories(
+                    company=company,
+                    categories=categories,
+                )
+            else:
+                result = _canonicalize_fingerprint_category_ids(
+                    company.company_id,
+                    # Every recursive batch has already received program-owned
+                    # IDs starting at ``01``.  Before the whole-company merge is
+                    # renumbered those IDs can collide across batches, so keep
+                    # this intermediate representation permissive.
+                    CompanyTechnologyClassificationDraft(
+                        technology_categories=categories
+                    ),
+                )
             self._validate_fingerprint_result(result, fingerprints)
             return result
         expected = {item.publication_number for item in fingerprints}
@@ -220,6 +253,45 @@ class CompanyTechnologyClassificationService:
             evidence_by_publication=evidence_by_publication,
         )
         return result
+
+    async def _consolidate_fingerprint_categories(
+        self,
+        *,
+        company: NormalizedCompany,
+        categories: list[CompanyTechnologyCategory],
+    ) -> CompanyTechnologyClassification:
+        """Merge an oversized set without changing the final schema contract.
+
+        The input was produced by validated recursive batches.  We deliberately
+        send only category-level, lightweight material: this phase must not
+        trigger a full-text patent read or manufacture new evidence.
+        """
+        completion = await self.model.complete(
+            COMPANY_CATEGORY_CONSOLIDATOR_NAME,
+            system_prompt=COMPANY_CATEGORY_CONSOLIDATOR_PROMPT,
+            input_payload={
+                "company_name": company.canonical_name,
+                "max_categories": 20,
+                "source_categories": [
+                    {
+                        "name": category.name,
+                        # A bounded category summary keeps a 100--200 patent
+                        # run within the lightweight-model context budget.
+                        "summary": category.summary[:600],
+                        "keywords": category.keywords[:12],
+                        "publication_numbers": category.publication_numbers,
+                        "evidence_ids": category.evidence_ids,
+                    }
+                    for category in categories
+                ],
+            },
+        )
+        result = completion.output
+        if not isinstance(result, CompanyTechnologyClassificationDraft):
+            raise CompanyTechnologyClassificationError(
+                "company category consolidator returned the wrong schema"
+            )
+        return _canonicalize_fingerprint_category_ids(company.company_id, result)
 
     @staticmethod
     def _validate_fingerprint_result(
@@ -403,6 +475,7 @@ def _validate_fingerprint_classification(
 
 __all__ = [
     "COMPANY_CLASSIFIER_NAME",
+    "COMPANY_CATEGORY_CONSOLIDATOR_NAME",
     "LIGHTWEIGHT_COMPANY_CLASSIFIER_NAME",
     "CompanyTechnologyClassificationError",
     "CompanyTechnologyClassificationService",
