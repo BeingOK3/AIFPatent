@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pydantic import ValidationError
+
 from idea.agent_schemas import register_agent_output_model
 from idea.model_client import StructuredModelClient
 
@@ -179,6 +181,13 @@ class CompanyTechnologyClassificationService:
                 result = await self._consolidate_fingerprint_categories(
                     company=company,
                     categories=categories,
+                    expected={item.publication_number for item in fingerprints},
+                    evidence_by_publication={
+                        item.publication_number: {
+                            evidence.evidence_id for evidence in item.evidence
+                        }
+                        for item in fingerprints
+                    },
                 )
             else:
                 result = _canonicalize_fingerprint_category_ids(
@@ -259,6 +268,8 @@ class CompanyTechnologyClassificationService:
         *,
         company: NormalizedCompany,
         categories: list[CompanyTechnologyCategory],
+        expected: set[str],
+        evidence_by_publication: dict[str, set[str]],
     ) -> CompanyTechnologyClassification:
         """Merge an oversized set without changing the final schema contract.
 
@@ -291,7 +302,26 @@ class CompanyTechnologyClassificationService:
             raise CompanyTechnologyClassificationError(
                 "company category consolidator returned the wrong schema"
             )
-        return _canonicalize_fingerprint_category_ids(company.company_id, result)
+        try:
+            candidate = _canonicalize_fingerprint_category_ids(company.company_id, result)
+            _validate_fingerprint_classification(
+                candidate,
+                expected=expected,
+                evidence_by_publication=evidence_by_publication,
+            )
+            return candidate
+        except (CompanyTechnologyClassificationError, ValidationError):
+            # The model may generate a technically plausible summary while
+            # accidentally dropping or duplicating a publication in the
+            # condensed membership list.  Coverage is a program invariant,
+            # not a request for a probabilistic retry.  Fall back to a stable
+            # 19 + 1 grouping made solely from the already validated source
+            # categories, so no patent or evidence can disappear.
+            return _deterministic_category_consolidation(
+                company_id=company.company_id,
+                categories=categories,
+                evidence_by_publication=evidence_by_publication,
+            )
 
     @staticmethod
     def _validate_fingerprint_result(
@@ -437,6 +467,82 @@ def _canonicalize_fingerprint_category_ids(
             )
             for index, category in enumerate(categories, start=1)
         ]
+    )
+
+
+def _deterministic_category_consolidation(
+    *,
+    company_id: str,
+    categories: list[CompanyTechnologyCategory],
+    evidence_by_publication: dict[str, set[str]],
+) -> CompanyTechnologyClassification:
+    """Bound an invalid model consolidation without losing source memberships."""
+    if len(categories) <= 20:
+        return _canonicalize_fingerprint_category_ids(
+            company_id,
+            CompanyTechnologyClassificationDraft(technology_categories=categories),
+        )
+    ordered = sorted(
+        categories,
+        key=lambda category: (
+            -len(category.publication_numbers),
+            category.name.casefold(),
+            category.name,
+        ),
+    )
+    retained = [
+        category.model_copy(
+            update={
+                "evidence_ids": _minimal_category_evidence(
+                    category.publication_numbers,
+                    evidence_by_publication,
+                )
+            }
+        )
+        for category in ordered[:19]
+    ]
+    remainder = ordered[19:]
+    remainder_publications = sorted(
+        {
+            publication
+            for category in remainder
+            for publication in category.publication_numbers
+        }
+    )
+    merged = CompanyTechnologyCategory(
+        category_id="TC-TEMP-CONSOLIDATED",
+        name="其他已识别技术方向",
+        summary=(
+            "由超过类别上限的已验证轻量方向合并而成："
+            + "；".join(category.name for category in remainder)
+        )[:2000],
+        keywords=list(
+            dict.fromkeys(
+                keyword for category in remainder for keyword in category.keywords
+            )
+        )[:30],
+        publication_numbers=remainder_publications,
+        # At most one known evidence ID per member keeps the bounded category
+        # valid even when each fingerprint carries several snippet sections.
+        evidence_ids=_minimal_category_evidence(
+            remainder_publications,
+            evidence_by_publication,
+        ),
+    )
+    return _canonicalize_fingerprint_category_ids(
+        company_id,
+        CompanyTechnologyClassificationDraft(
+            technology_categories=[*retained, merged]
+        ),
+    )
+
+
+def _minimal_category_evidence(
+    publications: list[str],
+    evidence_by_publication: dict[str, set[str]],
+) -> list[str]:
+    return sorted(
+        min(evidence_by_publication[publication]) for publication in publications
     )
 
 

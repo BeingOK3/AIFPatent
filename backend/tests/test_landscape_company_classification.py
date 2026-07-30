@@ -178,6 +178,34 @@ class ConsolidatingBatchingStubModel:
         )
 
 
+class InvalidConsolidatingBatchingStubModel(ConsolidatingBatchingStubModel):
+    """Simulate a model that loses source memberships during compression."""
+
+    async def complete(self, agent_name, *, system_prompt, input_payload):
+        if agent_name != COMPANY_CATEGORY_CONSOLIDATOR_NAME:
+            return await super().complete(
+                agent_name,
+                system_prompt=system_prompt,
+                input_payload=input_payload,
+            )
+        self.calls.append((agent_name, system_prompt, input_payload))
+        source = input_payload["source_categories"][0]
+        return SimpleNamespace(
+            output=CompanyTechnologyClassificationDraft(
+                technology_categories=[
+                    CompanyTechnologyCategory(
+                        category_id="TC-MODEL-INVALID",
+                        name="遗漏成员的错误合并",
+                        summary="只错误保留了一个原始类别。",
+                        keywords=["错误"],
+                        publication_numbers=source["publication_numbers"],
+                        evidence_ids=source["evidence_ids"],
+                    )
+                ]
+            )
+        )
+
+
 class LandscapeCompanyClassificationTests(unittest.TestCase):
     def test_single_lightweight_fingerprint_uses_deterministic_category(self) -> None:
         service = CompanyTechnologyClassificationService(StubModel())
@@ -379,6 +407,55 @@ class LandscapeCompanyClassificationTests(unittest.TestCase):
         self.assertIn(
             COMPANY_CATEGORY_CONSOLIDATOR_NAME,
             [call[0] for call in model.calls],
+        )
+        self.assertEqual(
+            {
+                publication
+                for category in result.technology_categories
+                for publication in category.publication_numbers
+            },
+            {f"P{index:02d}" for index in range(1, 22)},
+        )
+
+    def test_invalid_model_consolidation_falls_back_without_losing_patents(
+        self,
+    ) -> None:
+        fingerprints = [
+            LandscapeDirectionFingerprint(
+                publication_number=f"P{index:02d}",
+                company_id="CO-HUAWEI",
+                title=f"专利 {index}",
+                publication_date="2026-06-01",
+                source_kind="SEARCH_HIT",
+                technical_keywords=[f"方向{index}"],
+                evidence=[
+                    LandscapeDirectionEvidence(
+                        evidence_id=f"EV-DIR-P{index:02d}",
+                        section_type="SNIPPET",
+                        text=f"专利 {index} 的技术摘要。",
+                        content_hash="e" * 64,
+                    )
+                ],
+            )
+            for index in range(1, 22)
+        ]
+        result = asyncio.run(
+            CompanyTechnologyClassificationService(
+                InvalidConsolidatingBatchingStubModel()
+            ).classify_fingerprints(
+                company=NormalizedCompany(
+                    company_id="CO-HUAWEI",
+                    canonical_name="Huawei",
+                    aliases=["华为"],
+                ),
+                fingerprints=fingerprints,
+            )
+        )
+
+        self.assertEqual(len(result.technology_categories), 20)
+        self.assertIn(
+            "其他已识别技术方向",
+            [category.name for category in result.technology_categories],
         )
         self.assertEqual(
             {
