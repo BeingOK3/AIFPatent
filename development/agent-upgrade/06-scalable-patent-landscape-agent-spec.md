@@ -456,6 +456,231 @@ Embedding 不可用时可以使用词法和规范字段相似度降级，但必�
 - 噪声记录：单独显示“未形成稳定簇”，保留原始方向记录；
 - 禁止把所有长尾不可逆地合并成一个“其他技术方向”。
 
+### 7.4 为什么不能只使用一个向量
+
+整段文本生成一个向量只能表示总体语义接近，容易出现以下误合并：
+
+- 两件专利都出现“人工智能”，但一个优化 GPU 缓存，另一个生成驾驶决策；
+- 两件专利都属于无线通信，但一个处理核心网注册，另一个处理射频波束；
+- 标题高度相似，但解决机制和技术对象不同；
+- 摘要包含大量通用背景，掩盖真正的核心发明机制。
+
+因此，v3 不直接对完整标题和摘要生成一个“万能向量”后按余弦距离聚类。
+程序先从有证据的 Direction Record 中形成多个语义视图：
+
+```text
+problem_vector       ← technical_problem
+mechanism_vector     ← solution_mechanism
+object_vector        ← technical_object
+scenario_vector      ← application_scenarios
+recall_vector        ← problem + mechanism + object + keywords
+```
+
+其中：
+
+- `recall_vector` 只用于快速找到可能相似的候选邻居；
+- 其他字段向量用于精确计算两条 Direction Record 的技术相似度；
+- 原始专利全文不直接进入聚类向量；
+- 所有向量使用同一 Embedding Model、同一归一化规则和明确版本；
+- 公司名称、公开日期、检索排名不得进入技术相似度向量。
+
+### 7.5 混合相似度评分
+
+两条方向记录 `a`、`b` 的首版相似度建议为：
+
+```text
+problem_similarity   = cosine(a.problem_vector, b.problem_vector)
+mechanism_similarity = cosine(a.mechanism_vector, b.mechanism_vector)
+object_similarity    = cosine(a.object_vector, b.object_vector)
+scenario_similarity  = cosine(a.scenario_vector, b.scenario_vector)
+keyword_similarity   = weighted_jaccard(a.keywords, b.keywords)
+class_similarity     = ipc_cpc_hierarchy_similarity(a, b)
+
+total_similarity =
+    0.25 * problem_similarity
+  + 0.35 * mechanism_similarity
+  + 0.15 * object_similarity
+  + 0.08 * scenario_similarity
+  + 0.10 * keyword_similarity
+  + 0.07 * class_similarity
+```
+
+权重含义：
+
+- 解决机制最重要，决定专利“如何解决”；
+- 技术问题次之，决定专利“为什么需要解决”；
+- 技术对象避免把不同硬件、协议或系统误合并；
+- 应用场景只做弱信号，避免同一底层技术因场景不同被完全拆开；
+- 关键词用于补充具体部件和术语；
+- IPC/CPC 只作为辅助先验，不能替代文本技术语义。
+
+某字段缺失时，不把该字段记为 0，而是只在可用字段上重新归一化：
+
+```text
+available_score =
+    Σ(weight_i * similarity_i * available_i)
+    / Σ(weight_i * available_i)
+```
+
+初始权重只是工程基线，不是永久事实。必须使用标注的“同方向/不同方向”
+专利对进行校准，以“错误合并成本高于错误拆分”为原则选择权重和阈值。
+
+### 7.6 从向量到最终技术簇的完整流程
+
+以一个包含 `N` 条 Direction Record 的 Run 为例：
+
+#### 第一步：有界语义抽取
+
+模型从标题、摘要和必要证据中抽取技术问题、解决机制、技术对象、场景和
+关键词。程序校验 Evidence，并持久化 Direction Record。
+
+#### 第二步：分别向量化
+
+Embedding 服务分别为问题、机制、对象、场景和 Recall Text 生成向量。
+向量写入 PostgreSQL/pgvector，并带：
+
+- Embedding Model；
+- 维度；
+- 归一化方式；
+- 输入字段 Hash；
+- 生成时间。
+
+#### 第三步：候选邻居召回
+
+对每条记录使用 `recall_vector` 从 pgvector 取 Top-K 候选，例如 `K=20`。
+
+这一步追求高召回：可能相似的记录尽量不要漏掉，但暂不直接决定聚类。
+因此无需计算所有 `N²` 组合，也不会仅凭 Recall Vector 合并。
+
+#### 第四步：混合重排
+
+程序对候选记录对计算 7.5 的混合分数，并应用约束：
+
+- 技术对象和机制均明显不相似时，即使总体文本相似也不得建立强边；
+- IPC/CPC 缺失不直接惩罚；
+- IPC/CPC 大类不同且对象、机制都弱时，应降低最大可信分；
+- 同公司、不同公司不得影响技术相似度；
+- 时间接近不得提高技术相似度。
+
+建议首版分区：
+
+```text
+score >= 0.78       强相似边
+0.68 <= score < 0.78 复核区
+score < 0.68        不建立边
+```
+
+阈值必须通过评测校准，不得只根据单次真实 Run 调整。
+
+#### 第五步：构建相似度图
+
+每条 Direction Record 是一个节点，达到阈值的候选对形成带权边：
+
+```text
+DR-01 ─0.86─ DR-07
+  │             │
+ 0.81          0.83
+  │             │
+DR-12 ─0.79─ DR-19
+```
+
+程序在加权图上执行确定性的社区发现或约束聚合，形成技术微簇。
+实现必须通过 `TechnologyClusterer` 接口封装算法，避免业务层绑定某一个库。
+
+聚类质量门至少包括：
+
+- 簇内平均相似度；
+- 簇内最低相似度；
+- 簇大小；
+- 边界记录比例；
+- Noise 数量；
+- 是否存在只有通用关键词、没有共同机制的簇。
+
+禁止仅使用普通 Connected Components，因为一串弱边可能造成“链式误合并”。
+
+#### 第六步：形成层次分类
+
+叶子微簇保持较严格的技术机制一致性。例如：
+
+```text
+AI 计算硬件优化（父类）
+├── GPU 动态缓存与共享内存调度（叶子微簇）
+├── 矩阵乘法与算子转换加速（叶子微簇）
+└── 多处理器同步与数据移动（叶子微簇）
+```
+
+父类用于报告导航，叶子簇保存真实成员关系。父类合并不得抹掉叶子簇。
+
+#### 第七步：代表样本与模型命名
+
+程序从每个簇选择中心记录、边界记录、不同公司和不同时间桶代表，构造
+Evidence Packet。模型只为现有 Cluster ID 生成名称、摘要和分类边界。
+
+#### 第八步：程序审计
+
+程序检查：
+
+- 每条 Direction Record 恰好属于一个叶子簇或 Noise；
+- 模型引用的记录确实属于该簇；
+- 所有摘要引用的 Evidence 合法；
+- 统计使用完整成员，不只使用代表样本；
+- 公司切片之和与完整技术簇成员一致。
+
+### 7.7 六件专利示例
+
+假设有六条方向记录：
+
+| 记录 | 技术问题 | 解决机制 | 技术对象 |
+|---|---|---|---|
+| `DR-A` | GPU 缓存配置固定 | 动态调整 L1/共享内存 | GPU 缓存控制器 |
+| `DR-B` | 混合负载内存利用率低 | 按任务元数据重配置缓存 | GPU 内存控制器 |
+| `DR-C` | AI 向量运算效率低 | 转换为矩阵乘法 | AI 计算单元 |
+| `DR-D` | 5G 注册重定向安全 | 派生安全上下文密钥 | 5G 核心网 AMF |
+| `DR-E` | 无线下行传输不稳定 | 多径反馈和预编码 | 基站/终端 |
+| `DR-F` | 折叠屏布局失配 | 按屏幕状态重排 UI | 折叠显示设备 |
+
+程序可能得到：
+
+```text
+DR-A ↔ DR-B
+mechanism 0.91, problem 0.84, object 0.88, keyword 0.72
+total 0.86 → 强相似边
+
+DR-A ↔ DR-C
+mechanism 0.48, problem 0.61, object 0.65, keyword 0.30
+total 0.54 → 不建立边
+
+DR-D ↔ DR-E
+都属于无线通信，但机制、对象和技术问题不同
+total 0.57 → 不建立叶子簇强边，可以进入同一上层“无线通信”
+
+DR-F ↔ 其他记录
+total < 0.40 → 独立微簇或 Noise
+```
+
+最终结构可能是：
+
+```text
+计算硬件
+├── MC-01 GPU 动态缓存与内存调度：DR-A、DR-B
+└── MC-02 AI 矩阵算子加速：DR-C
+
+无线通信
+├── MC-03 核心网注册安全：DR-D
+└── MC-04 下行预编码：DR-E
+
+智能终端
+└── MC-05 折叠屏界面适配：DR-F
+```
+
+这个例子说明：
+
+- 向量用于发现可能相似的记录；
+- 多字段权重用于确认是否真的相似；
+- 图聚类形成严格叶子簇；
+- 层次分类提供更宽的报告导航；
+- 模型负责命名和解释，不负责成员关系。
+
 ## 8. 时间指标与趋势判定
 
 ### 8.1 程序指标
@@ -763,6 +988,46 @@ Report 3.0 顶层：
 
 时间证据不足时只能输出前两类。
 
+### 14.5 专利号外部链接
+
+报告、前端、Markdown 和可下载 Taxonomy 中出现的专利公开号必须支持点击
+打开专利详情。
+
+后端新增确定性的 `PatentLinkResolver`：
+
+```text
+resolve(publication_number, source_provider?) -> PatentExternalLink | None
+```
+
+默认可以使用配置化模板：
+
+```text
+https://patents.google.com/patent/{normalized_publication_number}
+```
+
+Report 中的专利引用统一返回：
+
+```json
+{
+  "publication_number": "US20260123456A1",
+  "external_url": "https://patents.google.com/patent/US20260123456A1",
+  "external_provider": "GOOGLE_PATENTS"
+}
+```
+
+安全和一致性要求：
+
+- URL 由程序根据规范化公开号生成，模型不得返回 URL；
+- 域名和 URL Template 必须来自服务端 Allowlist；
+- 公开号未通过规范化校验时只显示文本，不生成链接；
+- 前端使用 `target="_blank"` 时必须同时使用
+  `rel="noopener noreferrer"`；
+- Markdown 中使用标准链接；
+- CSV 至少提供单独的 `external_url` 列；
+- 公司画像、技术簇、趋势证据、代表专利和精读列表使用同一 Resolver；
+- Provider 自带详情 URL 只有通过 Allowlist 和公开号一致性校验后才可使用；
+- Link Resolver 失败不得阻塞报告生成。
+
 ## 15. 精读选样
 
 精读从完整 Direction Ledger 和统一分类中确定性选择：
@@ -852,6 +1117,7 @@ Report 3.0 顶层：
 | Context 超预算调用 | 0 |
 | 重启后重复外部副作用 | 0 |
 | 无来源的高阶结论 | 0 |
+| 模型生成的外部专利 URL 被接受 | 0 |
 
 ### 18.3 质量指标
 
@@ -878,6 +1144,9 @@ Report 3.0 顶层：
 - 代表样本选择具有公司、时间和技术多样性；
 - 排除项完整记录；
 - 专利文本中的 Prompt Injection 不能改变 Agent 权限。
+- 合法公开号生成 Allowlist 内的确定性链接；
+- 非法公开号、协议注入和非 Allowlist 域名不生成可点击链接；
+- JSON、HTML、Markdown 和 CSV 中的专利链接保持一致。
 
 ## 19. 验收门
 
@@ -895,6 +1164,7 @@ v3 进入默认路径前必须满足：
 10. 真实 100 件双公司 Run 在不丢失成员的情况下完成；
 11. 所有失败都能定位到最小任务键；
 12. 开发记录、迁移说明和报告契约同步完成。
+13. 所有面向用户的专利号通过统一 Link Resolver 提供安全超链接。
 
 ## 20. 实施工作包与提交边界
 
@@ -998,6 +1268,8 @@ feat(landscape): narrate evidence-bound company trends
 - 接入最小任务恢复；
 - 接入定向 Repair；
 - 新增 Report 3.0 和前端展示；
+- 新增统一 `PatentLinkResolver`，覆盖报告、HTML、Markdown、CSV 和
+  Taxonomy 下载；
 - 保持 v2 历史读取。
 
 建议拆分提交：
@@ -1050,6 +1322,7 @@ test(landscape): validate scalable trend pipeline
 8. 单次上下文必须有硬预算；
 9. Retry/Repair 作用于最小失败对象；
 10. v3 使用追加迁移并保持 v2 只读兼容。
+11. 专利外部链接由程序和 Allowlist 所有，模型不能生成链接。
 
 ## 23. 审查问题
 
@@ -1062,4 +1335,3 @@ test(landscape): validate scalable trend pipeline
 5. 真实部署期望的最大分析单元是 200、500 还是 1000；
 6. 时间趋势最低要求是 3 个季度，还是允许月度桶；
 7. Report 3.0 是否需要同时输出机器可读 Taxonomy 下载文件。
-
