@@ -6,6 +6,7 @@ import re
 import unicodedata
 from datetime import date
 from enum import StrEnum
+from typing import Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -193,6 +194,7 @@ class ConfirmedCompanyName(ScopeModel):
 
 class ConfirmedCompanyScope(ScopeModel):
     profile_id: str
+    profile_version: int = Field(ge=1)
     display_name: str
     names: tuple[ConfirmedCompanyName, ...] = Field(min_length=1)
 
@@ -218,7 +220,10 @@ class ConfirmedScopeRevision(ScopeModel):
     technology_terms: tuple[ConfirmedTechnologyTerm, ...]
 
 
-def freeze_scope_draft(draft: ScopeDraft) -> ConfirmedScopeRevision:
+def freeze_scope_draft(
+    draft: ScopeDraft,
+    company_profile_versions: Mapping[str, int] | None = None,
+) -> ConfirmedScopeRevision:
     if draft.status != ScopeDraftStatus.AWAITING_CONFIRMATION:
         raise ScopeValidationError(
             "scope draft must be AWAITING_CONFIRMATION before it can be frozen"
@@ -239,6 +244,18 @@ def freeze_scope_draft(draft: ScopeDraft) -> ConfirmedScopeRevision:
             "all proposed company names and technology terms must be reviewed"
         )
 
+    profile_versions = dict(company_profile_versions or {})
+    expected_profile_ids = {company.profile_id for company in draft.companies}
+    if set(profile_versions) != expected_profile_ids:
+        raise ScopeValidationError(
+            "company profile versions must match the draft company set exactly"
+        )
+    if any(
+        not isinstance(version, int) or isinstance(version, bool) or version < 1
+        for version in profile_versions.values()
+    ):
+        raise ScopeValidationError("company profile versions must be positive integers")
+
     companies: list[ConfirmedCompanyScope] = []
     active_name_owner: dict[str, str] = {}
     for company in draft.companies:
@@ -258,6 +275,7 @@ def freeze_scope_draft(draft: ScopeDraft) -> ConfirmedScopeRevision:
         companies.append(
             ConfirmedCompanyScope(
                 profile_id=company.profile_id,
+                profile_version=profile_versions[company.profile_id],
                 display_name=company.display_name,
                 names=tuple(
                     ConfirmedCompanyName(

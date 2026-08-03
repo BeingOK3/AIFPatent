@@ -97,6 +97,13 @@ def draft(**changes) -> ScopeDraft:
     return ScopeDraft(**values)
 
 
+def freeze(scope: ScopeDraft):
+    return freeze_scope_draft(
+        scope,
+        {company.profile_id: 1 for company in scope.companies},
+    )
+
+
 class LandscapeScopeTests(unittest.TestCase):
     def test_three_modes_are_derived_from_inputs(self) -> None:
         cases = (
@@ -113,7 +120,7 @@ class LandscapeScopeTests(unittest.TestCase):
             publication_start=date(2010, 1, 1),
             publication_end=date(2025, 12, 31),
         )
-        frozen = freeze_scope_draft(scope)
+        frozen = freeze(scope)
         self.assertEqual(frozen.publication_start, date(2010, 1, 1))
         self.assertEqual(frozen.publication_end, date(2025, 12, 31))
 
@@ -127,25 +134,24 @@ class LandscapeScopeTests(unittest.TestCase):
     def test_confirmation_requires_explicit_review_of_every_suggestion(self) -> None:
         scope = draft(companies=(company(statuses=(CandidateStatus.ACTIVE, CandidateStatus.PROPOSED)),))
         with self.assertRaisesRegex(ScopeValidationError, "must be reviewed"):
-            freeze_scope_draft(scope)
+            freeze(scope)
 
     def test_each_company_requires_an_active_name(self) -> None:
         excluded = company(
             statuses=(CandidateStatus.EXCLUDED, CandidateStatus.EXCLUDED)
         )
         with self.assertRaisesRegex(ScopeValidationError, "at least one active name"):
-            freeze_scope_draft(
-                draft(
-                    companies=(excluded,),
-                    technology_input=None,
-                    technology_terms=(),
-                )
+            scope = draft(
+                companies=(excluded,),
+                technology_input=None,
+                technology_terms=(),
             )
+            freeze(scope)
 
     def test_technology_confirmation_requires_zh_and_en(self) -> None:
         only_zh = terms(en_status=CandidateStatus.EXCLUDED)
         with self.assertRaisesRegex(ScopeValidationError, "active ZH and EN"):
-            freeze_scope_draft(draft(companies=(), technology_terms=only_zh))
+            freeze(draft(companies=(), technology_terms=only_zh))
 
     def test_active_name_cannot_belong_to_two_company_scopes(self) -> None:
         first = company("华为")
@@ -165,13 +171,12 @@ class LandscapeScopeTests(unittest.TestCase):
             names=(shared,),
         )
         with self.assertRaisesRegex(ScopeValidationError, "multiple companies"):
-            freeze_scope_draft(
-                draft(
-                    companies=(first, second),
-                    technology_input=None,
-                    technology_terms=(),
-                )
+            scope = draft(
+                companies=(first, second),
+                technology_input=None,
+                technology_terms=(),
             )
+            freeze(scope)
 
     def test_alias_and_subsidiary_are_distinct_relations(self) -> None:
         self.assertNotEqual(
@@ -217,11 +222,24 @@ class LandscapeScopeTests(unittest.TestCase):
             technology_input=None,
             technology_terms=(),
         )
-        first = freeze_scope_draft(scope)
-        second = freeze_scope_draft(scope)
+        first = freeze(scope)
+        second = freeze(scope)
         self.assertEqual(first, second)
         self.assertEqual(first.scope_revision_id[:4], "SCR-")
         self.assertEqual([name.text for name in first.companies[0].names], [active.text])
+
+    def test_company_profile_versions_are_complete_and_part_of_scope_identity(self) -> None:
+        scope = draft(technology_input=None, technology_terms=())
+        with self.assertRaisesRegex(ScopeValidationError, "match.*exactly"):
+            freeze_scope_draft(scope, {})
+        with self.assertRaisesRegex(ScopeValidationError, "positive integers"):
+            freeze_scope_draft(scope, {scope.companies[0].profile_id: 0})
+
+        first = freeze_scope_draft(scope, {scope.companies[0].profile_id: 1})
+        second = freeze_scope_draft(scope, {scope.companies[0].profile_id: 2})
+        self.assertNotEqual(first.scope_revision_hash, second.scope_revision_hash)
+        self.assertEqual(first.companies[0].profile_version, 1)
+        self.assertEqual(second.companies[0].profile_version, 2)
 
     def test_draft_and_revision_models_reject_secret_fields(self) -> None:
         payload = draft().model_dump(mode="json")
