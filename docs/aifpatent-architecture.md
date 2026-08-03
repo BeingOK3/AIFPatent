@@ -306,5 +306,5 @@ Base URL、API Key 和 Model 每次从网页或 CLI 提交。API Key 只进入�
 - 根 `README.md` 描述安装、使用和运行接口；
 - `development/core/` 保存核心系统历史记录，不作为当前行为规范；
 - `development/followup-rag/` 保存 Corpus、首次报告/追问 RAG 的设计、实现历史和后续方向；
-- `development/landscape/` 保存专利态势的设计、验收和追加开发记录；
+- `development/landscape/` 保存专利态势重构的产品需求、分类标准和开发规格；
 - 代码、配置 Schema 和测试在发生冲突时是当前实现的最终依据。

@@ -12,10 +12,11 @@
 2. [02-agent-upgrade-spec.md](02-agent-upgrade-spec.md)：目标架构、状态模型、工具边界、阶段任务和验收门。
 3. [03-test-and-evaluation.md](03-test-and-evaluation.md)：无真实测试集时的模拟策略、指标和回归要求。
 4. [04-unification-migration-plan.md](04-unification-migration-plan.md)：数据库统一、代码瘦身、依赖收敛和健壮性迁移方案（当前待审查）。
-5. [05-landscape-company-trend-agent-spec.md](05-landscape-company-trend-agent-spec.md)：公司归属、公司内技术分类、跨公司趋势、动态 LangGraph、模拟测试和小粒度提交规格（当前待审查）。
-6. [06-scalable-patent-landscape-agent-spec.md](06-scalable-patent-landscape-agent-spec.md)：独立定义可扩展态势分析的统一技术分类、方向账本、上下文预算、Graph、持久化和验收门（当前待审查）。
-7. [eval/synthetic-agent-cases.json](eval/synthetic-agent-cases.json)：首版机器可读决策评测集。
-8. [CHANGELOG.md](CHANGELOG.md)：开发决策与实施记录。每个 Coding Agent 完成任务后必须追加。
+5. [eval/synthetic-agent-cases.json](eval/synthetic-agent-cases.json)：首版机器可读决策评测集。
+6. [CHANGELOG.md](CHANGELOG.md)：开发决策与实施记录。每个 Coding Agent 完成任务后必须追加。
+
+专利态势重构已经迁移到 [`../landscape/`](../landscape/)，不再由本目录的历史
+05/06 规格定义。
 
 ## 给 Coding Agent 的强制规则
 

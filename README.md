@@ -165,7 +165,7 @@ deploy/rag/                   Docker Compose 与幂等 PostgreSQL 迁移
 tools/idea_workflow.py        确定性 HTTP CLI
 tools/e2e_lexical_rag.py      真实首次报告验收与 Citation 校验
 development/followup-rag/     Corpus、首次报告/追问 RAG 的设计、实现日志和后续项
-development/landscape/        专利态势设计、实现、验收和追加式开发日志
+development/landscape/        专利态势重构需求、分类标准和开发规格
 ```
 
 ## License
