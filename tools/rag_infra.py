@@ -198,7 +198,9 @@ def _docker_command(action: str) -> list[str]:
             'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
             "-f /docker-entrypoint-initdb.d/080_landscape_taxonomy.sql && "
             'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
-            "-f /docker-entrypoint-initdb.d/081_landscape_v4_scope.sql",
+            "-f /docker-entrypoint-initdb.d/081_landscape_v4_scope.sql && "
+            'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
+            "-f /docker-entrypoint-initdb.d/082_landscape_v4_company_registry.sql",
         ],
         "ensure-bucket": [
             "exec",

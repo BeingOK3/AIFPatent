@@ -35,6 +35,9 @@ LANDSCAPE_TAXONOMY_SCHEMA_PATH = Path(
 LANDSCAPE_V4_SCOPE_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/081_landscape_v4_scope.sql"
 )
+LANDSCAPE_V4_COMPANY_REGISTRY_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/082_landscape_v4_company_registry.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -69,6 +72,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_v4_scope_sql = LANDSCAPE_V4_SCOPE_SCHEMA_PATH.read_text(
             encoding="utf-8"
+        )
+        self.landscape_v4_company_registry_sql = (
+            LANDSCAPE_V4_COMPANY_REGISTRY_SCHEMA_PATH.read_text(encoding="utf-8")
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -231,6 +237,20 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("DEFERRABLE INITIALLY DEFERRED", sql)
         self.assertIn("prevent_landscape_v4_snapshot_mutation", sql)
         self.assertIn("'081_landscape_v4_scope'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_company_name_registry_has_atomic_unique_ownership(self) -> None:
+        sql = self.landscape_v4_company_registry_sql
+        self.assertIn(
+            "CREATE TABLE IF NOT EXISTS landscape_v4_company_name_registry", sql
+        )
+        self.assertIn("normalized_text TEXT PRIMARY KEY", sql)
+        self.assertIn("FOREIGN KEY(profile_id, profile_version)", sql)
+        self.assertIn("status IN ('ACTIVE','EXCLUDED')", sql)
+        self.assertIn("'082_landscape_v4_company_registry'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
