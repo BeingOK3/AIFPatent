@@ -47,6 +47,9 @@ LANDSCAPE_V4_COMPANY_NAME_ORDER_SCHEMA_PATH = Path(
 LANDSCAPE_V4_SCOPE_LIMITATIONS_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/085_landscape_v4_scope_limitations.sql"
 )
+LANDSCAPE_V4_COMPANY_MEMORY_ACTIONS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/086_landscape_v4_company_memory_actions.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -93,6 +96,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_v4_scope_limitations_sql = (
             LANDSCAPE_V4_SCOPE_LIMITATIONS_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_v4_company_memory_actions_sql = (
+            LANDSCAPE_V4_COMPANY_MEMORY_ACTIONS_SCHEMA_PATH.read_text(encoding="utf-8")
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -267,8 +273,19 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.assertIn("normalized_text TEXT PRIMARY KEY", sql)
         self.assertIn("FOREIGN KEY(profile_id, profile_version)", sql)
-        self.assertIn("status IN ('ACTIVE','EXCLUDED')", sql)
+        self.assertIn("status IN ('ACTIVE','REJECTED','RETIRED')", sql)
         self.assertIn("'082_landscape_v4_company_registry'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_company_memory_actions_are_explicit_and_additive(self) -> None:
+        sql = self.landscape_v4_company_memory_actions_sql
+        self.assertIn("ADD COLUMN IF NOT EXISTS memory_action", sql)
+        self.assertIn("'NONE','REJECT','RETIRE'", sql)
+        self.assertIn("'ACTIVE','REJECTED','RETIRED'", sql)
+        self.assertIn("'086_landscape_v4_company_memory_actions'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)

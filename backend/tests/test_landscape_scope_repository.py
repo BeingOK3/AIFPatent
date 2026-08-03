@@ -11,6 +11,7 @@ from datetime import date
 from landscape.scope import (
     CandidateSource,
     CandidateStatus,
+    CompanyMemoryAction,
     CompanyNameRelation,
     CompanyScopeDraft,
     NameLanguage,
@@ -184,6 +185,7 @@ def reviewed_fixture() -> ScopeDraft:
         for name in company_value["names"]:
             if name["status"] == "PROPOSED":
                 name["status"] = "EXCLUDED"
+                name["memory_action"] = "REJECT"
     for term in payload["technology_terms"]:
         if term["status"] == "PROPOSED":
             term["status"] = "ACTIVE"
@@ -320,6 +322,10 @@ class LandscapeConfirmedScopeRowCodecTests(unittest.TestCase):
             [row["status"] for row in self.profile_rows.names],
             ["ACTIVE", "EXCLUDED"],
         )
+        self.assertEqual(
+            [row["memory_action"] for row in self.profile_rows.names],
+            ["NONE", "REJECT"],
+        )
         self.assertEqual(len(self.profile_rows.version["snapshot_hash"]), 64)
         self.assertEqual(
             self.profile_rows.version["confirmed_scope_revision_id"],
@@ -392,6 +398,21 @@ class LandscapeConfirmedScopeRowCodecTests(unittest.TestCase):
             [item.status for item in memory.company.names],
             [CandidateStatus.ACTIVE, CandidateStatus.EXCLUDED],
         )
+        self.assertEqual(
+            [item.memory_action for item in memory.company.names],
+            [CompanyMemoryAction.NONE, CompanyMemoryAction.REJECT],
+        )
+
+    def test_current_run_only_exclusion_does_not_enter_new_company_memory(self) -> None:
+        payload = reviewed_fixture().companies[0].model_dump(mode="json")
+        payload["names"][1]["memory_action"] = "NONE"
+        rows = prepare_company_profile_rows(
+            CompanyScopeDraft.model_validate(payload),
+            profile_version=4,
+            confirmed_scope_revision_id=self.confirmed.scope_revision_id,
+            created_at=1234,
+        )
+        self.assertEqual([row["status"] for row in rows.names], ["ACTIVE"])
 
     def test_company_memory_order_or_hash_tampering_fails_closed(self) -> None:
         profile = {
@@ -507,6 +528,7 @@ class LandscapeScopeDraftPostgreSQLIntegrationTests(unittest.TestCase):
                     relation_type=CompanyNameRelation.TRANSLATION,
                     source=CandidateSource.MODEL_SUGGESTED,
                     status=CandidateStatus.EXCLUDED,
+                    memory_action=CompanyMemoryAction.REJECT,
                 ),
             ),
         )

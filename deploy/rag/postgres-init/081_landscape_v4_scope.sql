@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS landscape_v4_company_names (
         'USER_INPUT','USER_ADDED','HISTORY','MODEL_SUGGESTED'
     )),
     status TEXT NOT NULL CHECK (status IN ('ACTIVE','EXCLUDED')),
+    memory_action TEXT NOT NULL DEFAULT 'NONE'
+        CHECK (memory_action IN ('NONE','REJECT','RETIRE')),
     rationale TEXT,
     sort_order INTEGER NOT NULL CHECK (sort_order > 0),
     created_at BIGINT NOT NULL,
@@ -121,6 +123,8 @@ CREATE TABLE IF NOT EXISTS landscape_v4_scope_draft_names (
         'USER_INPUT','USER_ADDED','HISTORY','MODEL_SUGGESTED'
     )),
     status TEXT NOT NULL CHECK (status IN ('PROPOSED','ACTIVE','EXCLUDED')),
+    memory_action TEXT NOT NULL DEFAULT 'NONE'
+        CHECK (memory_action IN ('NONE','REJECT','RETIRE')),
     rationale TEXT,
     sort_order INTEGER NOT NULL CHECK (sort_order > 0),
     PRIMARY KEY(draft_id, draft_revision, profile_id, name_id),

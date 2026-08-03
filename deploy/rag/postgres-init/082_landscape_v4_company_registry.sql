@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS landscape_v4_company_name_registry (
     normalized_text TEXT PRIMARY KEY CHECK (length(btrim(normalized_text)) > 0),
     profile_id TEXT NOT NULL,
     profile_version INTEGER NOT NULL CHECK (profile_version >= 1),
-    status TEXT NOT NULL CHECK (status IN ('ACTIVE','EXCLUDED')),
+    status TEXT NOT NULL CHECK (status IN ('ACTIVE','REJECTED','RETIRED')),
     updated_at BIGINT NOT NULL,
     FOREIGN KEY(profile_id, profile_version)
         REFERENCES landscape_v4_company_profile_versions(profile_id, version)

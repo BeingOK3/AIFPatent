@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from .scope import (
     CandidateSource,
     CandidateStatus,
+    CompanyMemoryAction,
     CompanyNameCandidate,
     CompanyScopeDraft,
     ConfirmedScopeRevision,
@@ -282,7 +283,7 @@ class PostgreSQLScopeDraftRepository:
             names = connection.execute(
                 """
                 SELECT profile_id,profile_version,name_id,name_text,normalized_text,
-                       language,relation_type,source,status,rationale,sort_order,
+                       language,relation_type,source,status,memory_action,rationale,sort_order,
                        created_at
                 FROM landscape_v4_company_names
                 WHERE profile_id=%s AND profile_version=%s
@@ -371,17 +372,25 @@ class PostgreSQLScopeDraftRepository:
             """
             INSERT INTO landscape_v4_company_names(
                 profile_id,profile_version,name_id,name_text,normalized_text,
-                language,relation_type,source,status,rationale,sort_order,created_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                language,relation_type,source,status,memory_action,rationale,sort_order,created_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             rows.names,
             (
                 "profile_id", "profile_version", "name_id", "name_text",
                 "normalized_text", "language", "relation_type", "source",
-                "status", "rationale", "sort_order", "created_at",
+                "status", "memory_action", "rationale", "sort_order", "created_at",
             ),
         )
         for name in rows.names:
+            registry_status = (
+                "ACTIVE"
+                if name["status"] == "ACTIVE"
+                else {
+                    "REJECT": "REJECTED",
+                    "RETIRE": "RETIRED",
+                }[name["memory_action"]]
+            )
             claimed = connection.execute(
                 """
                 INSERT INTO landscape_v4_company_name_registry(
@@ -395,7 +404,7 @@ class PostgreSQLScopeDraftRepository:
                 """,
                 (
                     name["normalized_text"], name["profile_id"],
-                    name["profile_version"], name["status"], name["created_at"],
+                    name["profile_version"], registry_status, name["created_at"],
                 ),
             ).fetchone()
             if claimed is None:
@@ -572,14 +581,14 @@ class PostgreSQLScopeDraftRepository:
             """
             INSERT INTO landscape_v4_scope_draft_names(
                 draft_id,draft_revision,profile_id,name_id,name_text,normalized_text,
-                language,relation_type,source,status,rationale,sort_order
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                language,relation_type,source,status,memory_action,rationale,sort_order
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             rows.names,
             (
                 "draft_id", "draft_revision", "profile_id", "name_id", "name_text",
                 "normalized_text", "language", "relation_type", "source", "status",
-                "rationale", "sort_order",
+                "memory_action", "rationale", "sort_order",
             ),
         )
         self._executemany(
@@ -662,7 +671,7 @@ class PostgreSQLScopeDraftRepository:
             """
             SELECT n.draft_id,n.draft_revision,n.profile_id,n.name_id,n.name_text,
                    n.normalized_text,n.language,n.relation_type,n.source,n.status,
-                   n.rationale,n.sort_order
+                   n.memory_action,n.rationale,n.sort_order
             FROM landscape_v4_scope_draft_names n
             JOIN landscape_v4_scope_draft_companies c
               ON c.draft_id=n.draft_id AND c.draft_revision=n.draft_revision
@@ -777,6 +786,7 @@ def prepare_scope_draft_rows(
                     "relation_type": item.relation_type.value,
                     "source": item.source.value,
                     "status": item.status.value,
+                    "memory_action": item.memory_action.value,
                     "rationale": item.rationale,
                     "sort_order": name_order,
                 }
@@ -837,10 +847,29 @@ def prepare_company_profile_rows(
             "company profile cannot persist unresolved proposed names"
         )
     timestamp = _timestamp(created_at)
+    memory_names: list[CompanyNameCandidate] = []
+    for item in company.names:
+        if item.status == CandidateStatus.ACTIVE:
+            memory_names.append(item)
+        elif item.memory_action in {
+            CompanyMemoryAction.REJECT,
+            CompanyMemoryAction.RETIRE,
+        }:
+            memory_names.append(item)
+        elif item.source == CandidateSource.HISTORY:
+            # A current-run exclusion must not erase an earlier confirmation.
+            memory_names.append(
+                item.model_copy(
+                    update={
+                        "status": CandidateStatus.ACTIVE,
+                        "memory_action": CompanyMemoryAction.NONE,
+                    }
+                )
+            )
     snapshot = {
         "profile_id": company.profile_id,
         "display_name": company.display_name,
-        "names": [item.model_dump(mode="json") for item in company.names],
+        "names": [item.model_dump(mode="json") for item in memory_names],
     }
     snapshot_hash = _hash_json(snapshot)
     profile = {
@@ -869,11 +898,12 @@ def prepare_company_profile_rows(
             "relation_type": item.relation_type.value,
             "source": item.source.value,
             "status": item.status.value,
+            "memory_action": item.memory_action.value,
             "rationale": item.rationale,
             "sort_order": order,
             "created_at": timestamp,
         }
-        for order, item in enumerate(company.names, start=1)
+        for order, item in enumerate(memory_names, start=1)
     )
     return PreparedCompanyProfileRows(
         profile=profile,
@@ -1046,6 +1076,7 @@ def validate_persisted_company_memory(
                     relation_type=row.get("relation_type"),
                     source=row.get("source"),
                     status=row.get("status"),
+                    memory_action=row.get("memory_action", "NONE"),
                     rationale=row.get("rationale"),
                 )
             )

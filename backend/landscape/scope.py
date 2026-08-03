@@ -52,6 +52,14 @@ class CandidateSource(StrEnum):
     MODEL_SUGGESTED = "MODEL_SUGGESTED"
 
 
+class CompanyMemoryAction(StrEnum):
+    """How an excluded company name affects future company-profile recall."""
+
+    NONE = "NONE"
+    REJECT = "REJECT"
+    RETIRE = "RETIRE"
+
+
 class NameLanguage(StrEnum):
     ZH = "ZH"
     EN = "EN"
@@ -92,6 +100,7 @@ class CompanyNameCandidate(ScopeModel):
     relation_type: CompanyNameRelation
     source: CandidateSource
     status: CandidateStatus = CandidateStatus.PROPOSED
+    memory_action: CompanyMemoryAction = CompanyMemoryAction.NONE
     rationale: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
@@ -100,6 +109,8 @@ class CompanyNameCandidate(ScopeModel):
             raise ValueError("company name ID must be a stable CNM identifier")
         if self.normalized_text != normalize_scope_text(self.text):
             raise ValueError("company normalized text does not match text")
+        if self.status != CandidateStatus.EXCLUDED and self.memory_action != CompanyMemoryAction.NONE:
+            raise ValueError("only an excluded company name can change long-term memory")
         return self
 
 
@@ -356,6 +367,7 @@ def make_company_name_candidate(
     relation_type: CompanyNameRelation,
     source: CandidateSource,
     status: CandidateStatus = CandidateStatus.PROPOSED,
+    memory_action: CompanyMemoryAction = CompanyMemoryAction.NONE,
     rationale: str | None = None,
 ) -> CompanyNameCandidate:
     normalized = normalize_scope_text(text)
@@ -368,6 +380,7 @@ def make_company_name_candidate(
         relation_type=relation_type,
         source=source,
         status=status,
+        memory_action=memory_action,
         rationale=rationale,
     )
 
@@ -422,6 +435,7 @@ __all__ = [
     "CandidateStatus",
     "CompanyNameCandidate",
     "CompanyNameRelation",
+    "CompanyMemoryAction",
     "CompanyScopeDraft",
     "ConfirmedScopeRevision",
     "LandscapeInputMode",
