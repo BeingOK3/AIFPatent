@@ -15,6 +15,7 @@ from landscape.scope import (
     CompanyScopeDraft,
     NameLanguage,
     ScopeDraft,
+    ScopeDraftLimitation,
     ScopeDraftStatus,
     TechnologyTermRelation,
     freeze_scope_draft,
@@ -109,6 +110,8 @@ class _ScopeConnection:
             return _Result(rows=self.rows.names)
         if "FROM landscape_v4_scope_draft_terms" in normalized:
             return _Result(rows=self.rows.terms)
+        if "FROM landscape_v4_scope_draft_limitations" in normalized:
+            return _Result(rows=self.rows.limitations)
         raise AssertionError(f"unexpected SQL: {normalized}")
 
 
@@ -270,6 +273,32 @@ class LandscapeScopeRowCodecTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     prepare_scope_draft_rows(self.scope, created_at=value)  # type: ignore[arg-type]
+
+    def test_user_visible_limitations_round_trip_with_draft_revision(self) -> None:
+        limited = self.scope.model_copy(
+            update={
+                "limitations": (
+                    ScopeDraftLimitation(
+                        code="COMPANY_EXPANSION_FAILED",
+                        object_key="华为",
+                        message="公司名称扩展失败，已保留历史名称和用户输入。",
+                    ),
+                )
+            }
+        )
+        rows = prepare_scope_draft_rows(limited, created_at=1234)
+        self.assertEqual(rows.limitations[0]["sort_order"], 1)
+        self.assertEqual(
+            validate_persisted_scope_draft(
+                rows.draft,
+                rows.revision,
+                rows.companies,
+                rows.names,
+                rows.terms,
+                rows.limitations,
+            ),
+            limited,
+        )
 
 
 class LandscapeConfirmedScopeRowCodecTests(unittest.TestCase):

@@ -78,6 +78,12 @@ class TechnologyTermRelation(StrEnum):
     RELATED = "RELATED"
 
 
+class ScopeDraftLimitation(ScopeModel):
+    code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{2,63}$")
+    object_key: str = Field(min_length=1, max_length=300)
+    message: str = Field(min_length=1, max_length=1000)
+
+
 class CompanyNameCandidate(ScopeModel):
     name_id: str
     text: str = Field(min_length=1, max_length=300)
@@ -148,6 +154,7 @@ class ScopeDraft(ScopeModel):
     technology_terms: tuple[TechnologyTermCandidate, ...] = Field(
         default=(), max_length=300
     )
+    limitations: tuple[ScopeDraftLimitation, ...] = Field(default=(), max_length=100)
 
     @field_validator("technology_input")
     @classmethod
@@ -421,6 +428,7 @@ __all__ = [
     "NameLanguage",
     "ScopeDraft",
     "ScopeDraftStatus",
+    "ScopeDraftLimitation",
     "ScopeValidationError",
     "TechnologyTermCandidate",
     "TechnologyTermRelation",

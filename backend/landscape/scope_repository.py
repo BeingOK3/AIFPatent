@@ -38,6 +38,7 @@ class PreparedScopeDraftRows:
     companies: tuple[dict, ...]
     names: tuple[dict, ...]
     terms: tuple[dict, ...]
+    limitations: tuple[dict, ...]
 
 
 @dataclass(frozen=True)
@@ -486,7 +487,6 @@ class PostgreSQLScopeDraftRepository:
                 "language", "relation_to_original", "sort_order",
             ),
         )
-
     @staticmethod
     def _load_confirmed(
         connection: object,
@@ -597,6 +597,19 @@ class PostgreSQLScopeDraftRepository:
                 "status", "rationale", "sort_order",
             ),
         )
+        self._executemany(
+            connection,
+            """
+            INSERT INTO landscape_v4_scope_draft_limitations(
+                draft_id,draft_revision,code,object_key,message,sort_order
+            ) VALUES (%s,%s,%s,%s,%s,%s)
+            """,
+            rows.limitations,
+            (
+                "draft_id", "draft_revision", "code", "object_key", "message",
+                "sort_order",
+            ),
+        )
 
     @staticmethod
     def _executemany(
@@ -669,8 +682,18 @@ class PostgreSQLScopeDraftRepository:
             """,
             (draft_id, revision),
         ).fetchall()
+        limitation_rows = connection.execute(
+            """
+            SELECT draft_id,draft_revision,code,object_key,message,sort_order
+            FROM landscape_v4_scope_draft_limitations
+            WHERE draft_id=%s AND draft_revision=%s
+            ORDER BY sort_order
+            """,
+            (draft_id, revision),
+        ).fetchall()
         return validate_persisted_scope_draft(
-            draft_row, revision_row, company_rows, name_rows, term_rows
+            draft_row, revision_row, company_rows, name_rows, term_rows,
+            limitation_rows,
         )
 
     @contextmanager
@@ -775,12 +798,24 @@ def prepare_scope_draft_rows(
         }
         for order, item in enumerate(scope.technology_terms, start=1)
     )
+    limitations = tuple(
+        {
+            "draft_id": scope.draft_id,
+            "draft_revision": scope.revision,
+            "code": item.code,
+            "object_key": item.object_key,
+            "message": item.message,
+            "sort_order": order,
+        }
+        for order, item in enumerate(scope.limitations, start=1)
+    )
     return PreparedScopeDraftRows(
         draft=draft_row,
         revision=revision_row,
         companies=tuple(companies),
         names=tuple(names),
         terms=terms,
+        limitations=limitations,
     )
 
 
@@ -920,6 +955,7 @@ def validate_persisted_scope_draft(
     company_rows: Sequence[Mapping[str, object]],
     name_rows: Sequence[Mapping[str, object]],
     term_rows: Sequence[Mapping[str, object]],
+    limitation_rows: Sequence[Mapping[str, object]] = (),
 ) -> ScopeDraft:
     """Rebuild a draft only when JSON and every relational projection agree."""
 
@@ -950,6 +986,7 @@ def validate_persisted_scope_draft(
     _assert_rows_match("companies", company_rows, expected.companies)
     _assert_rows_match("company names", name_rows, expected.names)
     _assert_rows_match("technology terms", term_rows, expected.terms)
+    _assert_rows_match("limitations", limitation_rows, expected.limitations)
     return scope
 
 

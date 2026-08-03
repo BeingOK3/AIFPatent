@@ -44,6 +44,9 @@ LANDSCAPE_V4_PROFILE_VERSIONING_SCHEMA_PATH = Path(
 LANDSCAPE_V4_COMPANY_NAME_ORDER_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/084_landscape_v4_company_name_order.sql"
 )
+LANDSCAPE_V4_SCOPE_LIMITATIONS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/085_landscape_v4_scope_limitations.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -87,6 +90,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_v4_company_name_order_sql = (
             LANDSCAPE_V4_COMPANY_NAME_ORDER_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_v4_scope_limitations_sql = (
+            LANDSCAPE_V4_SCOPE_LIMITATIONS_SCHEMA_PATH.read_text(encoding="utf-8")
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -289,6 +295,16 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("ALTER COLUMN sort_order SET NOT NULL", sql)
         self.assertIn("UNIQUE(profile_id,profile_version,sort_order)", sql)
         self.assertIn("'084_landscape_v4_company_name_order'", sql)
+        self.assertNotIn("DROP TABLE", sql.upper())
+
+    def test_landscape_v4_scope_limitations_are_versioned_and_immutable(self) -> None:
+        sql = self.landscape_v4_scope_limitations_sql
+        self.assertIn(
+            "CREATE TABLE IF NOT EXISTS landscape_v4_scope_draft_limitations", sql
+        )
+        self.assertIn("PRIMARY KEY(draft_id,draft_revision,code,object_key)", sql)
+        self.assertIn("prevent_landscape_v4_snapshot_mutation", sql)
+        self.assertIn("'085_landscape_v4_scope_limitations'", sql)
         self.assertNotIn("DROP TABLE", sql.upper())
 
     def test_corpus_schema_is_versioned_and_scoped(self) -> None:
