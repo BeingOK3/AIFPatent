@@ -418,12 +418,41 @@ class LandscapeScopeDraftPostgreSQLIntegrationTests(unittest.TestCase):
             connect_timeout=10,
         )
         draft_id = make_scope_draft_id(f"integration-{uuid.uuid4().hex}")
-        initial = fixture().model_copy(
-            update={
-                "draft_id": draft_id,
-                "revision": 1,
-                "status": ScopeDraftStatus.DRAFT,
-            }
+        unique_name = f"集成测试公司-{uuid.uuid4().hex}"
+        profile_id = make_company_profile_id(unique_name)
+        company_value = CompanyScopeDraft(
+            profile_id=profile_id,
+            display_name=unique_name,
+            input_name=unique_name,
+            names=(
+                make_company_name_candidate(
+                    profile_id=profile_id,
+                    text=unique_name,
+                    language=NameLanguage.ZH,
+                    relation_type=CompanyNameRelation.LEGAL_NAME,
+                    source=CandidateSource.USER_INPUT,
+                    status=CandidateStatus.ACTIVE,
+                ),
+                make_company_name_candidate(
+                    profile_id=profile_id,
+                    text=f"Integration Company {uuid.uuid4().hex}",
+                    language=NameLanguage.EN,
+                    relation_type=CompanyNameRelation.TRANSLATION,
+                    source=CandidateSource.MODEL_SUGGESTED,
+                    status=CandidateStatus.EXCLUDED,
+                ),
+            ),
+        )
+        base = reviewed_fixture()
+        initial = ScopeDraft(
+            draft_id=draft_id,
+            revision=1,
+            status=ScopeDraftStatus.DRAFT,
+            publication_start=base.publication_start,
+            publication_end=base.publication_end,
+            companies=(company_value,),
+            technology_input=base.technology_input,
+            technology_terms=base.technology_terms,
         )
 
         @contextmanager
@@ -450,6 +479,15 @@ class LandscapeScopeDraftPostgreSQLIntegrationTests(unittest.TestCase):
             )
             with self.assertRaises(ScopeRevisionConflict):
                 repository.update(updated.model_copy(update={"revision": 3}), expected_revision=1)
+            confirmed = repository.confirm(draft_id, expected_revision=2)
+            self.assertEqual(confirmed.companies[0].profile_id, profile_id)
+            self.assertEqual(confirmed.companies[0].profile_version, 1)
+            self.assertEqual(len(confirmed.companies[0].names), 1)
+            self.assertEqual(repository.get_confirmed(confirmed.scope_revision_id), confirmed)
+            self.assertEqual(repository.confirm(draft_id, expected_revision=2), confirmed)
+            terminal_draft = repository.get(draft_id)
+            self.assertEqual(terminal_draft.revision, 3)
+            self.assertEqual(terminal_draft.status, ScopeDraftStatus.CONFIRMED)
             count = raw.execute(
                 """
                 SELECT count(*) AS count
@@ -458,7 +496,25 @@ class LandscapeScopeDraftPostgreSQLIntegrationTests(unittest.TestCase):
                 """,
                 (draft_id,),
             ).fetchone()["count"]
-            self.assertEqual(count, 2)
+            self.assertEqual(count, 3)
+            profile_version_count = raw.execute(
+                """
+                SELECT count(*) AS count
+                FROM landscape_v4_company_profile_versions
+                WHERE profile_id=%s
+                """,
+                (profile_id,),
+            ).fetchone()["count"]
+            registry_count = raw.execute(
+                """
+                SELECT count(*) AS count
+                FROM landscape_v4_company_name_registry
+                WHERE profile_id=%s
+                """,
+                (profile_id,),
+            ).fetchone()["count"]
+            self.assertEqual(profile_version_count, 1)
+            self.assertEqual(registry_count, 2)
         finally:
             raw.rollback()
         missing = raw.execute(

@@ -15,6 +15,8 @@ from .scope import (
     CompanyScopeDraft,
     ConfirmedScopeRevision,
     ScopeDraft,
+    ScopeDraftStatus,
+    freeze_scope_draft,
     normalize_scope_text,
 )
 
@@ -148,6 +150,354 @@ class PostgreSQLScopeDraftRepository:
                 raise ScopeRevisionConflict("scope draft compare-and-swap failed")
             self._insert_revision(connection, rows)
             return self._load(connection, scope.draft_id)
+
+    def confirm(
+        self,
+        draft_id: str,
+        *,
+        expected_revision: int,
+    ) -> ConfirmedScopeRevision:
+        if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
+            raise ValueError("expected_revision must be an integer")
+        if expected_revision < 1:
+            raise ValueError("expected_revision must be positive")
+        timestamp = _timestamp(None)
+        with self._connect() as connection:
+            header = connection.execute(
+                """
+                SELECT draft_id,revision,status,confirmed_scope_revision_id
+                FROM landscape_v4_scope_drafts
+                WHERE draft_id=%s
+                FOR UPDATE
+                """,
+                (draft_id,),
+            ).fetchone()
+            if header is None:
+                raise KeyError(draft_id)
+            if header["status"] == ScopeDraftStatus.CONFIRMED.value:
+                scope_revision_id = header["confirmed_scope_revision_id"]
+                if not scope_revision_id:
+                    raise ScopePersistenceError(
+                        "confirmed draft is missing its scope revision"
+                    )
+                return self._load_confirmed(connection, scope_revision_id)
+            if header["revision"] != expected_revision:
+                raise ScopeRevisionConflict(
+                    f"scope draft revision changed: expected {expected_revision}, "
+                    f"found {header['revision']}"
+                )
+
+            draft = self._load(connection, draft_id)
+            if draft.status != ScopeDraftStatus.AWAITING_CONFIRMATION:
+                raise ScopeRevisionConflict(
+                    "scope draft must await confirmation before confirmation"
+                )
+
+            profile_versions = self._reserve_company_profile_versions(
+                connection, draft, timestamp=timestamp
+            )
+            confirmed = freeze_scope_draft(draft, profile_versions)
+            confirmed_rows = prepare_confirmed_scope_rows(
+                confirmed, created_at=timestamp
+            )
+            self._insert_confirmed_scope(connection, confirmed_rows)
+
+            for company in draft.companies:
+                profile_rows = prepare_company_profile_rows(
+                    company,
+                    profile_version=profile_versions[company.profile_id],
+                    confirmed_scope_revision_id=confirmed.scope_revision_id,
+                    created_at=timestamp,
+                )
+                self._insert_company_profile_version(connection, profile_rows)
+
+            self._insert_confirmed_scope_members(connection, confirmed_rows)
+            confirmed_draft = ScopeDraft.model_validate(
+                draft.model_copy(
+                    update={
+                        "revision": draft.revision + 1,
+                        "status": ScopeDraftStatus.CONFIRMED,
+                    }
+                ).model_dump(mode="json")
+            )
+            draft_rows = prepare_scope_draft_rows(
+                confirmed_draft, created_at=timestamp
+            )
+            self._insert_revision(connection, draft_rows)
+            changed = connection.execute(
+                """
+                UPDATE landscape_v4_scope_drafts
+                SET revision=%s,status=%s,mode=%s,publication_start=%s,
+                    publication_end=%s,technology_input=%s,content_hash=%s,
+                    confirmed_scope_revision_id=%s,updated_at=%s
+                WHERE draft_id=%s AND revision=%s
+                  AND status='AWAITING_CONFIRMATION'
+                """,
+                (
+                    draft_rows.draft["revision"], draft_rows.draft["status"],
+                    draft_rows.draft["mode"], draft_rows.draft["publication_start"],
+                    draft_rows.draft["publication_end"],
+                    draft_rows.draft["technology_input"],
+                    draft_rows.draft["content_hash"], confirmed.scope_revision_id,
+                    timestamp, draft_id, expected_revision,
+                ),
+            )
+            if changed.rowcount != 1:
+                raise ScopeRevisionConflict("scope confirmation compare-and-swap failed")
+            return self._load_confirmed(connection, confirmed.scope_revision_id)
+
+    def get_confirmed(self, scope_revision_id: str) -> ConfirmedScopeRevision:
+        if not isinstance(scope_revision_id, str) or not scope_revision_id.strip():
+            raise ValueError("scope_revision_id must not be blank")
+        with self._connect() as connection:
+            return self._load_confirmed(connection, scope_revision_id.strip())
+
+    @staticmethod
+    def _reserve_company_profile_versions(
+        connection: object,
+        draft: ScopeDraft,
+        *,
+        timestamp: int,
+    ) -> dict[str, int]:
+        versions: dict[str, int] = {}
+        for company in sorted(draft.companies, key=lambda value: value.profile_id):
+            connection.execute(
+                """
+                INSERT INTO landscape_v4_company_profiles(
+                    profile_id,anchor_normalized,display_name,current_version,
+                    created_at,updated_at
+                ) VALUES (%s,%s,%s,0,%s,%s)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    company.profile_id, normalize_scope_text(company.input_name),
+                    company.display_name, timestamp, timestamp,
+                ),
+            )
+            profile = connection.execute(
+                """
+                SELECT profile_id,current_version
+                FROM landscape_v4_company_profiles
+                WHERE profile_id=%s
+                FOR UPDATE
+                """,
+                (company.profile_id,),
+            ).fetchone()
+            if profile is None:
+                raise ScopePersistenceError(
+                    "company anchor is already owned by a different profile"
+                )
+            historical_names = {
+                row["normalized_text"]
+                for row in connection.execute(
+                    """
+                    SELECT normalized_text
+                    FROM landscape_v4_company_name_registry
+                    WHERE profile_id=%s
+                    ORDER BY normalized_text
+                    """,
+                    (company.profile_id,),
+                ).fetchall()
+            }
+            submitted_names = {item.normalized_text for item in company.names}
+            if not historical_names.issubset(submitted_names):
+                raise ScopePersistenceError(
+                    "historical company names must be retained and explicitly excluded"
+                )
+            versions[company.profile_id] = profile["current_version"] + 1
+        return versions
+
+    def _insert_company_profile_version(
+        self,
+        connection: object,
+        rows: PreparedCompanyProfileRows,
+    ) -> None:
+        version = rows.version
+        connection.execute(
+            """
+            INSERT INTO landscape_v4_company_profile_versions(
+                profile_id,version,snapshot_hash,confirmed_scope_revision_id,created_at
+            ) VALUES (%s,%s,%s,%s,%s)
+            """,
+            _values(
+                version, "profile_id", "version", "snapshot_hash",
+                "confirmed_scope_revision_id", "created_at",
+            ),
+        )
+        self._executemany(
+            connection,
+            """
+            INSERT INTO landscape_v4_company_names(
+                profile_id,profile_version,name_id,name_text,normalized_text,
+                language,relation_type,source,status,rationale,created_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            rows.names,
+            (
+                "profile_id", "profile_version", "name_id", "name_text",
+                "normalized_text", "language", "relation_type", "source",
+                "status", "rationale", "created_at",
+            ),
+        )
+        for name in rows.names:
+            claimed = connection.execute(
+                """
+                INSERT INTO landscape_v4_company_name_registry(
+                    normalized_text,profile_id,profile_version,status,updated_at
+                ) VALUES (%s,%s,%s,%s,%s)
+                ON CONFLICT (normalized_text) DO UPDATE
+                SET profile_version=EXCLUDED.profile_version,
+                    status=EXCLUDED.status,updated_at=EXCLUDED.updated_at
+                WHERE landscape_v4_company_name_registry.profile_id=EXCLUDED.profile_id
+                RETURNING profile_id
+                """,
+                (
+                    name["normalized_text"], name["profile_id"],
+                    name["profile_version"], name["status"], name["created_at"],
+                ),
+            ).fetchone()
+            if claimed is None:
+                raise ScopePersistenceError(
+                    f"company name is already owned by another profile: {name['name_text']}"
+                )
+        profile = rows.profile
+        changed = connection.execute(
+            """
+            UPDATE landscape_v4_company_profiles
+            SET display_name=%s,current_version=%s,updated_at=%s
+            WHERE profile_id=%s AND current_version=%s
+            """,
+            (
+                profile["display_name"], profile["current_version"],
+                profile["updated_at"], profile["profile_id"],
+                profile["current_version"] - 1,
+            ),
+        )
+        if changed.rowcount != 1:
+            raise ScopeRevisionConflict("company profile version compare-and-swap failed")
+
+    @staticmethod
+    def _insert_confirmed_scope(
+        connection: object,
+        rows: PreparedConfirmedScopeRows,
+    ) -> None:
+        revision = rows.revision
+        connection.execute(
+            """
+            INSERT INTO landscape_v4_scope_revisions(
+                scope_revision_id,scope_revision_hash,source_draft_id,
+                source_draft_revision,mode,publication_start,publication_end,
+                technology_input,snapshot_json,created_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+            """,
+            (
+                revision["scope_revision_id"], revision["scope_revision_hash"],
+                revision["source_draft_id"], revision["source_draft_revision"],
+                revision["mode"], revision["publication_start"],
+                revision["publication_end"], revision["technology_input"],
+                _canonical_json(revision["snapshot_json"]), revision["created_at"],
+            ),
+        )
+
+    def _insert_confirmed_scope_members(
+        self,
+        connection: object,
+        rows: PreparedConfirmedScopeRows,
+    ) -> None:
+        self._executemany(
+            connection,
+            """
+            INSERT INTO landscape_v4_scope_companies(
+                scope_revision_id,profile_id,profile_version,display_name,sort_order
+            ) VALUES (%s,%s,%s,%s,%s)
+            """,
+            rows.companies,
+            (
+                "scope_revision_id", "profile_id", "profile_version",
+                "display_name", "sort_order",
+            ),
+        )
+        self._executemany(
+            connection,
+            """
+            INSERT INTO landscape_v4_scope_company_names(
+                scope_revision_id,profile_id,name_id,name_text,normalized_text,
+                language,relation_type,sort_order
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            rows.names,
+            (
+                "scope_revision_id", "profile_id", "name_id", "name_text",
+                "normalized_text", "language", "relation_type", "sort_order",
+            ),
+        )
+        self._executemany(
+            connection,
+            """
+            INSERT INTO landscape_v4_scope_terms(
+                scope_revision_id,term_id,term_text,normalized_text,language,
+                relation_to_original,sort_order
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """,
+            rows.terms,
+            (
+                "scope_revision_id", "term_id", "term_text", "normalized_text",
+                "language", "relation_to_original", "sort_order",
+            ),
+        )
+
+    @staticmethod
+    def _load_confirmed(
+        connection: object,
+        scope_revision_id: str,
+    ) -> ConfirmedScopeRevision:
+        revision = connection.execute(
+            """
+            SELECT scope_revision_id,scope_revision_hash,source_draft_id,
+                   source_draft_revision,mode,publication_start,publication_end,
+                   technology_input,snapshot_json,created_at
+            FROM landscape_v4_scope_revisions
+            WHERE scope_revision_id=%s
+            """,
+            (scope_revision_id,),
+        ).fetchone()
+        if revision is None:
+            raise KeyError(scope_revision_id)
+        companies = connection.execute(
+            """
+            SELECT scope_revision_id,profile_id,profile_version,display_name,sort_order
+            FROM landscape_v4_scope_companies
+            WHERE scope_revision_id=%s
+            ORDER BY sort_order
+            """,
+            (scope_revision_id,),
+        ).fetchall()
+        names = connection.execute(
+            """
+            SELECT n.scope_revision_id,n.profile_id,n.name_id,n.name_text,
+                   n.normalized_text,n.language,n.relation_type,n.sort_order
+            FROM landscape_v4_scope_company_names n
+            JOIN landscape_v4_scope_companies c
+              ON c.scope_revision_id=n.scope_revision_id
+             AND c.profile_id=n.profile_id
+            WHERE n.scope_revision_id=%s
+            ORDER BY c.sort_order,n.sort_order
+            """,
+            (scope_revision_id,),
+        ).fetchall()
+        terms = connection.execute(
+            """
+            SELECT scope_revision_id,term_id,term_text,normalized_text,language,
+                   relation_to_original,sort_order
+            FROM landscape_v4_scope_terms
+            WHERE scope_revision_id=%s
+            ORDER BY sort_order
+            """,
+            (scope_revision_id,),
+        ).fetchall()
+        return validate_persisted_confirmed_scope(
+            revision, companies, names, terms
+        )
 
     def _insert_revision(self, connection: object, rows: PreparedScopeDraftRows) -> None:
         revision = rows.revision
