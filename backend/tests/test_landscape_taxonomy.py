@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from landscape.taxonomy import (
+    TaxonomyArtifact,
     TaxonomyCompileError,
     compile_taxonomy_file,
     compile_taxonomy_markdown,
@@ -74,6 +75,11 @@ class LandscapeTaxonomyCompilerTests(unittest.TestCase):
         with self.assertRaisesRegex(TaxonomyCompileError, "duplicate taxonomy path"):
             compile_taxonomy_markdown(source)
 
+    def test_path_cannot_be_both_leaf_and_parent(self) -> None:
+        source = markdown("| 网络 | 路由 |  |", "| 网络 | 路由 | SRv6 |")
+        with self.assertRaisesRegex(TaxonomyCompileError, "both leaf and parent"):
+            compile_taxonomy_markdown(source)
+
     def test_empty_required_level_fails_closed(self) -> None:
         for row, message in (
             ("|  | 路由 |  |", "empty level 1"),
@@ -104,6 +110,29 @@ class LandscapeTaxonomyCompilerTests(unittest.TestCase):
         payload = json.loads(first.canonical_json())
         self.assertEqual(payload["taxonomy_hash"], first.taxonomy_hash)
         self.assertEqual(payload["source_row_count"], 2)
+        self.assertEqual(TaxonomyArtifact.from_dict(payload), first)
+
+    def test_artifact_loader_rejects_hash_parent_and_leaf_tampering(self) -> None:
+        artifact = compile_taxonomy_markdown(
+            markdown("| 网络 | 路由 | SRv6 |", "| 网络 | 交换 |  |")
+        )
+        mutations = []
+        bad_hash = artifact.to_dict()
+        bad_hash["taxonomy_hash"] = "0" * 64
+        mutations.append(bad_hash)
+
+        bad_parent = artifact.to_dict()
+        bad_parent["nodes"][1]["parent_id"] = None
+        mutations.append(bad_parent)
+
+        bad_leaf = artifact.to_dict()
+        bad_leaf["leaf_category_ids"][0] = bad_leaf["nodes"][0]["category_id"]
+        mutations.append(bad_leaf)
+
+        for payload in mutations:
+            with self.subTest(payload=payload):
+                with self.assertRaises(TaxonomyCompileError):
+                    TaxonomyArtifact.from_dict(payload)
 
 
 if __name__ == "__main__":
