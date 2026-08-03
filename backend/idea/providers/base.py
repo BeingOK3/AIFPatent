@@ -4,7 +4,7 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -95,6 +95,41 @@ class ProviderStatus(StrEnum):
     ERROR = "ERROR"
     CONTRACT_ERROR = "CONTRACT_ERROR"
     DISABLED = "DISABLED"
+
+
+class PageStopReason(StrEnum):
+    MORE_AVAILABLE = "MORE_AVAILABLE"
+    QUERY_EXHAUSTED = "QUERY_EXHAUSTED"
+    PROVIDER_HARD_LIMIT = "PROVIDER_HARD_LIMIT"
+
+
+class SearchPage(ContractModel):
+    hits: list[SearchHit] = Field(max_length=100)
+    next_cursor: str | None = Field(default=None, max_length=100)
+    page_number: int = Field(ge=1)
+    reported_total_results: int | None = Field(default=None, ge=0)
+    reported_total_pages: int | None = Field(default=None, ge=0)
+    provider_request_id: str = Field(min_length=1, max_length=300)
+    stop_reason: PageStopReason
+
+    @model_validator(mode="after")
+    def cursor_matches_stop_reason(self) -> "SearchPage":
+        if self.next_cursor and self.stop_reason != PageStopReason.MORE_AVAILABLE:
+            raise ValueError("a next cursor requires MORE_AVAILABLE")
+        if not self.next_cursor and self.stop_reason == PageStopReason.MORE_AVAILABLE:
+            raise ValueError("MORE_AVAILABLE requires a next cursor")
+        return self
+
+
+@runtime_checkable
+class PagedSearchProvider(Protocol):
+    name: str
+
+    async def search_page(
+        self,
+        query: SearchQuery,
+        cursor: str | None,
+    ) -> SearchPage: ...
 
 
 class ProviderResult(ContractModel):

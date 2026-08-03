@@ -11,6 +11,8 @@ from idea.config import load_config
 from idea.database import Database
 from idea.providers import (
     FetchRequest,
+    PageStopReason,
+    PagedSearchProvider,
     ProviderRunner,
     ProviderStatus,
     SearchQuery,
@@ -110,7 +112,9 @@ class SerpApiProviderTests(unittest.TestCase):
         )
 
     def test_search_uses_structured_window_and_maps_patent_fields(self) -> None:
-        hits = asyncio.run(self.provider().search(self.query()))
+        provider = self.provider()
+        self.assertIsInstance(provider, PagedSearchProvider)
+        hits = asyncio.run(provider.search(self.query()))
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].provider, "serpapi_google_patents")
         self.assertEqual(hits[0].publication_number, "US123A1")
@@ -153,6 +157,71 @@ class SerpApiProviderTests(unittest.TestCase):
         self.assertEqual(result.status, ProviderStatus.EMPTY)
         self.assertEqual(result.hits, [])
         self.assertIsNone(result.error_code)
+
+    def test_search_page_consumes_provider_cursor_and_reports_totals(self) -> None:
+        async def paged(arguments):
+            self.calls.append(arguments)
+            page = arguments.get("page", 1)
+            numbers = range(1, 11) if page == 1 else range(11, 13)
+            results = [
+                {
+                    "position": number,
+                    "patent_link": f"https://patents.google.com/patent/US{number}A1/en",
+                    "publication_number": f"US{number}A1",
+                }
+                for number in numbers
+            ]
+            payload = {
+                "search_metadata": {"id": f"request-{page}"},
+                "search_information": {"total_results": "12"},
+                "organic_results": results,
+            }
+            if page == 1:
+                payload["serpapi_pagination"] = {
+                    "next": "https://serpapi.com/search.json?q=x&page=2"
+                }
+            return payload
+
+        provider = self.provider(transport=paged)
+        first = asyncio.run(provider.search_page(self.query(), None))
+        self.assertEqual(first.page_number, 1)
+        self.assertEqual(first.next_cursor, "page:2")
+        self.assertEqual(first.reported_total_results, 12)
+        self.assertEqual(first.reported_total_pages, 2)
+        self.assertEqual(first.provider_request_id, "request-1")
+        self.assertEqual(first.stop_reason, PageStopReason.MORE_AVAILABLE)
+
+        second = asyncio.run(provider.search_page(self.query(), first.next_cursor))
+        self.assertEqual(self.calls[-1]["page"], 2)
+        self.assertEqual(second.page_number, 2)
+        self.assertIsNone(second.next_cursor)
+        self.assertEqual(second.provider_request_id, "request-2")
+        self.assertEqual(second.stop_reason, PageStopReason.QUERY_EXHAUSTED)
+
+    def test_missing_next_link_with_unread_total_is_explicit_hard_limit(self) -> None:
+        async def limited(_arguments):
+            return {
+                "search_metadata": {"id": "limited-request"},
+                "search_information": {"total_results": 500},
+                "organic_results": [
+                    {
+                        "patent_link": f"https://patents.google.com/patent/US{i}A1/en",
+                        "publication_number": f"US{i}A1",
+                    }
+                    for i in range(1, 11)
+                ],
+            }
+
+        page = asyncio.run(self.provider(transport=limited).search_page(self.query(), None))
+        self.assertEqual(page.stop_reason, PageStopReason.PROVIDER_HARD_LIMIT)
+        self.assertIsNone(page.next_cursor)
+
+    def test_invalid_or_non_advancing_cursor_fails_before_provider_call(self) -> None:
+        provider = self.provider()
+        for cursor in ("2", "page:1", "page:0", "page:2?api_key=secret"):
+            with self.subTest(cursor=cursor), self.assertRaisesRegex(ValueError, "cursor"):
+                asyncio.run(provider.search_page(self.query(), cursor))
+        self.assertEqual(self.calls, [])
 
     def test_details_map_claims_description_family_and_offsets(self) -> None:
         request = FetchRequest(request_id="F-SERP-1", publication_number="US123A1")

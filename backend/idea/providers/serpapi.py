@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from urllib.parse import parse_qs, urlparse
 from collections.abc import Awaitable, Callable
 from html.parser import HTMLParser
 from typing import Any
@@ -11,7 +12,15 @@ import httpx
 
 from ..cache import CacheStore
 from ..config import SerpApiSettings
-from .base import FetchRequest, FetchedDocument, SearchHit, SearchProvider, SearchQuery
+from .base import (
+    FetchRequest,
+    FetchedDocument,
+    PageStopReason,
+    SearchHit,
+    SearchPage,
+    SearchProvider,
+    SearchQuery,
+)
 
 
 SerpApiTransport = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -196,16 +205,28 @@ class SerpApiPatentProvider(SearchProvider):
         return value
 
     async def search(self, query: SearchQuery) -> list[SearchHit]:
+        page = await self.search_page(query, cursor=None)
+        return page.hits[: query.limit]
+
+    async def search_page(
+        self,
+        query: SearchQuery,
+        cursor: str | None,
+    ) -> SearchPage:
+        page_number = self._decode_page_cursor(cursor)
         query_text, window = self._extract_window(query.text)
         query_text, assignees = self._extract_assignees(query_text)
+        page_size = min(100, max(10, query.limit))
         arguments: dict[str, Any] = {
             "engine": self.settings.search_engine,
             "q": query_text,
-            "num": min(100, max(10, query.limit)),
+            "num": page_size,
             "patents": "true",
             "scholar": "false",
             "dups": "language",
         }
+        if page_number > 1:
+            arguments["page"] = page_number
         if assignees:
             arguments["assignee"] = ",".join(
                 f"({name})" if "," in name else name for name in assignees
@@ -229,7 +250,7 @@ class SerpApiPatentProvider(SearchProvider):
             hits.append(
                 SearchHit(
                     provider=self.name,
-                    provider_rank=len(hits) + 1,
+                    provider_rank=(page_number - 1) * page_size + len(hits) + 1,
                     title=str(item.get("title") or ""),
                     url=url,
                     publication_number=publication or None,
@@ -245,9 +266,81 @@ class SerpApiPatentProvider(SearchProvider):
                     },
                 )
             )
-            if len(hits) >= query.limit:
+            if len(hits) >= page_size:
                 break
-        return hits
+        search_information = payload.get("search_information") or {}
+        pagination = payload.get("serpapi_pagination") or {}
+        if not isinstance(search_information, dict) or not isinstance(pagination, dict):
+            raise ValueError("SerpAPI pagination metadata must be objects")
+        reported_total = self._optional_count(search_information.get("total_results"))
+        reported_pages = self._optional_count(
+            pagination.get("total_pages") or search_information.get("total_pages")
+        )
+        if reported_pages is None and reported_total is not None:
+            reported_pages = (reported_total + page_size - 1) // page_size
+        next_page = self._next_page_number(pagination.get("next"), page_number)
+        if next_page is not None:
+            next_cursor = f"page:{next_page}"
+            stop_reason = PageStopReason.MORE_AVAILABLE
+        else:
+            next_cursor = None
+            consumed = (page_number - 1) * page_size + len(hits)
+            stop_reason = (
+                PageStopReason.PROVIDER_HARD_LIMIT
+                if reported_total is not None and reported_total > consumed
+                else PageStopReason.QUERY_EXHAUSTED
+            )
+        metadata = payload.get("search_metadata") or {}
+        provider_request_id = (
+            str(metadata.get("id") or "").strip()
+            if isinstance(metadata, dict)
+            else ""
+        ) or f"serpapi-unreported:{query.query_id}:{page_number}"
+        return SearchPage(
+            hits=hits,
+            next_cursor=next_cursor,
+            page_number=page_number,
+            reported_total_results=reported_total,
+            reported_total_pages=reported_pages,
+            provider_request_id=provider_request_id,
+            stop_reason=stop_reason,
+        )
+
+    @staticmethod
+    def _decode_page_cursor(cursor: str | None) -> int:
+        if cursor is None:
+            return 1
+        match = re.fullmatch(r"page:([1-9][0-9]{0,6})", cursor)
+        if match is None:
+            raise ValueError("invalid SerpAPI page cursor")
+        page = int(match.group(1))
+        if page <= 1:
+            raise ValueError("continuation cursor must target page 2 or later")
+        return page
+
+    @staticmethod
+    def _next_page_number(value: Any, current_page: int) -> int | None:
+        if not value:
+            return None
+        parsed = urlparse(str(value))
+        raw = parse_qs(parsed.query).get("page", [])
+        if len(raw) != 1 or not raw[0].isdigit():
+            raise ValueError("SerpAPI next pagination URL has no valid page")
+        page = int(raw[0])
+        if page <= current_page:
+            raise ValueError("SerpAPI next page must advance monotonically")
+        return page
+
+    @staticmethod
+    def _optional_count(value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            raise ValueError("SerpAPI count must be an integer")
+        normalized = str(value).replace(",", "").strip()
+        if not normalized.isdigit():
+            raise ValueError("SerpAPI count must be an integer")
+        return int(normalized)
 
     async def fetch(self, request: FetchRequest) -> FetchedDocument:
         publication = (request.publication_number or "").replace(" ", "").upper()
