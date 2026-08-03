@@ -29,6 +29,9 @@ LANDSCAPE_KEYED_STEPS_SCHEMA_PATH = Path(
 LANDSCAPE_REPAIR_SNAPSHOTS_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/075_landscape_repair_snapshots.sql"
 )
+LANDSCAPE_TAXONOMY_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/080_landscape_taxonomy.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -57,6 +60,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_repair_snapshots_sql = (
             LANDSCAPE_REPAIR_SNAPSHOTS_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_taxonomy_sql = LANDSCAPE_TAXONOMY_SCHEMA_PATH.read_text(
+            encoding="utf-8"
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -170,6 +176,23 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("PRIMARY KEY(run_id, repair_round, company_id)", sql)
         self.assertIn("PRIMARY KEY(run_id, repair_round)", sql)
         self.assertIn("'075_landscape_repair_snapshots'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_taxonomy_is_versioned_relational_and_immutable(self) -> None:
+        sql = self.landscape_taxonomy_sql
+        for table in (
+            "landscape_taxonomy_versions",
+            "landscape_taxonomy_categories",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("PRIMARY KEY(taxonomy_version, category_id)", sql)
+        self.assertIn("FOREIGN KEY(taxonomy_version, parent_id)", sql)
+        self.assertIn("prevent_landscape_taxonomy_mutation", sql)
+        self.assertIn("BEFORE UPDATE OR DELETE", sql)
+        self.assertIn("'080_landscape_taxonomy'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)

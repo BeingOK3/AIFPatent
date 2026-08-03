@@ -67,8 +67,8 @@ class LandscapeV4CurrentImplementationAuditTests(unittest.TestCase):
 
     def test_landscape_migration_inventory_matches_repository(self) -> None:
         migration_root = ROOT / "deploy" / "rag" / "postgres-init"
-        actual = sorted(path.name for path in migration_root.glob("*_landscape_*.sql"))
-        self.assertEqual(actual, self.audit["postgres_migrations"])
+        actual = sorted(path.name for path in migration_root.glob("07[0-5]_landscape_*.sql"))
+        self.assertEqual(actual, self.audit["legacy_postgres_migrations"])
         self.assertEqual(actual[-1], "075_landscape_repair_snapshots.sql")
 
 

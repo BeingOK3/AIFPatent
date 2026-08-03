@@ -55,7 +55,7 @@
       "CLUSTER_PATENTS"
     ]
   },
-  "postgres_migrations": [
+  "legacy_postgres_migrations": [
     "070_landscape_company_analysis.sql",
     "071_landscape_company_assignment_manifest.sql",
     "072_landscape_document_fetches.sql",
