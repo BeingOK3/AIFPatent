@@ -8,35 +8,27 @@
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <p class="eyebrow">AIFPATENT / LANDSCAPE</p>
-      <h1>专利态势分析</h1>
-      <p class="subtitle">按公开日窗口观察技术方向或目标公司的新公开专利。</p>
-    </div>
+    <div><p class="eyebrow">AIFPATENT / LANDSCAPE</p><h1>专利态势分析</h1><p class="subtitle">先确认公司、双语技术词和公开日区间，再执行可审计的专利检索。</p></div>
     <nav><a href="/">返回 IDEA 工作台</a></nav>
   </header>
 
   <main class="layout">
     <section class="panel input-panel" aria-labelledby="input-title">
-      <div class="panel-heading"><div><p class="eyebrow">NEW ANALYSIS</p><h2 id="input-title">创建分析</h2></div><span class="badge">MVP · 非 RAG</span></div>
+      <div class="panel-heading"><div><p class="eyebrow">SCOPE DRAFT</p><h2 id="input-title">准备检索范围</h2></div><span class="badge">先审查，再检索</span></div>
       <form id="landscape-form">
         <div id="derived-mode" class="derived-mode" role="status">当前分析模式：等待输入</div>
-        <label class="field" id="direction-field"><span>具体技术方向 <small>可选；与友商同时填写时执行联合检索</small></span><input id="technology-direction" maxlength="500" placeholder="例如：数据中心液冷散热"></label>
-        <label class="field" id="competitor-field"><span>重点友商（即检索公司） <small>可选；每行“公司名称 | GROUP/ENTITY”，省略时为 GROUP。GROUP 是集团/品牌名称文本口径，不代表股权穿透；系统自动识别专利申请人别名。</small></span><textarea id="competitors" rows="3" placeholder="华为 | GROUP
-三星 | GROUP"></textarea></label>
+        <label class="field" id="direction-field"><span>技术方向 <small>可选；AI 将生成可审查的中英文检索词</small></span><input id="technology-direction" maxlength="500" placeholder="例如：数据中心液冷散热"></label>
+        <label class="field" id="competitor-field"><span>公司 <small>可选；每行一个，可填写 1～50 个公司或集团</small></span><textarea id="competitors" rows="4" placeholder="华为&#10;三星"></textarea></label>
         <div class="two-columns">
-          <label class="field"><span>公开时间段</span><select id="period-preset"><option value="ONE_MONTH">近 1 个月</option><option value="QUARTER" selected>近 1 个季度</option><option value="SIX_MONTHS">近 6 个月</option><option value="TWELVE_MONTHS">近 12 个月</option><option value="CUSTOM">自定义</option></select></label>
-          <div class="field"><span>公开日窗口</span><div class="date-range"><input id="publication-start" type="date" required><input id="publication-end" type="date" required></div></div>
+          <label class="field"><span>快捷时间范围</span><select id="period-preset"><option value="ONE_YEAR">近 1 年</option><option value="THREE_YEARS">近 3 年</option><option value="FIVE_YEARS" selected>近 5 年</option><option value="TEN_YEARS">近 10 年</option><option value="CUSTOM">自定义</option></select></label>
+          <div class="field"><span>公开日区间（含起止日）</span><div class="date-range"><input id="publication-start" type="date" required aria-label="公开日起始日"><input id="publication-end" type="date" required aria-label="公开日结束日"></div></div>
         </div>
-        <details class="advanced"><summary>检索预算</summary><div class="two-columns">
-          <label class="field"><span>候选上限</span><input id="candidate-limit" type="number" min="10" max="200" value="100"></label>
-          <label class="field"><span>逐件精读上限</span><input id="analysis-limit" type="number" min="1" max="50" value="20"></label>
-        </div></details>
-        <div class="secret-box"><label class="field"><span>模型 API Key <b>*</b></span><input id="api-key" type="password" autocomplete="off" required placeholder="仅本次 Run 使用，不会保存"></label><div class="two-columns">
-          <label class="field"><span>Base URL</span><input id="base-url" value="https://api.deepseek.com" required></label>
-          <label class="field"><span>模型</span><input id="model" value="deepseek-v4-flash" required></label>
-        </div><p class="muted">SerpAPI 凭证由服务端本地私密 JSON 配置读取，不经过浏览器提交。</p></div>
-        <button class="primary" id="submit-button" type="submit">开始分析 <span>→</span></button>
+        <div class="secret-box">
+          <label class="field"><span>模型 API Key <b>*</b></span><input id="api-key" type="password" autocomplete="off" required placeholder="仅用于本次范围扩展，不会保存"></label>
+          <div class="two-columns"><label class="field"><span>Base URL</span><input id="base-url" value="https://ark.cn-beijing.volces.com/api/coding/v3" required></label><label class="field"><span>模型</span><input id="model" value="deepseek-v4-flash" required></label></div>
+          <p class="muted">凭证只存在于当前请求内，不写入草稿、数据库、日志或浏览器存储。</p>
+        </div>
+        <button class="primary" id="submit-button" type="submit">生成可审查范围 <span>→</span></button>
         <p id="form-message" class="form-message" role="status"></p>
       </form>
     </section>
@@ -45,6 +37,16 @@
       <div class="panel-heading"><div><p class="eyebrow">RUN HISTORY</p><h2 id="history-title">历史任务</h2></div><button id="refresh-history" class="icon-button" title="刷新">↻</button></div>
       <div id="history-list" class="history-list"><p class="muted">正在加载…</p></div>
     </aside>
+
+    <section id="scope-review-panel" class="panel scope-review-panel hidden" aria-labelledby="scope-review-title">
+      <div class="panel-heading"><div><p class="eyebrow">HUMAN REVIEW</p><h2 id="scope-review-title">审查检索范围</h2></div><span id="scope-review-status" class="status">DRAFT</span></div>
+      <p id="scope-review-summary" class="review-summary"></p>
+      <div id="scope-limitations" class="review-limitations"></div>
+      <div id="company-review-list"></div>
+      <div id="technology-review"><input id="new-technology-term" class="hidden" aria-hidden="true"></div>
+      <div class="review-actions"><button id="resume-scope-expansion" type="button" class="secondary hidden">继续模型扩展</button><button id="save-scope-review" type="button" class="secondary">保存审查进度</button><button id="confirm-scope" type="button" class="primary">确认并冻结范围 <span>→</span></button></div>
+      <p id="scope-review-message" class="form-message" role="status"></p>
+    </section>
 
     <section id="run-panel" class="panel run-panel hidden" aria-live="polite">
       <div class="run-header"><div><p class="eyebrow">RUN STATUS</p><h2 id="run-title">专利态势分析</h2></div><div class="run-actions"><span id="run-status" class="status">QUEUED</span><button id="cancel-run" class="secondary hidden">取消任务</button></div></div>

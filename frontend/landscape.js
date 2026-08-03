@@ -3,7 +3,7 @@
 
   const $ = (id) => document.getElementById(id);
   const TERMINAL = new Set(["COMPLETED", "COMPLETED_WITH_LIMITATIONS", "FAILED", "CANCELLED"]);
-  const state = { runId: null, events: null, report: null, debugLoadedAt: 0 };
+  const state = { runId: null, events: null, report: null, debugLoadedAt: 0, scopeDraft: null };
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
@@ -12,36 +12,31 @@
   function shiftMonths(source, months) { const value = new Date(`${source}T00:00:00Z`); const monthIndex = value.getUTCFullYear() * 12 + value.getUTCMonth() - months; const year = Math.floor(monthIndex / 12); const month = ((monthIndex % 12) + 12) % 12; const day = Math.min(value.getUTCDate(), new Date(Date.UTC(year, month + 1, 0)).getUTCDate()); return new Date(Date.UTC(year, month, day)).toISOString().slice(0, 10); }
   function presetDates() {
     const end = today(); const preset = $("period-preset").value;
-    const months = { ONE_MONTH: 1, QUARTER: 3, SIX_MONTHS: 6, TWELVE_MONTHS: 12 }[preset];
+    const months = { ONE_YEAR: 12, THREE_YEARS: 36, FIVE_YEARS: 60, TEN_YEARS: 120 }[preset];
     if (months) { $("publication-start").value = shiftMonths(end, months); $("publication-end").value = end; }
   }
   function derivedMode() {
     const hasDirection = Boolean($("technology-direction").value.trim());
-    const hasCompetitor = parseCompetitors().length > 0;
-    if (hasDirection && hasCompetitor) return "TECHNOLOGY_COMPETITOR";
-    if (hasDirection) return "TECHNOLOGY";
-    if (hasCompetitor) return "COMPETITOR";
+    const hasCompetitor = parseCompanies().length > 0;
+    if (hasDirection && hasCompetitor) return "COMPANY_AND_TECHNOLOGY";
+    if (hasDirection) return "TECHNOLOGY_ONLY";
+    if (hasCompetitor) return "COMPANY_ONLY";
     return null;
   }
   function updateMode() {
     const mode = derivedMode();
     const labels = {
-      TECHNOLOGY: "技术方向",
-      COMPETITOR: "重点友商（检索公司）",
-      TECHNOLOGY_COMPETITOR: "技术方向 + 重点友商（检索公司）",
+      TECHNOLOGY_ONLY: "仅技术方向",
+      COMPANY_ONLY: "仅公司",
+      COMPANY_AND_TECHNOLOGY: "公司 + 技术方向",
     };
     $("derived-mode").textContent = mode ? `当前分析模式：${labels[mode]}（系统自动判定）` : "当前分析模式：等待输入";
   }
-  function parseCompetitors(strict = false) {
-    return $("competitors").value.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-      const fields = line.split("|").map((value) => value.trim());
-      const name = fields[0]; const rawScope = (fields[1] || "GROUP").toUpperCase();
-      if (!name || fields.length > 2 || !["ENTITY", "GROUP"].includes(rawScope)) {
-        if (strict) throw new Error("重点友商每行应为“公司名称 | GROUP”或“公司名称 | ENTITY”。");
-        return { name: name || line, aliases: [], assignee_scope: "GROUP" };
-      }
-      return { name, aliases: [], assignee_scope: rawScope };
-    });
+  function parseCompanies() {
+    const values = $("competitors").value.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (values.length > 50) throw new Error("一次最多填写 50 个公司。");
+    if (new Set(values.map(normalizeText)).size !== values.length) throw new Error("公司名称存在重复项。");
+    return values;
   }
   function collectRuntimeConfig() {
     const baseUrl = $("base-url").value.trim();
@@ -49,28 +44,17 @@
       throw new Error("模型 Base URL 必须是一条完整地址；请不要重复粘贴 URL。");
     }
     const apiKey = $("api-key").value.trim();
-    if (!apiKey) throw new Error("请填写模型 API Key 后再启动精读；密钥只在本次请求中使用。");
+    if (!apiKey) throw new Error("请填写模型 API Key；密钥只在本次请求中使用。");
     return {
       api_key: apiKey,
       base_url: baseUrl,
       model: $("model").value.trim(),
     };
   }
-  function collectPayload() {
-    const mode = derivedMode();
-    return {
-      ...collectRuntimeConfig(),
-      scope: {
-        mode,
-        technology_direction: $("technology-direction").value.trim() || null,
-        competitors: parseCompetitors(true),
-        period_preset: $("period-preset").value,
-        publication_start: $("publication-start").value,
-        publication_end: $("publication-end").value,
-        budget: { candidate_limit: Number($("candidate-limit").value), analysis_limit: Number($("analysis-limit").value), per_query_limit: 50 },
-      },
-    };
-  }
+  function normalizeText(value) { return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase(); }
+  function stableId(prefix) { const bytes = crypto.getRandomValues(new Uint8Array(8)); return `${prefix}-${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`; }
+  function detectLanguage(value) { if (/[\u3400-\u4dbf\u4e00-\u9fff]/u.test(value)) return "ZH"; if (/[A-Za-z]/u.test(value)) return "EN"; return "OTHER"; }
+  function draftMode(draft) { if (draft.companies.length && draft.technology_input) return "COMPANY_AND_TECHNOLOGY"; return draft.companies.length ? "COMPANY_ONLY" : "TECHNOLOGY_ONLY"; }
   async function jsonRequest(url, options = {}) {
     const response = await fetch(url, { headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
     const body = await response.json().catch(() => ({}));
@@ -79,11 +63,76 @@
   }
   async function submit(event) {
     event.preventDefault(); $("form-message").textContent = ""; $("submit-button").disabled = true;
-    if (!derivedMode()) { $("form-message").textContent = "请至少填写具体技术方向或重点友商（检索公司）。"; $("submit-button").disabled = false; return; }
-    try { const run = await jsonRequest("/api/landscape/runs", { method: "POST", body: JSON.stringify(collectPayload()) }); state.runId = run.run_id; showRun(run); connectEvents(run.run_id); await loadHistory(); }
+    if (!derivedMode()) { $("form-message").textContent = "请至少填写技术方向或一个公司。"; $("submit-button").disabled = false; return; }
+    try {
+      const created = await jsonRequest("/api/landscape/scope-drafts", { method: "POST", body: JSON.stringify({ company_names: parseCompanies(), technology_input: $("technology-direction").value.trim() || null, publication_start: $("publication-start").value, publication_end: $("publication-end").value }) });
+      rememberDraft(created);
+      $("form-message").textContent = "范围草稿已保存，正在并发扩展公司名称和双语技术词…";
+      await expandScopeDraft();
+    }
     catch (error) { $("form-message").textContent = error.message; }
     finally { $("submit-button").disabled = false; }
   }
+
+  function rememberDraft(draft) {
+    state.scopeDraft = draft;
+    const url = new URL(window.location.href); url.searchParams.set("scopeDraft", draft.draft_id); history.replaceState(null, "", url);
+    renderScopeDraft();
+  }
+  async function expandScopeDraft() {
+    const draft = state.scopeDraft;
+    if (!draft || !["DRAFT", "EXPANDING"].includes(draft.status)) return;
+    const expanded = await jsonRequest(`/api/landscape/scope-drafts/${encodeURIComponent(draft.draft_id)}/expand`, { method: "POST", body: JSON.stringify({ expected_revision: draft.revision, ...collectRuntimeConfig() }) });
+    rememberDraft(expanded); $("form-message").textContent = "扩展完成，请逐项审查后确认。";
+  }
+  function decisionOptions(item, company = false) {
+    const current = item.status === "PROPOSED" ? "" : item.status === "ACTIVE" ? "ACTIVE" : `EXCLUDED:${item.memory_action || "NONE"}`;
+    const options = [["", "请选择"], ["ACTIVE", "纳入本次检索"], ["EXCLUDED:NONE", "仅本次排除"]];
+    if (company) options.push(["EXCLUDED:REJECT", "长期拒绝，不再建议"]);
+    if (company && item.source === "HISTORY") options.push(["EXCLUDED:RETIRE", "从长期档案停用"]);
+    return options.map(([value, label]) => `<option value="${value}"${value === current ? " selected" : ""}>${label}</option>`).join("");
+  }
+  function candidateRow(item, company) {
+    return `<div class="candidate-row"><div><strong>${escapeHtml(item.text)}</strong><small>${escapeHtml(item.language)} · ${escapeHtml(company ? item.relation_type : item.relation_to_original)} · ${escapeHtml(item.source)}</small>${item.rationale ? `<p>${escapeHtml(item.rationale)}</p>` : ""}</div><select class="${company ? "company" : "term"}-decision" data-id="${escapeHtml(company ? item.name_id : item.term_id)}" aria-label="审查 ${escapeHtml(item.text)}">${decisionOptions(item, company)}</select></div>`;
+  }
+  function renderScopeDraft() {
+    const draft = state.scopeDraft; if (!draft) return;
+    $("scope-review-panel").classList.remove("hidden"); $("scope-review-status").textContent = draft.status;
+    $("scope-review-summary").textContent = `${draftMode(draft)} · 公开日 ${draft.publication_start} 至 ${draft.publication_end}（含起止日）· 修订 ${draft.revision}`;
+    $("scope-limitations").innerHTML = (draft.limitations || []).map((item) => `<div class="limitation"><b>${escapeHtml(item.code)}</b>：${escapeHtml(item.message)}</div>`).join("");
+    $("company-review-list").innerHTML = (draft.companies || []).map((company) => `<section class="review-group" data-profile-id="${escapeHtml(company.profile_id)}"><h3>${escapeHtml(company.display_name)}</h3><p class="muted">别名、法律名称、子公司和集团成员会分开标注；修改名称请新增正确项并排除原项。</p>${company.names.map((item) => candidateRow(item, true)).join("")}<div class="add-candidate"><input class="new-company-name" maxlength="300" placeholder="新增公司名称或别名"><button type="button" class="secondary add-company-name">添加并纳入</button></div></section>`).join("");
+    $("technology-review").innerHTML = draft.technology_input ? `<section class="review-group"><h3>双语技术检索词</h3><p class="muted">确认时至少保留一个中文词和一个英文词。</p>${draft.technology_terms.map((item) => candidateRow(item, false)).join("")}<div class="add-candidate"><input id="new-technology-term" maxlength="300" placeholder="新增中文或英文技术词"><button type="button" id="add-technology-term" class="secondary">添加并纳入</button></div></section>` : "";
+    const resumable = ["DRAFT", "EXPANDING"].includes(draft.status); $("resume-scope-expansion").classList.toggle("hidden", !resumable); $("save-scope-review").classList.toggle("hidden", draft.status !== "AWAITING_CONFIRMATION"); $("confirm-scope").classList.toggle("hidden", draft.status !== "AWAITING_CONFIRMATION");
+  }
+  function addCompanyName(button) {
+    captureReviewDecisions(state.scopeDraft, false);
+    const group = button.closest(".review-group"); const input = group.querySelector(".new-company-name"); const text = input.value.trim(); if (!text) return;
+    const company = state.scopeDraft.companies.find((item) => item.profile_id === group.dataset.profileId); const normalized = normalizeText(text);
+    if (company.names.some((item) => item.normalized_text === normalized)) throw new Error("该公司名称已在候选中。");
+    company.names.push({ name_id: stableId("CNM"), text, normalized_text: normalized, language: detectLanguage(text), relation_type: "ALIAS", source: "USER_ADDED", status: "ACTIVE", memory_action: "NONE", rationale: "用户在范围审查中新增" }); renderScopeDraft();
+  }
+  function addTechnologyTerm() {
+    captureReviewDecisions(state.scopeDraft, false);
+    const input = $("new-technology-term"); const text = input.value.trim(); if (!text) return; const normalized = normalizeText(text);
+    const language = detectLanguage(text); if (language === "OTHER") throw new Error("技术词必须包含中文或英文字母。");
+    if (state.scopeDraft.technology_terms.some((item) => item.normalized_text === normalized)) throw new Error("该技术词已在候选中。");
+    state.scopeDraft.technology_terms.push({ term_id: stableId("TRM"), text, normalized_text: normalized, language, relation_to_original: "RELATED", source: "USER_ADDED", status: "ACTIVE", rationale: "用户在范围审查中新增" }); renderScopeDraft();
+  }
+  function captureReviewDecisions(draft, requireAll) {
+    const decisions = new Map(Array.from(document.querySelectorAll(".company-decision,.term-decision"), (item) => [item.dataset.id, item.value]));
+    const apply = (item, id) => { const value = decisions.get(id); if (!value) { if (requireAll) throw new Error(`仍有未审查候选：${item.text}`); return; } const [status, action = "NONE"] = value.split(":"); item.status = status; if ("memory_action" in item) item.memory_action = action; };
+    draft.companies.forEach((company) => company.names.forEach((item) => apply(item, item.name_id))); draft.technology_terms.forEach((item) => apply(item, item.term_id)); return draft;
+  }
+  function reviewedDraft() {
+    const draft = captureReviewDecisions(structuredClone(state.scopeDraft), true); draft.revision += 1; draft.status = "AWAITING_CONFIRMATION"; return draft;
+  }
+  async function saveScopeReview() {
+    try { const current = state.scopeDraft; const draft = reviewedDraft(); const saved = await jsonRequest(`/api/landscape/scope-drafts/${encodeURIComponent(current.draft_id)}`, { method: "PATCH", body: JSON.stringify({ expected_revision: current.revision, draft }) }); rememberDraft(saved); $("scope-review-message").textContent = "审查进度已保存。"; return saved; } catch (error) { $("scope-review-message").textContent = error.message; throw error; }
+  }
+  async function confirmScope() {
+    try { const saved = await saveScopeReview(); const confirmed = await jsonRequest(`/api/landscape/scope-drafts/${encodeURIComponent(saved.draft_id)}/confirm`, { method: "POST", body: JSON.stringify({ expected_revision: saved.revision }) }); $("scope-review-status").textContent = "CONFIRMED"; $("scope-review-message").textContent = `范围已冻结：${confirmed.scope_revision_id}。正式检索只会读取这份不可变范围。`; $("save-scope-review").classList.add("hidden"); $("confirm-scope").classList.add("hidden"); } catch (error) { $("scope-review-message").textContent = error.message; }
+  }
+  async function restoreScopeDraft() { const id = new URL(window.location.href).searchParams.get("scopeDraft"); if (!id) return; try { rememberDraft(await jsonRequest(`/api/landscape/scope-drafts/${encodeURIComponent(id)}`)); } catch (error) { $("form-message").textContent = `无法恢复范围草稿：${error.message}`; } }
   function connectEvents(runId) {
     if (state.events) state.events.close(); state.events = new EventSource(`/api/landscape/runs/${encodeURIComponent(runId)}/events`);
     state.events.onmessage = (event) => { const payload = JSON.parse(event.data); if (payload.data) showRun(payload.data); if (payload.type === "terminal") { state.events.close(); loadReport(runId); loadDebug(runId, true); loadHistory(); } };
@@ -168,5 +217,8 @@
   async function cancelRun() { if (!state.runId) return; try { const run = await jsonRequest(`/api/landscape/runs/${encodeURIComponent(state.runId)}/cancel`, { method: "POST", body: "{}" }); showRun(run); } catch (error) { $("form-message").textContent = error.message; } }
 
   $("landscape-form").addEventListener("submit", submit); $("refresh-history").addEventListener("click", loadHistory); $("cancel-run").addEventListener("click", cancelRun); $("period-preset").addEventListener("change", presetDates); $("technology-direction").addEventListener("input", updateMode); $("competitors").addEventListener("input", updateMode);
-  presetDates(); updateMode(); loadHistory();
+  $("resume-scope-expansion").addEventListener("click", async () => { try { await expandScopeDraft(); } catch (error) { $("scope-review-message").textContent = error.message; } });
+  $("save-scope-review").addEventListener("click", () => saveScopeReview().catch(() => {})); $("confirm-scope").addEventListener("click", confirmScope);
+  $("scope-review-panel").addEventListener("click", (event) => { try { const companyButton = event.target.closest(".add-company-name"); if (companyButton) addCompanyName(companyButton); if (event.target.id === "add-technology-term") addTechnologyTerm(); } catch (error) { $("scope-review-message").textContent = error.message; } });
+  presetDates(); updateMode(); restoreScopeDraft(); loadHistory();
 })();
