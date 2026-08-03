@@ -30,6 +30,9 @@ class MemoryRepository:
         self.writes.append(scope)
         return scope
 
+    def get(self, draft_id):
+        return self.drafts[draft_id]
+
     def update(self, scope, *, expected_revision):
         current = self.drafts[scope.draft_id]
         if current.revision != expected_revision:
@@ -82,6 +85,26 @@ class ExpansionStub:
 
 
 class LandscapeScopePreparationServiceTests(unittest.TestCase):
+    def test_create_is_persisted_before_any_model_expansion(self) -> None:
+        repository = MemoryRepository()
+        expansion = ExpansionStub()
+        service = ScopeDraftPreparationService(repository, expansion)
+        created = service.create_draft(
+            company_names=("华为",),
+            technology_input="数据中心液冷",
+            publication_start=date(2010, 1, 1),
+            publication_end=date(2026, 12, 31),
+            draft_id="SCD-0000000000000005",
+        )
+        self.assertEqual(created.status, ScopeDraftStatus.DRAFT)
+        self.assertEqual(created.revision, 1)
+        self.assertEqual(expansion.max_active, 0)
+        expanded = asyncio.run(
+            service.expand_draft(created.draft_id, expected_revision=1)
+        )
+        self.assertEqual(expanded.status, ScopeDraftStatus.AWAITING_CONFIRMATION)
+        self.assertEqual(expanded.revision, 3)
+
     def test_company_expansions_are_bounded_and_stage_revisions_are_persisted(self) -> None:
         repository = MemoryRepository()
         expansion = ExpansionStub()

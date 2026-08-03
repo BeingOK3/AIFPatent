@@ -29,6 +29,7 @@ class ScopePreparationError(ValueError):
 class ScopeDraftRepositoryPort(Protocol):
     def find_company_memory(self, input_name: str) -> CompanyProfileMemory | None: ...
     def create(self, scope: ScopeDraft) -> ScopeDraft: ...
+    def get(self, draft_id: str) -> ScopeDraft: ...
     def update(self, scope: ScopeDraft, *, expected_revision: int) -> ScopeDraft: ...
 
 
@@ -75,6 +76,27 @@ class ScopeDraftPreparationService:
         publication_end: date,
         draft_id: str | None = None,
     ) -> ScopeDraft:
+        initial = self.create_draft(
+            company_names=company_names,
+            technology_input=technology_input,
+            publication_start=publication_start,
+            publication_end=publication_end,
+            draft_id=draft_id,
+        )
+        return await self.expand_draft(
+            initial.draft_id,
+            expected_revision=initial.revision,
+        )
+
+    def create_draft(
+        self,
+        *,
+        company_names: tuple[str, ...] = (),
+        technology_input: str | None = None,
+        publication_start: date,
+        publication_end: date,
+        draft_id: str | None = None,
+    ) -> ScopeDraft:
         companies = _validate_company_inputs(company_names)
         technology = technology_input.strip() if technology_input else None
         if not companies and not technology:
@@ -108,11 +130,38 @@ class ScopeDraftPreparationService:
             technology_input=technology,
             technology_terms=initial_terms,
         )
-        self.repository.create(initial)
-        expanding = initial.model_copy(
-            update={"revision": 2, "status": ScopeDraftStatus.EXPANDING}
+        return self.repository.create(initial)
+
+    async def expand_draft(
+        self,
+        draft_id: str,
+        *,
+        expected_revision: int,
+    ) -> ScopeDraft:
+        initial = self.repository.get(draft_id)
+        if initial.revision != expected_revision:
+            raise ScopePreparationError(
+                f"scope draft revision changed: expected {expected_revision}, "
+                f"found {initial.revision}"
+            )
+        if initial.status != ScopeDraftStatus.DRAFT:
+            raise ScopePreparationError("only a DRAFT scope can be expanded")
+
+        companies = tuple(company.input_name for company in initial.companies)
+        memories = tuple(
+            CompanyProfileMemory(profile_version=0, company=company)
+            for company in initial.companies
         )
-        self.repository.update(expanding, expected_revision=1)
+        technology = initial.technology_input
+        initial_terms = initial.technology_terms
+        expanding_revision = initial.revision + 1
+        expanding = initial.model_copy(
+            update={
+                "revision": expanding_revision,
+                "status": ScopeDraftStatus.EXPANDING,
+            }
+        )
+        self.repository.update(expanding, expected_revision=initial.revision)
 
         semaphore = asyncio.Semaphore(self.max_company_concurrency)
 
@@ -167,7 +216,7 @@ class ScopeDraftPreparationService:
                 )
                 continue
             final_companies.append(result)
-            base_count = len(memory.company.names) if memory else 1
+            base_count = len(memory.company.names)
             if len(result.names) - base_count >= 40:
                 limitations.append(
                     ScopeDraftLimitation(
@@ -200,17 +249,19 @@ class ScopeDraftPreparationService:
                 )
 
         reviewable = ScopeDraft(
-            draft_id=identity,
-            revision=3,
+            draft_id=initial.draft_id,
+            revision=expanding_revision + 1,
             status=ScopeDraftStatus.AWAITING_CONFIRMATION,
-            publication_start=publication_start,
-            publication_end=publication_end,
+            publication_start=initial.publication_start,
+            publication_end=initial.publication_end,
             companies=tuple(final_companies),
             technology_input=technology,
             technology_terms=tuple(final_terms),
             limitations=tuple(limitations),
         )
-        return self.repository.update(reviewable, expected_revision=2)
+        return self.repository.update(
+            reviewable, expected_revision=expanding_revision
+        )
 
 
 def _validate_company_inputs(values: tuple[str, ...]) -> tuple[str, ...]:
