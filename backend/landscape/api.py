@@ -191,6 +191,7 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
         except (ValueError, ScopePersistenceError) as exc:
             raise HTTPException(422, str(exc)) from exc
 
+    # @router.post("/runs") is the v4 formal Run endpoint (201 on success).
     @router.post("/runs", status_code=201)
     async def create_run(request: CreateLandscapeRunRequest):
         try:

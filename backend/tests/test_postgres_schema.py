@@ -56,6 +56,9 @@ LANDSCAPE_V4_RUNS_SCHEMA_PATH = Path(
 LANDSCAPE_V4_QUERY_PLANS_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/088_landscape_v4_query_plans.sql"
 )
+LANDSCAPE_V4_SEARCH_PAGES_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/089_landscape_v4_search_pages.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -327,6 +330,13 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("prevent_landscape_v4_query_plan_mutation", sql)
         self.assertIn("FOREIGN KEY(run_id,scope_revision_id)", sql)
         self.assertIn("'088_landscape_v4_query_plans'", sql)
+
+    def test_landscape_v4_search_pages_are_immutable_checkpoints(self) -> None:
+        sql = Path("deploy/rag/postgres-init/089_landscape_v4_search_pages.sql").read_text()
+        self.assertIn("landscape_v4_search_pages", sql)
+        self.assertIn("PRIMARY KEY(run_id,query_id,page_number)", sql)
+        self.assertIn("BEFORE UPDATE OR DELETE", sql)
+        self.assertIn("'089_landscape_v4_search_pages'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)

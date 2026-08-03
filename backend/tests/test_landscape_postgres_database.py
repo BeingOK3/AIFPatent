@@ -61,10 +61,10 @@ class LandscapePostgreSQLInitializationTests(unittest.TestCase):
 
         database.connect = connect  # type: ignore[method-assign]
         with self.assertRaisesRegex(
-            PostgreSQLPersistenceError, "088_landscape_v4_query_plans"
+            PostgreSQLPersistenceError, "089_landscape_v4_search_pages"
         ):
             database.initialize()
-        self.assertIn("088_landscape_v4_query_plans", queries[0])
+        self.assertIn("089_landscape_v4_search_pages", queries[0])
 
 
 class _CandidateConnection:
