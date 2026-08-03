@@ -17,6 +17,7 @@ from .schemas import LandscapeScope
 from .scope import ScopeDraft, ScopeDraftStatus
 from .scope_repository import ScopePersistenceError, ScopeRevisionConflict
 from .scope_service import ScopePreparationError
+from .run_repository import LandscapeRunPersistenceError
 from .store import LandscapeStoreError
 
 
@@ -63,8 +64,8 @@ class LandscapeRuntimeRequest(ApiModel):
             model=self.model,
         )
 
-class CreateLandscapeRunRequest(LandscapeRuntimeRequest):
-    scope: LandscapeScope
+class CreateLandscapeRunRequest(ApiModel):
+    scope_revision_id: str = Field(pattern=r"^SCR-[0-9a-f]{16}$")
 
 
 class DeleteLandscapeRunRequest(ApiModel):
@@ -188,31 +189,14 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
         except (ValueError, ScopePersistenceError) as exc:
             raise HTTPException(422, str(exc)) from exc
 
-    @router.post("/runs")
+    @router.post("/runs", status_code=201)
     async def create_run(request: CreateLandscapeRunRequest):
         try:
-            run = database.create_run(
-                scope=request.scope,
-                model=request.model,
-                workflow_version="landscape-workflow/1.0.0",
-                prompt_version="landscape-prompts/1.0.0",
-                config_snapshot={
-                    "model": request.model,
-                    "base_url": str(request.base_url).rstrip("/"),
-                    "credential_source": "per_run_memory",
-                    "serpapi_credential_source": "local_json",
-                },
+            return runtime.run_repository.create(
+                scope_revision_id=request.scope_revision_id,
+                taxonomy_version=runtime.taxonomy.taxonomy_version,
             )
-            store.initialize_run(
-                run["run_id"],
-                scope=request.scope,
-                model=request.model,
-                workflow_version=run["workflow_version"],
-                prompt_version=run["prompt_version"],
-            )
-            tasks.start(run["run_id"], request.runtime_config())
-            return _run_view(runtime, run["run_id"])
-        except (ValueError, LandscapeStoreError) as exc:
+        except (ValueError, ScopePersistenceError, LandscapeRunPersistenceError) as exc:
             raise HTTPException(422, str(exc))
 
     @router.get("/runs")

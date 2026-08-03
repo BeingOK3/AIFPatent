@@ -50,6 +50,9 @@ LANDSCAPE_V4_SCOPE_LIMITATIONS_SCHEMA_PATH = Path(
 LANDSCAPE_V4_COMPANY_MEMORY_ACTIONS_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/086_landscape_v4_company_memory_actions.sql"
 )
+LANDSCAPE_V4_RUNS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/087_landscape_v4_runs.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -99,6 +102,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_v4_company_memory_actions_sql = (
             LANDSCAPE_V4_COMPANY_MEMORY_ACTIONS_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_v4_runs_sql = LANDSCAPE_V4_RUNS_SCHEMA_PATH.read_text(
+            encoding="utf-8"
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -286,6 +292,19 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("'NONE','REJECT','RETIRE'", sql)
         self.assertIn("'ACTIVE','REJECTED','RETIRED'", sql)
         self.assertIn("'086_landscape_v4_company_memory_actions'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_runs_require_immutable_scope_and_taxonomy_bindings(self) -> None:
+        sql = self.landscape_v4_runs_sql
+        self.assertIn("CREATE TABLE IF NOT EXISTS landscape_v4_runs", sql)
+        self.assertIn("REFERENCES landscape_v4_scope_revisions", sql)
+        self.assertIn("REFERENCES landscape_taxonomy_versions", sql)
+        self.assertIn("workflow_version = 'landscape-v4/1.0.0'", sql)
+        self.assertIn("prevent_landscape_v4_run_binding_mutation", sql)
+        self.assertIn("'087_landscape_v4_runs'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)

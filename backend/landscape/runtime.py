@@ -23,6 +23,7 @@ from .store import LandscapeRunStore
 from .scope_expansion import ScopeExpansionService
 from .scope_repository import PostgreSQLScopeDraftRepository
 from .scope_service import ScopeDraftPreparationService
+from .run_repository import PostgreSQLLandscapeRunRepository
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -121,6 +122,7 @@ class LandscapeRuntime:
     taxonomy: TaxonomyArtifact
     scope_repository: PostgreSQLScopeDraftRepository
     scope_service: ScopeDraftPreparationService
+    run_repository: PostgreSQLLandscapeRunRepository
 
 
 def build_landscape_runtime(
@@ -141,6 +143,12 @@ def build_landscape_runtime(
         / "landscape"
         / "classify.md"
     )
+    scope_repository = PostgreSQLScopeDraftRepository(dsn)
+    run_repository = PostgreSQLLandscapeRunRepository(
+        dsn,
+        scope_repository,
+        taxonomy_repository,
+    )
     store = LandscapeRunStore(runs_dir)
     harness = LandscapeWorkflowHarness(
         database,
@@ -148,7 +156,6 @@ def build_landscape_runtime(
         max_step_attempts=config.workflow.max_step_attempts,
     )
     model = StructuredModelClient(config.model)
-    scope_repository = PostgreSQLScopeDraftRepository(dsn)
     scope_service = ScopeDraftPreparationService(
         scope_repository,
         ScopeExpansionService(model),
@@ -215,4 +222,5 @@ def build_landscape_runtime(
         taxonomy,
         scope_repository,
         scope_service,
+        run_repository,
     )

@@ -24,6 +24,20 @@ class ApiRepository(MemoryRepository):
         }
 
 
+class ApiRunRepository:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **values):
+        self.calls.append(values)
+        return {
+            "run_id": "LRN-0000000000000001",
+            "scope_revision_id": values["scope_revision_id"],
+            "taxonomy_version": values["taxonomy_version"],
+            "status": "PLANNING",
+        }
+
+
 def app_fixture():
     repository = ApiRepository()
     service = ScopeDraftPreparationService(repository, ExpansionStub(delay=0))
@@ -33,6 +47,8 @@ def app_fixture():
         tasks=object(),
         scope_repository=repository,
         scope_service=service,
+        run_repository=ApiRunRepository(),
+        taxonomy=SimpleNamespace(taxonomy_version="landscape-taxonomy/fixture"),
     )
     app = FastAPI()
     app.include_router(create_landscape_router(runtime))
@@ -40,6 +56,32 @@ def app_fixture():
 
 
 class LandscapeScopeApiTests(unittest.TestCase):
+    def test_formal_run_accepts_only_a_confirmed_scope_revision(self) -> None:
+        async def scenario():
+            app, _repository = app_fixture()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+            ) as client:
+                bypass = await client.post(
+                    "/api/landscape/runs",
+                    json={
+                        "scope": {"mode": "COMPANY_ONLY"},
+                        "api_key": "must-not-be-accepted",
+                        "base_url": "https://example.test/v1",
+                        "model": "old-model",
+                    },
+                )
+                self.assertEqual(bypass.status_code, 422)
+                created = await client.post(
+                    "/api/landscape/runs",
+                    json={"scope_revision_id": "SCR-0000000000000001"},
+                )
+                self.assertEqual(created.status_code, 201)
+                self.assertEqual(created.json()["status"], "PLANNING")
+
+        asyncio.run(scenario())
+
     def test_create_get_expand_patch_and_confirm_are_separate_resources(self) -> None:
         async def scenario():
             app, repository = app_fixture()
@@ -181,6 +223,10 @@ class LandscapeScopeApiTests(unittest.TestCase):
                 tasks=object(),
                 scope_repository=repository,
                 scope_service=service,
+                run_repository=ApiRunRepository(),
+                taxonomy=SimpleNamespace(
+                    taxonomy_version="landscape-taxonomy/fixture"
+                ),
             )
             app = FastAPI()
             app.include_router(create_landscape_router(runtime))
