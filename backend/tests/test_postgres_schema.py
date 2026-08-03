@@ -32,6 +32,9 @@ LANDSCAPE_REPAIR_SNAPSHOTS_SCHEMA_PATH = Path(
 LANDSCAPE_TAXONOMY_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/080_landscape_taxonomy.sql"
 )
+LANDSCAPE_V4_SCOPE_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/081_landscape_v4_scope.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -62,6 +65,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
             LANDSCAPE_REPAIR_SNAPSHOTS_SCHEMA_PATH.read_text(encoding="utf-8")
         )
         self.landscape_taxonomy_sql = LANDSCAPE_TAXONOMY_SCHEMA_PATH.read_text(
+            encoding="utf-8"
+        )
+        self.landscape_v4_scope_sql = LANDSCAPE_V4_SCOPE_SCHEMA_PATH.read_text(
             encoding="utf-8"
         )
 
@@ -193,6 +199,38 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("prevent_landscape_taxonomy_mutation", sql)
         self.assertIn("BEFORE UPDATE OR DELETE", sql)
         self.assertIn("'080_landscape_taxonomy'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_scope_is_reviewable_versioned_and_clean_slate(self) -> None:
+        sql = self.landscape_v4_scope_sql
+        for table in (
+            "landscape_v4_company_profiles",
+            "landscape_v4_company_profile_versions",
+            "landscape_v4_company_names",
+            "landscape_v4_scope_drafts",
+            "landscape_v4_scope_draft_revisions",
+            "landscape_v4_scope_draft_companies",
+            "landscape_v4_scope_draft_names",
+            "landscape_v4_scope_draft_terms",
+            "landscape_v4_scope_revisions",
+            "landscape_v4_scope_companies",
+            "landscape_v4_scope_company_names",
+            "landscape_v4_scope_terms",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("'COMPANY_ONLY','TECHNOLOGY_ONLY','COMPANY_AND_TECHNOLOGY'", sql)
+        self.assertIn("'LEGAL_NAME','TRANSLATION','ALIAS','FORMER_NAME','SUBSIDIARY','GROUP_MEMBER'", sql)
+        self.assertIn("'PROPOSED','ACTIVE','EXCLUDED'", sql)
+        self.assertIn("publication_start DATE NOT NULL", sql)
+        self.assertIn("CHECK (publication_end >= publication_start)", sql)
+        self.assertIn("fk_landscape_v4_profile_version_scope_revision", sql)
+        self.assertIn("fk_landscape_v4_scope_draft_confirmed_revision", sql)
+        self.assertIn("DEFERRABLE INITIALLY DEFERRED", sql)
+        self.assertIn("prevent_landscape_v4_snapshot_mutation", sql)
+        self.assertIn("'081_landscape_v4_scope'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
