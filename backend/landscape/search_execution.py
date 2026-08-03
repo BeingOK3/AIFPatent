@@ -7,6 +7,7 @@ from typing import Protocol
 from idea.providers.base import PagedSearchProvider, SearchPage, SearchQuery
 
 from .query_planning import V4SearchQuery
+from .publication_freeze import FrozenPublicationSet, freeze_publications
 
 
 class SearchExecutionError(RuntimeError):
@@ -101,6 +102,19 @@ class PagedSearchExecutionService:
         # gather preserves deterministic plan order while allowing bounded
         # concurrency between independent query streams.
         return tuple(await asyncio.gather(*(one(query) for query in queries)))
+
+    @staticmethod
+    def freeze_results(
+        run_id: str, results: tuple[QuerySearchResult, ...]
+    ) -> FrozenPublicationSet:
+        return freeze_publications(
+            run_id,
+            tuple(
+                (result.query_id, hit)
+                for result in results
+                for hit in result.hits
+            ),
+        )
 
     @staticmethod
     def _validate_history(pages: tuple[SearchPage, ...]) -> None:

@@ -74,5 +74,14 @@ class LandscapeSearchExecutionTests(unittest.TestCase):
             await PagedSearchExecutionService().execute_query(BadProvider(), "run", plan.queries[0], Checkpoints())
         with self.assertRaises(SearchExecutionError): asyncio.run(scenario())
 
+    def test_completed_pages_can_be_frozen_into_publications(self):
+        plan = build_query_plan(confirmed_scope(companies=(("华为", ("华为",)),)))
+        provider, checkpoints = Provider(), Checkpoints()
+        service = PagedSearchExecutionService()
+        async def scenario():
+            return await service.execute_plan(provider, "run", plan.queries, checkpoints)
+        result = service.freeze_results("run", asyncio.run(scenario()))
+        self.assertEqual(result.publication_count, 2)
+
 
 if __name__ == "__main__": unittest.main()
