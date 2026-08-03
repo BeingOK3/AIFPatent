@@ -74,6 +74,67 @@ def make_scale_case(
     }
 
 
+def make_family_case() -> dict:
+    publications = [
+        _family_publication("PUB-APP-A", "CN118000001A", "CN202210000001", ["CN202110000001.0"]),
+        _family_publication("PUB-APP-B", "CN118000001B", "CN202210000001", ["CN202110000001.0"]),
+        _family_publication("PUB-SIMPLE-CN", "CN118000002A", "CN202210000002", ["PCT/CN2021/000002"]),
+        _family_publication("PUB-SIMPLE-WO", "WO2023000002A1", "PCT/CN2022/000002", ["PCT/CN2021/000002"]),
+        _family_publication("PUB-EXTENDED", "US2024000003A1", "US18000003", ["PCT/CN2021/000002", "US17000003"]),
+        _family_publication(
+            "PUB-DIVISIONAL",
+            "CN118000004A",
+            "CN202310000004",
+            ["CN202110000004.0"],
+            relationship="DIVISIONAL",
+            related_application="CN202210000004",
+        ),
+        _family_publication("PUB-PARENT", "CN118000005A", "CN202210000004", ["CN202110000004.0"]),
+        _family_publication("PUB-MISSING", "EP4000006A1", "EP23000006", []),
+    ]
+    return {
+        "schema_version": "landscape-family-fixture/1.0.0",
+        "case_name": "LAND-FAMILY",
+        "publications": publications,
+        "expected_analysis_units": {
+            "AU-SAME-APPLICATION": ["PUB-APP-A", "PUB-APP-B"],
+            "AU-SIMPLE-FAMILY": ["PUB-SIMPLE-CN", "PUB-SIMPLE-WO"],
+            "AU-EXTENDED-SEPARATE": ["PUB-EXTENDED"],
+            "AU-DIVISIONAL-SEPARATE": ["PUB-DIVISIONAL"],
+            "AU-PARENT-SEPARATE": ["PUB-PARENT"],
+            "AU-MISSING-SEPARATE": ["PUB-MISSING"],
+        },
+    }
+
+
+def make_classification_terminal_case() -> dict:
+    records = [
+        {"analysis_unit_id": f"AU-{index:03d}", "expected_terminal": terminal}
+        for index, terminal in enumerate(
+            (
+                "CLASSIFIED",
+                "CLASSIFIED",
+                "CLASSIFIED",
+                "CLASSIFIED",
+                "OTHERS",
+                "OTHERS",
+                "OTHERS",
+                "UNRESOLVED",
+                "UNRESOLVED",
+            ),
+            start=1,
+        )
+    ]
+    records[-2]["unresolved_reason"] = "ABSTRACT_MISSING"
+    records[-1]["unresolved_reason"] = "ABSTRACT_INSUFFICIENT"
+    return {
+        "schema_version": "landscape-terminal-fixture/1.0.0",
+        "case_name": "LAND-OTHERS",
+        "analysis_units": records,
+        "expected_counts": {"CLASSIFIED": 4, "OTHERS": 3, "UNRESOLVED": 2},
+    }
+
+
 def _scope(mode: str) -> dict:
     companies = [
         {"display_name": cn, "confirmed_names": [cn, en]}
@@ -127,4 +188,33 @@ def _publication(index: int, *, start: date) -> dict:
     }
 
 
-__all__ = ["INPUT_MODES", "SCALE_CASE_SIZES", "make_scale_case"]
+def _family_publication(
+    publication_id: str,
+    publication_number: str,
+    application_number: str,
+    priority_numbers: list[str],
+    *,
+    relationship: str | None = None,
+    related_application: str | None = None,
+) -> dict:
+    return {
+        "publication_id": publication_id,
+        "publication_number": publication_number,
+        "application_number": application_number,
+        "priority_numbers": priority_numbers,
+        "relationship": relationship,
+        "related_application": related_application,
+        "title": "一种无线信号处理方法",
+        "abstract": "系统根据导频信号估计信道状态，并使用估计结果恢复目标数据。",
+        "publication_date": "2024-01-01",
+        "source_url": f"https://patents.google.com/patent/{publication_number}",
+    }
+
+
+__all__ = [
+    "INPUT_MODES",
+    "SCALE_CASE_SIZES",
+    "make_classification_terminal_case",
+    "make_family_case",
+    "make_scale_case",
+]
