@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import unittest
+import uuid
+from contextlib import contextmanager
 from datetime import date
 
 from landscape.scope import (
@@ -20,10 +23,96 @@ from landscape.scope import (
     make_technology_term_candidate,
 )
 from landscape.scope_repository import (
+    PostgreSQLScopeDraftRepository,
     ScopePersistenceError,
+    ScopeRevisionConflict,
     prepare_scope_draft_rows,
     validate_persisted_scope_draft,
 )
+
+
+class _Result:
+    def __init__(self, *, row=None, rows=None, rowcount=0):
+        self._row = row
+        self._rows = list(rows or [])
+        self.rowcount = rowcount
+
+    def fetchone(self):
+        return self._row
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _BatchCursor:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def executemany(self, sql, values):
+        self.connection.batches.append((" ".join(sql.split()), list(values)))
+
+
+class _ScopeConnection:
+    def __init__(self, rows, *, inserted=True, current_revision=None, update_count=1):
+        self.rows = rows
+        self.inserted = inserted
+        self.current_revision = current_revision
+        self.update_count = update_count
+        self.statements = []
+        self.batches = []
+
+    def cursor(self):
+        return _BatchCursor(self)
+
+    def execute(self, sql, params=()):
+        normalized = " ".join(sql.split())
+        self.statements.append((normalized, params))
+        if normalized.startswith("INSERT INTO landscape_v4_scope_drafts"):
+            return _Result(
+                row={"draft_id": self.rows.draft["draft_id"]}
+                if self.inserted
+                else None,
+                rowcount=int(self.inserted),
+            )
+        if normalized.startswith("INSERT INTO landscape_v4_scope_draft_revisions"):
+            return _Result(rowcount=1)
+        if normalized.startswith("SELECT draft_id,revision,status FROM"):
+            if self.current_revision is None:
+                return _Result()
+            return _Result(
+                row={
+                    "draft_id": self.rows.draft["draft_id"],
+                    "revision": self.current_revision,
+                    "status": "DRAFT",
+                }
+            )
+        if normalized.startswith("UPDATE landscape_v4_scope_drafts"):
+            return _Result(rowcount=self.update_count)
+        if "FROM landscape_v4_scope_drafts" in normalized:
+            return _Result(row=self.rows.draft)
+        if "FROM landscape_v4_scope_draft_revisions" in normalized:
+            return _Result(row=self.rows.revision)
+        if "FROM landscape_v4_scope_draft_companies" in normalized:
+            return _Result(rows=self.rows.companies)
+        if "FROM landscape_v4_scope_draft_names" in normalized:
+            return _Result(rows=self.rows.names)
+        if "FROM landscape_v4_scope_draft_terms" in normalized:
+            return _Result(rows=self.rows.terms)
+        raise AssertionError(f"unexpected SQL: {normalized}")
+
+
+def repository_with(connection):
+    @contextmanager
+    def connect():
+        yield connection
+
+    return PostgreSQLScopeDraftRepository("postgresql://test", connect=connect)
 
 
 def fixture() -> ScopeDraft:
@@ -164,6 +253,132 @@ class LandscapeScopeRowCodecTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     prepare_scope_draft_rows(self.scope, created_at=value)  # type: ignore[arg-type]
+
+
+class LandscapeScopeDraftRepositoryTests(unittest.TestCase):
+    def test_create_writes_one_snapshot_and_reads_it_back(self) -> None:
+        scope = fixture().model_copy(update={"revision": 1, "status": ScopeDraftStatus.DRAFT})
+        rows = prepare_scope_draft_rows(scope, created_at=1234)
+        connection = _ScopeConnection(rows)
+
+        stored = repository_with(connection).create(scope)
+
+        self.assertEqual(stored, scope)
+        self.assertEqual(len(connection.batches), 3)
+        self.assertEqual([len(batch[1]) for batch in connection.batches], [1, 2, 2])
+
+    def test_create_is_idempotent_but_same_id_different_content_conflicts(self) -> None:
+        scope = fixture().model_copy(update={"revision": 1, "status": ScopeDraftStatus.DRAFT})
+        rows = prepare_scope_draft_rows(scope, created_at=1234)
+        self.assertEqual(repository_with(_ScopeConnection(rows, inserted=False)).create(scope), scope)
+
+        changed = scope.model_copy(update={"publication_end": date(2024, 12, 31)})
+        with self.assertRaisesRegex(ScopeRevisionConflict, "different content"):
+            repository_with(_ScopeConnection(rows, inserted=False)).create(changed)
+
+    def test_new_draft_must_start_at_revision_one(self) -> None:
+        connection = _ScopeConnection(prepare_scope_draft_rows(fixture(), created_at=1))
+        with self.assertRaisesRegex(ScopePersistenceError, "revision 1"):
+            repository_with(connection).create(fixture())
+        self.assertEqual(connection.statements, [])
+
+    def test_update_uses_locked_compare_and_swap_and_appends_revision(self) -> None:
+        scope = fixture().model_copy(update={"revision": 2, "status": ScopeDraftStatus.AWAITING_CONFIRMATION})
+        rows = prepare_scope_draft_rows(scope, created_at=1234)
+        connection = _ScopeConnection(rows, current_revision=1)
+
+        stored = repository_with(connection).update(scope, expected_revision=1)
+
+        self.assertEqual(stored, scope)
+        self.assertTrue(any("FOR UPDATE" in sql for sql, _ in connection.statements))
+        self.assertTrue(any(sql.startswith("UPDATE landscape_v4_scope_drafts") for sql, _ in connection.statements))
+        self.assertEqual(len(connection.batches), 3)
+
+    def test_update_rejects_stale_revision_before_writing(self) -> None:
+        scope = fixture().model_copy(update={"revision": 2})
+        rows = prepare_scope_draft_rows(scope, created_at=1234)
+        connection = _ScopeConnection(rows, current_revision=2)
+        with self.assertRaisesRegex(ScopeRevisionConflict, "found 2"):
+            repository_with(connection).update(scope, expected_revision=1)
+        self.assertFalse(any(sql.startswith("UPDATE ") for sql, _ in connection.statements))
+
+    def test_update_rejects_revision_gaps_and_confirmed_status(self) -> None:
+        revision_gap = fixture().model_copy(update={"revision": 4})
+        rows = prepare_scope_draft_rows(revision_gap, created_at=1234)
+        with self.assertRaisesRegex(ScopeRevisionConflict, "exactly"):
+            repository_with(_ScopeConnection(rows)).update(revision_gap, expected_revision=1)
+
+        confirmed = fixture().model_copy(update={"revision": 2, "status": ScopeDraftStatus.CONFIRMED})
+        confirmed_rows = prepare_scope_draft_rows(confirmed, created_at=1234)
+        with self.assertRaisesRegex(ScopeRevisionConflict, "confirmed"):
+            repository_with(_ScopeConnection(confirmed_rows, current_revision=1)).update(
+                confirmed, expected_revision=1
+            )
+@unittest.skipUnless(
+    os.environ.get("AIFPATENT_RUN_SCOPE_INTEGRATION") == "1",
+    "set AIFPATENT_RUN_SCOPE_INTEGRATION=1 to test real PostgreSQL Scope storage",
+)
+class LandscapeScopeDraftPostgreSQLIntegrationTests(unittest.TestCase):
+    def test_create_read_update_and_conflict_are_atomic_and_rollback_cleanly(self) -> None:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        raw = psycopg.connect(
+            os.environ["AIFPATENT_POSTGRES_DSN"],
+            row_factory=dict_row,
+            connect_timeout=10,
+        )
+        draft_id = make_scope_draft_id(f"integration-{uuid.uuid4().hex}")
+        initial = fixture().model_copy(
+            update={
+                "draft_id": draft_id,
+                "revision": 1,
+                "status": ScopeDraftStatus.DRAFT,
+            }
+        )
+
+        @contextmanager
+        def connect():
+            yield raw
+
+        repository = PostgreSQLScopeDraftRepository(
+            "postgresql://integration", connect=connect
+        )
+        try:
+            self.assertEqual(repository.create(initial), initial)
+            self.assertEqual(repository.create(initial), initial)
+            self.assertEqual(repository.get(draft_id), initial)
+
+            updated = initial.model_copy(
+                update={
+                    "revision": 2,
+                    "status": ScopeDraftStatus.AWAITING_CONFIRMATION,
+                    "publication_end": date(2026, 12, 31),
+                }
+            )
+            self.assertEqual(
+                repository.update(updated, expected_revision=1), updated
+            )
+            with self.assertRaises(ScopeRevisionConflict):
+                repository.update(updated.model_copy(update={"revision": 3}), expected_revision=1)
+            count = raw.execute(
+                """
+                SELECT count(*) AS count
+                FROM landscape_v4_scope_draft_revisions
+                WHERE draft_id=%s
+                """,
+                (draft_id,),
+            ).fetchone()["count"]
+            self.assertEqual(count, 2)
+        finally:
+            raw.rollback()
+        missing = raw.execute(
+            "SELECT count(*) AS count FROM landscape_v4_scope_drafts WHERE draft_id=%s",
+            (draft_id,),
+        ).fetchone()["count"]
+        raw.rollback()
+        raw.close()
+        self.assertEqual(missing, 0)
 
 
 if __name__ == "__main__":

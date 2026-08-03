@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
-from typing import Mapping, Sequence
+from typing import Callable, Iterator, Mapping, Sequence
 
 from pydantic import ValidationError
 
@@ -16,6 +17,10 @@ class ScopePersistenceError(RuntimeError):
     """Raised when persisted Scope data cannot be trusted."""
 
 
+class ScopeRevisionConflict(ScopePersistenceError):
+    """Raised when a caller attempts to overwrite a newer draft revision."""
+
+
 @dataclass(frozen=True)
 class PreparedScopeDraftRows:
     draft: dict
@@ -23,6 +28,256 @@ class PreparedScopeDraftRows:
     companies: tuple[dict, ...]
     names: tuple[dict, ...]
     terms: tuple[dict, ...]
+
+
+class PostgreSQLScopeDraftRepository:
+    """Transactional PostgreSQL repository for reviewable Scope drafts."""
+
+    def __init__(self, dsn: str, *, connect: Callable[[], object] | None = None):
+        if not isinstance(dsn, str) or not dsn.strip():
+            raise ValueError("PostgreSQL DSN must not be blank")
+        self._dsn = dsn.strip()
+        self._connect_factory = connect
+
+    def create(self, scope: ScopeDraft) -> ScopeDraft:
+        if scope.revision != 1:
+            raise ScopePersistenceError("a new scope draft must start at revision 1")
+        rows = prepare_scope_draft_rows(scope)
+        with self._connect() as connection:
+            inserted = connection.execute(
+                """
+                INSERT INTO landscape_v4_scope_drafts(
+                    draft_id,revision,status,mode,publication_start,publication_end,
+                    technology_input,content_hash,confirmed_scope_revision_id,
+                    created_at,updated_at
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (draft_id) DO NOTHING
+                RETURNING draft_id
+                """,
+                _values(
+                    rows.draft,
+                    "draft_id", "revision", "status", "mode",
+                    "publication_start", "publication_end", "technology_input",
+                    "content_hash", "confirmed_scope_revision_id", "created_at",
+                    "updated_at",
+                ),
+            ).fetchone()
+            if inserted is None:
+                existing = self._load(connection, scope.draft_id)
+                if existing != scope:
+                    raise ScopeRevisionConflict(
+                        "scope draft ID already exists with different content"
+                    )
+                return existing
+            self._insert_revision(connection, rows)
+            return self._load(connection, scope.draft_id)
+
+    def get(self, draft_id: str) -> ScopeDraft:
+        if not isinstance(draft_id, str) or not draft_id.strip():
+            raise ValueError("draft_id must not be blank")
+        with self._connect() as connection:
+            return self._load(connection, draft_id.strip())
+
+    def update(self, scope: ScopeDraft, *, expected_revision: int) -> ScopeDraft:
+        if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
+            raise ValueError("expected_revision must be an integer")
+        if expected_revision < 1 or scope.revision != expected_revision + 1:
+            raise ScopeRevisionConflict(
+                "updated scope revision must be exactly expected_revision + 1"
+            )
+        rows = prepare_scope_draft_rows(scope)
+        with self._connect() as connection:
+            current = connection.execute(
+                """
+                SELECT draft_id,revision,status
+                FROM landscape_v4_scope_drafts
+                WHERE draft_id=%s
+                FOR UPDATE
+                """,
+                (scope.draft_id,),
+            ).fetchone()
+            if current is None:
+                raise KeyError(scope.draft_id)
+            if current["revision"] != expected_revision:
+                raise ScopeRevisionConflict(
+                    f"scope draft revision changed: expected {expected_revision}, "
+                    f"found {current['revision']}"
+                )
+            if current["status"] == "CONFIRMED" or scope.status.value == "CONFIRMED":
+                raise ScopeRevisionConflict(
+                    "confirmed scope drafts cannot be changed through draft update"
+                )
+
+            changed = connection.execute(
+                """
+                UPDATE landscape_v4_scope_drafts
+                SET revision=%s,status=%s,mode=%s,publication_start=%s,
+                    publication_end=%s,technology_input=%s,content_hash=%s,
+                    updated_at=%s
+                WHERE draft_id=%s AND revision=%s AND status<>'CONFIRMED'
+                """,
+                (
+                    rows.draft["revision"], rows.draft["status"], rows.draft["mode"],
+                    rows.draft["publication_start"], rows.draft["publication_end"],
+                    rows.draft["technology_input"], rows.draft["content_hash"],
+                    rows.draft["updated_at"], scope.draft_id, expected_revision,
+                ),
+            )
+            if changed.rowcount != 1:
+                raise ScopeRevisionConflict("scope draft compare-and-swap failed")
+            self._insert_revision(connection, rows)
+            return self._load(connection, scope.draft_id)
+
+    def _insert_revision(self, connection: object, rows: PreparedScopeDraftRows) -> None:
+        revision = rows.revision
+        connection.execute(
+            """
+            INSERT INTO landscape_v4_scope_draft_revisions(
+                draft_id,revision,status,mode,publication_start,publication_end,
+                technology_input,content_json,content_hash,created_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)
+            """,
+            (
+                revision["draft_id"], revision["revision"], revision["status"],
+                revision["mode"], revision["publication_start"],
+                revision["publication_end"], revision["technology_input"],
+                _canonical_json(revision["content_json"]), revision["content_hash"],
+                revision["created_at"],
+            ),
+        )
+        self._executemany(
+            connection,
+            """
+            INSERT INTO landscape_v4_scope_draft_companies(
+                draft_id,draft_revision,profile_id,display_name,input_name,sort_order
+            ) VALUES (%s,%s,%s,%s,%s,%s)
+            """,
+            rows.companies,
+            ("draft_id", "draft_revision", "profile_id", "display_name", "input_name", "sort_order"),
+        )
+        self._executemany(
+            connection,
+            """
+            INSERT INTO landscape_v4_scope_draft_names(
+                draft_id,draft_revision,profile_id,name_id,name_text,normalized_text,
+                language,relation_type,source,status,rationale,sort_order
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            rows.names,
+            (
+                "draft_id", "draft_revision", "profile_id", "name_id", "name_text",
+                "normalized_text", "language", "relation_type", "source", "status",
+                "rationale", "sort_order",
+            ),
+        )
+        self._executemany(
+            connection,
+            """
+            INSERT INTO landscape_v4_scope_draft_terms(
+                draft_id,draft_revision,term_id,term_text,normalized_text,language,
+                relation_to_original,source,status,rationale,sort_order
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            rows.terms,
+            (
+                "draft_id", "draft_revision", "term_id", "term_text",
+                "normalized_text", "language", "relation_to_original", "source",
+                "status", "rationale", "sort_order",
+            ),
+        )
+
+    @staticmethod
+    def _executemany(
+        connection: object,
+        sql: str,
+        rows: Sequence[Mapping[str, object]],
+        keys: tuple[str, ...],
+    ) -> None:
+        if not rows:
+            return
+        with connection.cursor() as cursor:
+            cursor.executemany(sql, [_values(row, *keys) for row in rows])
+
+    @staticmethod
+    def _load(connection: object, draft_id: str) -> ScopeDraft:
+        draft_row = connection.execute(
+            """
+            SELECT draft_id,revision,status,mode,publication_start,publication_end,
+                   technology_input,content_hash,confirmed_scope_revision_id,
+                   created_at,updated_at
+            FROM landscape_v4_scope_drafts
+            WHERE draft_id=%s
+            """,
+            (draft_id,),
+        ).fetchone()
+        if draft_row is None:
+            raise KeyError(draft_id)
+        revision = draft_row["revision"]
+        revision_row = connection.execute(
+            """
+            SELECT draft_id,revision,status,mode,publication_start,publication_end,
+                   technology_input,content_json,content_hash,created_at
+            FROM landscape_v4_scope_draft_revisions
+            WHERE draft_id=%s AND revision=%s
+            """,
+            (draft_id, revision),
+        ).fetchone()
+        if revision_row is None:
+            raise ScopePersistenceError("current scope draft revision is missing")
+        company_rows = connection.execute(
+            """
+            SELECT draft_id,draft_revision,profile_id,display_name,input_name,sort_order
+            FROM landscape_v4_scope_draft_companies
+            WHERE draft_id=%s AND draft_revision=%s
+            ORDER BY sort_order
+            """,
+            (draft_id, revision),
+        ).fetchall()
+        name_rows = connection.execute(
+            """
+            SELECT n.draft_id,n.draft_revision,n.profile_id,n.name_id,n.name_text,
+                   n.normalized_text,n.language,n.relation_type,n.source,n.status,
+                   n.rationale,n.sort_order
+            FROM landscape_v4_scope_draft_names n
+            JOIN landscape_v4_scope_draft_companies c
+              ON c.draft_id=n.draft_id AND c.draft_revision=n.draft_revision
+             AND c.profile_id=n.profile_id
+            WHERE n.draft_id=%s AND n.draft_revision=%s
+            ORDER BY c.sort_order,n.sort_order
+            """,
+            (draft_id, revision),
+        ).fetchall()
+        term_rows = connection.execute(
+            """
+            SELECT draft_id,draft_revision,term_id,term_text,normalized_text,language,
+                   relation_to_original,source,status,rationale,sort_order
+            FROM landscape_v4_scope_draft_terms
+            WHERE draft_id=%s AND draft_revision=%s
+            ORDER BY sort_order
+            """,
+            (draft_id, revision),
+        ).fetchall()
+        return validate_persisted_scope_draft(
+            draft_row, revision_row, company_rows, name_rows, term_rows
+        )
+
+    @contextmanager
+    def _connect(self) -> Iterator[object]:
+        if self._connect_factory is not None:
+            with self._connect_factory() as connection:
+                yield connection
+            return
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as exc:  # pragma: no cover - deployment dependency
+            raise ScopePersistenceError(
+                "psycopg is required for Scope persistence"
+            ) from exc
+        with psycopg.connect(
+            self._dsn, row_factory=dict_row, connect_timeout=10
+        ) as connection:
+            yield connection
 
 
 def prepare_scope_draft_rows(
@@ -190,18 +445,28 @@ def _assert_row_matches(
 
 
 def _hash_json(value: object) -> str:
-    encoded = json.dumps(
+    encoded = _canonical_json(value)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
         value,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     )
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _values(row: Mapping[str, object], *keys: str) -> tuple[object, ...]:
+    return tuple(row[key] for key in keys)
 
 
 __all__ = [
     "PreparedScopeDraftRows",
+    "PostgreSQLScopeDraftRepository",
     "ScopePersistenceError",
+    "ScopeRevisionConflict",
     "prepare_scope_draft_rows",
     "validate_persisted_scope_draft",
 ]
