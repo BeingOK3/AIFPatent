@@ -37,9 +37,11 @@ CREATE TABLE IF NOT EXISTS landscape_v4_company_names (
     )),
     status TEXT NOT NULL CHECK (status IN ('ACTIVE','EXCLUDED')),
     rationale TEXT,
+    sort_order INTEGER NOT NULL CHECK (sort_order > 0),
     created_at BIGINT NOT NULL,
     PRIMARY KEY(profile_id, profile_version, name_id),
     UNIQUE(profile_id, profile_version, normalized_text),
+    UNIQUE(profile_id, profile_version, sort_order),
     FOREIGN KEY(profile_id, profile_version)
         REFERENCES landscape_v4_company_profile_versions(profile_id, version)
         ON DELETE RESTRICT

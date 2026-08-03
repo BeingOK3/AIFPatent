@@ -329,14 +329,14 @@ class PostgreSQLScopeDraftRepository:
             """
             INSERT INTO landscape_v4_company_names(
                 profile_id,profile_version,name_id,name_text,normalized_text,
-                language,relation_type,source,status,rationale,created_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                language,relation_type,source,status,rationale,sort_order,created_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             rows.names,
             (
                 "profile_id", "profile_version", "name_id", "name_text",
                 "normalized_text", "language", "relation_type", "source",
-                "status", "rationale", "created_at",
+                "status", "rationale", "sort_order", "created_at",
             ),
         )
         for name in rows.names:
@@ -794,9 +794,10 @@ def prepare_company_profile_rows(
             "source": item.source.value,
             "status": item.status.value,
             "rationale": item.rationale,
+            "sort_order": order,
             "created_at": timestamp,
         }
-        for item in company.names
+        for order, item in enumerate(company.names, start=1)
     )
     return PreparedCompanyProfileRows(
         profile=profile,
