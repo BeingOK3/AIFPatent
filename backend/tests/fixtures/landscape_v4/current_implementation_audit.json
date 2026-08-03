@@ -1,0 +1,86 @@
+{
+  "schema_version": "landscape-current-audit/1.0.0",
+  "captured_after_commit": "3ef4fcc",
+  "production_entrypoints": [
+    {
+      "path": "backend/main.py",
+      "required_tokens": [
+        "build_landscape_runtime",
+        "create_landscape_router",
+        "resume_incomplete"
+      ]
+    },
+    {
+      "path": "backend/landscape/runtime.py",
+      "required_tokens": [
+        "LandscapeTaskManager",
+        "self.tasks: dict[str, asyncio.Task]",
+        "AIFPATENT_POSTGRES_DSN"
+      ]
+    }
+  ],
+  "legacy_limits": {
+    "path": "backend/landscape/schemas.py",
+    "required_tokens": [
+      "candidate_limit: int = Field(default=100, ge=10, le=200)",
+      "analysis_limit: int = Field(default=20, ge=1, le=50)",
+      "per_query_limit: int = Field(default=50, ge=5, le=100)"
+    ]
+  },
+  "legacy_api": {
+    "path": "backend/landscape/api.py",
+    "required_tokens": [
+      "@router.post(\"/runs\")",
+      "@router.post(\"/runs/{run_id}/rerun\")",
+      "@router.post(\"/runs/{run_id}/deep-analyze\")",
+      "@router.get(\"/runs/{run_id}/report\")"
+    ]
+  },
+  "legacy_workflow": {
+    "path": "backend/landscape/workflow.py",
+    "active_steps": [
+      "VALIDATE_SCOPE",
+      "PLAN_SEARCH",
+      "SEARCH_PUBLICATIONS",
+      "FILTER_AND_SELECT",
+      "FETCH_DETAILS",
+      "ANALYZE_PATENTS",
+      "ANALYZE_COMPANIES",
+      "ANALYZE_CROSS_COMPANY_TRENDS",
+      "VERIFY_COVERAGE",
+      "BUILD_REPORT"
+    ],
+    "legacy_non_active_steps": [
+      "REPAIR_GAPS",
+      "CLUSTER_PATENTS"
+    ]
+  },
+  "postgres_migrations": [
+    "070_landscape_company_analysis.sql",
+    "071_landscape_company_assignment_manifest.sql",
+    "072_landscape_document_fetches.sql",
+    "073_landscape_company_result_manifests.sql",
+    "074_landscape_keyed_steps.sql",
+    "075_landscape_repair_snapshots.sql"
+  ],
+  "replace_or_remove_modules": [
+    "backend/landscape/analysis.py",
+    "backend/landscape/clustering.py",
+    "backend/landscape/company_classification.py",
+    "backend/landscape/company_profiles.py",
+    "backend/landscape/company_trends.py",
+    "backend/landscape/deep_selection.py"
+  ],
+  "reuse_boundaries": [
+    "backend/landscape/api.py",
+    "backend/landscape/postgres_database.py",
+    "backend/landscape/reporting.py",
+    "backend/landscape/search.py",
+    "backend/landscape/store.py"
+  ],
+  "frontend_entrypoints": [
+    "frontend/landscape.html",
+    "frontend/landscape.js",
+    "frontend/landscape.css"
+  ]
+}
