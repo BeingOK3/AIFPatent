@@ -10,7 +10,13 @@ from typing import Callable, Iterator, Mapping, Sequence
 
 from pydantic import ValidationError
 
-from .scope import ScopeDraft
+from .scope import (
+    CandidateStatus,
+    CompanyScopeDraft,
+    ConfirmedScopeRevision,
+    ScopeDraft,
+    normalize_scope_text,
+)
 
 
 class ScopePersistenceError(RuntimeError):
@@ -24,6 +30,21 @@ class ScopeRevisionConflict(ScopePersistenceError):
 @dataclass(frozen=True)
 class PreparedScopeDraftRows:
     draft: dict
+    revision: dict
+    companies: tuple[dict, ...]
+    names: tuple[dict, ...]
+    terms: tuple[dict, ...]
+
+
+@dataclass(frozen=True)
+class PreparedCompanyProfileRows:
+    profile: dict
+    version: dict
+    names: tuple[dict, ...]
+
+
+@dataclass(frozen=True)
+class PreparedConfirmedScopeRows:
     revision: dict
     companies: tuple[dict, ...]
     names: tuple[dict, ...]
@@ -290,9 +311,7 @@ def prepare_scope_draft_rows(
     # Re-validate caller-created model instances before crossing the persistence
     # boundary. This also guarantees secrets/unknown fields cannot enter JSON.
     scope = ScopeDraft.model_validate(scope.model_dump(mode="json"))
-    timestamp = int(time.time() * 1000) if created_at is None else created_at
-    if not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp < 0:
-        raise ValueError("created_at must be a non-negative integer")
+    timestamp = _timestamp(created_at)
 
     content = scope.model_dump(mode="json")
     content_hash = _hash_json(content)
@@ -374,6 +393,135 @@ def prepare_scope_draft_rows(
     )
 
 
+def prepare_company_profile_rows(
+    company: CompanyScopeDraft,
+    *,
+    profile_version: int,
+    confirmed_scope_revision_id: str,
+    created_at: int | None = None,
+) -> PreparedCompanyProfileRows:
+    company = CompanyScopeDraft.model_validate(company.model_dump(mode="json"))
+    if not isinstance(profile_version, int) or isinstance(profile_version, bool) or profile_version < 1:
+        raise ValueError("profile_version must be a positive integer")
+    if not isinstance(confirmed_scope_revision_id, str) or not confirmed_scope_revision_id.startswith("SCR-"):
+        raise ValueError("confirmed_scope_revision_id must be an SCR identifier")
+    unresolved = [item.name_id for item in company.names if item.status == CandidateStatus.PROPOSED]
+    if unresolved:
+        raise ScopePersistenceError(
+            "company profile cannot persist unresolved proposed names"
+        )
+    timestamp = _timestamp(created_at)
+    snapshot = {
+        "profile_id": company.profile_id,
+        "display_name": company.display_name,
+        "names": [item.model_dump(mode="json") for item in company.names],
+    }
+    snapshot_hash = _hash_json(snapshot)
+    profile = {
+        "profile_id": company.profile_id,
+        "anchor_normalized": normalize_scope_text(company.input_name),
+        "display_name": company.display_name,
+        "current_version": profile_version,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+    version = {
+        "profile_id": company.profile_id,
+        "version": profile_version,
+        "snapshot_hash": snapshot_hash,
+        "confirmed_scope_revision_id": confirmed_scope_revision_id,
+        "created_at": timestamp,
+    }
+    names = tuple(
+        {
+            "profile_id": company.profile_id,
+            "profile_version": profile_version,
+            "name_id": item.name_id,
+            "name_text": item.text,
+            "normalized_text": item.normalized_text,
+            "language": item.language.value,
+            "relation_type": item.relation_type.value,
+            "source": item.source.value,
+            "status": item.status.value,
+            "rationale": item.rationale,
+            "created_at": timestamp,
+        }
+        for item in company.names
+    )
+    return PreparedCompanyProfileRows(
+        profile=profile,
+        version=version,
+        names=names,
+    )
+
+
+def prepare_confirmed_scope_rows(
+    scope: ConfirmedScopeRevision,
+    *,
+    created_at: int | None = None,
+) -> PreparedConfirmedScopeRows:
+    scope = ConfirmedScopeRevision.model_validate(scope.model_dump(mode="json"))
+    timestamp = _timestamp(created_at)
+    snapshot = scope.model_dump(mode="json")
+    if _hash_confirmed_scope_snapshot(snapshot) != scope.scope_revision_hash:
+        raise ScopePersistenceError("confirmed scope revision hash is invalid")
+    revision = {
+        "scope_revision_id": scope.scope_revision_id,
+        "scope_revision_hash": scope.scope_revision_hash,
+        "source_draft_id": scope.source_draft_id,
+        "source_draft_revision": scope.source_draft_revision,
+        "mode": scope.mode.value,
+        "publication_start": scope.publication_start.isoformat(),
+        "publication_end": scope.publication_end.isoformat(),
+        "technology_input": scope.technology_input,
+        "snapshot_json": snapshot,
+        "created_at": timestamp,
+    }
+    companies: list[dict] = []
+    names: list[dict] = []
+    for company_order, company in enumerate(scope.companies, start=1):
+        companies.append(
+            {
+                "scope_revision_id": scope.scope_revision_id,
+                "profile_id": company.profile_id,
+                "profile_version": company.profile_version,
+                "display_name": company.display_name,
+                "sort_order": company_order,
+            }
+        )
+        for name_order, item in enumerate(company.names, start=1):
+            names.append(
+                {
+                    "scope_revision_id": scope.scope_revision_id,
+                    "profile_id": company.profile_id,
+                    "name_id": item.name_id,
+                    "name_text": item.text,
+                    "normalized_text": item.normalized_text,
+                    "language": item.language.value,
+                    "relation_type": item.relation_type.value,
+                    "sort_order": name_order,
+                }
+            )
+    terms = tuple(
+        {
+            "scope_revision_id": scope.scope_revision_id,
+            "term_id": item.term_id,
+            "term_text": item.text,
+            "normalized_text": item.normalized_text,
+            "language": item.language.value,
+            "relation_to_original": item.relation_to_original.value,
+            "sort_order": order,
+        }
+        for order, item in enumerate(scope.technology_terms, start=1)
+    )
+    return PreparedConfirmedScopeRows(
+        revision=revision,
+        companies=tuple(companies),
+        names=tuple(names),
+        terms=terms,
+    )
+
+
 def validate_persisted_scope_draft(
     draft_row: Mapping[str, object],
     revision_row: Mapping[str, object],
@@ -413,6 +561,35 @@ def validate_persisted_scope_draft(
     return scope
 
 
+def validate_persisted_confirmed_scope(
+    revision_row: Mapping[str, object],
+    company_rows: Sequence[Mapping[str, object]],
+    name_rows: Sequence[Mapping[str, object]],
+    term_rows: Sequence[Mapping[str, object]],
+) -> ConfirmedScopeRevision:
+    raw_snapshot = revision_row.get("snapshot_json")
+    if isinstance(raw_snapshot, str):
+        try:
+            raw_snapshot = json.loads(raw_snapshot)
+        except json.JSONDecodeError as exc:
+            raise ScopePersistenceError("stored confirmed scope is invalid JSON") from exc
+    try:
+        scope = ConfirmedScopeRevision.model_validate(raw_snapshot)
+    except (ValidationError, TypeError) as exc:
+        raise ScopePersistenceError("stored confirmed scope failed validation") from exc
+    expected = prepare_confirmed_scope_rows(scope, created_at=0)
+    _assert_row_matches(
+        "confirmed revision",
+        revision_row,
+        expected.revision,
+        ignored={"created_at", "snapshot_json"},
+    )
+    _assert_rows_match("confirmed companies", company_rows, expected.companies)
+    _assert_rows_match("confirmed company names", name_rows, expected.names)
+    _assert_rows_match("confirmed technology terms", term_rows, expected.terms)
+    return scope
+
+
 def _assert_rows_match(
     label: str,
     actual_rows: Sequence[Mapping[str, object]],
@@ -449,6 +626,23 @@ def _hash_json(value: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _hash_confirmed_scope_snapshot(snapshot: Mapping[str, object]) -> str:
+    semantic = dict(snapshot)
+    scope_revision_id = semantic.pop("scope_revision_id", None)
+    scope_revision_hash = semantic.pop("scope_revision_hash", None)
+    calculated = _hash_json(semantic)
+    if scope_revision_hash != calculated or scope_revision_id != f"SCR-{calculated[:16]}":
+        return ""
+    return calculated
+
+
+def _timestamp(value: int | None) -> int:
+    timestamp = int(time.time() * 1000) if value is None else value
+    if not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp < 0:
+        raise ValueError("created_at must be a non-negative integer")
+    return timestamp
+
+
 def _canonical_json(value: object) -> str:
     return json.dumps(
         value,
@@ -464,9 +658,14 @@ def _values(row: Mapping[str, object], *keys: str) -> tuple[object, ...]:
 
 __all__ = [
     "PreparedScopeDraftRows",
+    "PreparedCompanyProfileRows",
+    "PreparedConfirmedScopeRows",
     "PostgreSQLScopeDraftRepository",
     "ScopePersistenceError",
     "ScopeRevisionConflict",
     "prepare_scope_draft_rows",
+    "prepare_company_profile_rows",
+    "prepare_confirmed_scope_rows",
+    "validate_persisted_confirmed_scope",
     "validate_persisted_scope_draft",
 ]

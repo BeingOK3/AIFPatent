@@ -17,6 +17,7 @@ from landscape.scope import (
     ScopeDraft,
     ScopeDraftStatus,
     TechnologyTermRelation,
+    freeze_scope_draft,
     make_company_name_candidate,
     make_company_profile_id,
     make_scope_draft_id,
@@ -26,8 +27,11 @@ from landscape.scope_repository import (
     PostgreSQLScopeDraftRepository,
     ScopePersistenceError,
     ScopeRevisionConflict,
+    prepare_company_profile_rows,
+    prepare_confirmed_scope_rows,
     prepare_scope_draft_rows,
     validate_persisted_scope_draft,
+    validate_persisted_confirmed_scope,
 )
 
 
@@ -170,6 +174,18 @@ def fixture() -> ScopeDraft:
     )
 
 
+def reviewed_fixture() -> ScopeDraft:
+    payload = fixture().model_dump(mode="json")
+    for company_value in payload["companies"]:
+        for name in company_value["names"]:
+            if name["status"] == "PROPOSED":
+                name["status"] = "EXCLUDED"
+    for term in payload["technology_terms"]:
+        if term["status"] == "PROPOSED":
+            term["status"] = "ACTIVE"
+    return ScopeDraft.model_validate(payload)
+
+
 class LandscapeScopeRowCodecTests(unittest.TestCase):
     def setUp(self) -> None:
         self.scope = fixture()
@@ -253,6 +269,79 @@ class LandscapeScopeRowCodecTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     prepare_scope_draft_rows(self.scope, created_at=value)  # type: ignore[arg-type]
+
+
+class LandscapeConfirmedScopeRowCodecTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.draft = reviewed_fixture()
+        self.profile_id = self.draft.companies[0].profile_id
+        self.confirmed = freeze_scope_draft(self.draft, {self.profile_id: 3})
+        self.scope_rows = prepare_confirmed_scope_rows(self.confirmed, created_at=1234)
+        self.profile_rows = prepare_company_profile_rows(
+            self.draft.companies[0],
+            profile_version=3,
+            confirmed_scope_revision_id=self.confirmed.scope_revision_id,
+            created_at=1234,
+        )
+
+    def test_company_memory_keeps_active_and_excluded_review_decisions(self) -> None:
+        self.assertEqual(self.profile_rows.version["version"], 3)
+        self.assertEqual(
+            [row["status"] for row in self.profile_rows.names],
+            ["ACTIVE", "EXCLUDED"],
+        )
+        self.assertEqual(len(self.profile_rows.version["snapshot_hash"]), 64)
+        self.assertEqual(
+            self.profile_rows.version["confirmed_scope_revision_id"],
+            self.confirmed.scope_revision_id,
+        )
+
+    def test_unreviewed_company_name_cannot_enter_long_term_memory(self) -> None:
+        unreviewed = fixture().companies[0]
+        with self.assertRaisesRegex(ScopePersistenceError, "unresolved"):
+            prepare_company_profile_rows(
+                unreviewed,
+                profile_version=1,
+                confirmed_scope_revision_id=self.confirmed.scope_revision_id,
+            )
+
+    def test_confirmed_scope_contains_only_active_names_and_profile_version(self) -> None:
+        self.assertEqual(self.scope_rows.companies[0]["profile_version"], 3)
+        self.assertEqual(len(self.scope_rows.names), 1)
+        self.assertEqual(self.scope_rows.names[0]["name_text"], "华为技术有限公司")
+        self.assertEqual(self.scope_rows.revision["publication_start"], "2001-01-01")
+        self.assertEqual(self.scope_rows.revision["publication_end"], "2025-12-31")
+
+    def test_confirmed_relational_rows_round_trip_and_tampering_fails(self) -> None:
+        self.assertEqual(
+            validate_persisted_confirmed_scope(
+                self.scope_rows.revision,
+                self.scope_rows.companies,
+                self.scope_rows.names,
+                self.scope_rows.terms,
+            ),
+            self.confirmed,
+        )
+        changed = list(copy.deepcopy(self.scope_rows.companies))
+        changed[0]["profile_version"] = 4
+        with self.assertRaises(ScopePersistenceError):
+            validate_persisted_confirmed_scope(
+                self.scope_rows.revision,
+                changed,
+                self.scope_rows.names,
+                self.scope_rows.terms,
+            )
+
+    def test_confirmed_snapshot_hash_is_revalidated(self) -> None:
+        changed = copy.deepcopy(self.scope_rows.revision)
+        changed["snapshot_json"]["publication_end"] = "2026-12-31"
+        with self.assertRaisesRegex(ScopePersistenceError, "hash"):
+            validate_persisted_confirmed_scope(
+                changed,
+                self.scope_rows.companies,
+                self.scope_rows.names,
+                self.scope_rows.terms,
+            )
 
 
 class LandscapeScopeDraftRepositoryTests(unittest.TestCase):
