@@ -14,6 +14,9 @@ from idea.model_client import RuntimeModelConfig, runtime_model_config
 from .database import LandscapeDatabase
 from .runtime import LandscapeRuntime
 from .schemas import LandscapeScope
+from .scope import ScopeDraft, ScopeDraftStatus
+from .scope_repository import ScopePersistenceError, ScopeRevisionConflict
+from .scope_service import ScopePreparationError
 from .store import LandscapeStoreError
 
 
@@ -68,11 +71,111 @@ class DeleteLandscapeRunRequest(ApiModel):
     operator_label: str | None = Field(default=None, max_length=100)
 
 
+class CreateScopeDraftRequest(ApiModel):
+    company_names: tuple[str, ...] = Field(default=(), max_length=50)
+    technology_input: str | None = Field(default=None, max_length=500)
+    publication_start: date
+    publication_end: date
+
+
+class ExpandScopeDraftRequest(LandscapeRuntimeRequest):
+    expected_revision: int = Field(ge=1)
+
+
+class PatchScopeDraftRequest(ApiModel):
+    expected_revision: int = Field(ge=1)
+    draft: ScopeDraft
+
+
+class ConfirmScopeDraftRequest(ApiModel):
+    expected_revision: int = Field(ge=1)
+
+
 def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
     router = APIRouter(prefix="/api/landscape", tags=["专利态势分析"])
     database = runtime.database
     store = runtime.store
     tasks = runtime.tasks
+
+    @router.post("/scope-drafts", status_code=201)
+    async def create_scope_draft(request: CreateScopeDraftRequest):
+        try:
+            return runtime.scope_service.create_draft(
+                company_names=request.company_names,
+                technology_input=request.technology_input,
+                publication_start=request.publication_start,
+                publication_end=request.publication_end,
+            )
+        except (ValueError, ScopePersistenceError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @router.get("/scope-drafts/{draft_id}")
+    async def get_scope_draft(draft_id: str):
+        try:
+            return runtime.scope_repository.get(draft_id)
+        except KeyError as exc:
+            raise HTTPException(404, "scope draft not found") from exc
+        except ScopePersistenceError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @router.post("/scope-drafts/{draft_id}/expand")
+    async def expand_scope_draft(
+        draft_id: str,
+        request: ExpandScopeDraftRequest,
+    ):
+        try:
+            with runtime_model_config(request.runtime_config()):
+                return await runtime.scope_service.expand_draft(
+                    draft_id,
+                    expected_revision=request.expected_revision,
+                )
+        except KeyError as exc:
+            raise HTTPException(404, "scope draft not found") from exc
+        except (ScopeRevisionConflict, ScopePreparationError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, ScopePersistenceError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @router.patch("/scope-drafts/{draft_id}")
+    async def patch_scope_draft(
+        draft_id: str,
+        request: PatchScopeDraftRequest,
+    ):
+        if request.draft.draft_id != draft_id:
+            raise HTTPException(422, "draft ID in path and body must match")
+        if request.draft.revision != request.expected_revision + 1:
+            raise HTTPException(422, "draft revision must equal expected_revision + 1")
+        reviewable = request.draft.model_copy(
+            update={"status": ScopeDraftStatus.AWAITING_CONFIRMATION}
+        )
+        try:
+            return runtime.scope_repository.update(
+                reviewable,
+                expected_revision=request.expected_revision,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "scope draft not found") from exc
+        except ScopeRevisionConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, ScopePersistenceError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @router.post("/scope-drafts/{draft_id}/confirm")
+    async def confirm_scope_draft(
+        draft_id: str,
+        request: ConfirmScopeDraftRequest,
+    ):
+        try:
+            return runtime.scope_repository.confirm(
+                draft_id,
+                expected_revision=request.expected_revision,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "scope draft not found") from exc
+        except ScopeRevisionConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, ScopePersistenceError) as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @router.post("/runs")
     async def create_run(request: CreateLandscapeRunRequest):

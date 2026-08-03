@@ -20,6 +20,9 @@ from .execution import LandscapeExecutionService
 from .postgres_database import LandscapePostgreSQLDatabase
 from .reporting import LandscapeReportService
 from .store import LandscapeRunStore
+from .scope_expansion import ScopeExpansionService
+from .scope_repository import PostgreSQLScopeDraftRepository
+from .scope_service import ScopeDraftPreparationService
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -116,6 +119,8 @@ class LandscapeRuntime:
     tasks: LandscapeTaskManager
     taxonomy_repository: PostgreSQLTaxonomyRepository
     taxonomy: TaxonomyArtifact
+    scope_repository: PostgreSQLScopeDraftRepository
+    scope_service: ScopeDraftPreparationService
 
 
 def build_landscape_runtime(
@@ -143,6 +148,13 @@ def build_landscape_runtime(
         max_step_attempts=config.workflow.max_step_attempts,
     )
     model = StructuredModelClient(config.model)
+    scope_repository = PostgreSQLScopeDraftRepository(dsn)
+    scope_service = ScopeDraftPreparationService(
+        scope_repository,
+        ScopeExpansionService(model),
+        max_company_concurrency=min(8, config.workflow.document_agent_concurrency),
+        object_timeout_seconds=min(90, config.model.timeout_seconds),
+    )
     providers = []
     timeouts: dict[str, float] = {}
     if config.search.providers.serpapi_google_patents.enabled:
@@ -201,4 +213,6 @@ def build_landscape_runtime(
         tasks,
         taxonomy_repository,
         taxonomy,
+        scope_repository,
+        scope_service,
     )
