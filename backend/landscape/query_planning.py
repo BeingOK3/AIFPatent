@@ -106,17 +106,37 @@ def build_query_plan(
         )
 
     queries = tuple(_make_query(scope, company, group) for company, group in shapes)
-    semantic = {
-        "scope_revision_id": scope.scope_revision_id,
-        "scope_revision_hash": scope.scope_revision_hash,
-        "queries": [query.model_dump(mode="json") for query in queries],
-    }
-    return V4QueryPlan(
+    plan = V4QueryPlan(
         scope_revision_id=scope.scope_revision_id,
         scope_revision_hash=scope.scope_revision_hash,
-        plan_hash=_hash_json(semantic),
+        plan_hash=_hash_json(
+            _plan_semantic(scope.scope_revision_id, scope.scope_revision_hash, queries)
+        ),
         queries=queries,
     )
+    validate_query_plan_integrity(plan)
+    return plan
+
+
+def validate_query_plan_integrity(plan: V4QueryPlan) -> None:
+    """Fail closed when any persisted executable query differs from its identity."""
+    for query in plan.queries:
+        expected_hash = _hash_json(_query_semantic(query))
+        if query.query_hash != expected_hash:
+            raise ValueError("query hash mismatch")
+        if query.query_id != f"LQ4-{expected_hash[:16]}":
+            raise ValueError("query ID mismatch")
+        if query.query_text != _render_query_text(query.company_name, query.terms):
+            raise ValueError("query text mismatch")
+    expected_plan_hash = _hash_json(
+        _plan_semantic(
+            plan.scope_revision_id,
+            plan.scope_revision_hash,
+            plan.queries,
+        )
+    )
+    if plan.plan_hash != expected_plan_hash:
+        raise ValueError("query plan hash mismatch")
 
 
 def _group_terms(
@@ -153,39 +173,65 @@ def _make_query(
     company_profile_id, company_name_id, company_name = company or (None, None, None)
     term_ids = tuple(identity for identity, _text in terms)
     term_values = tuple(text for _identity, text in terms)
-    semantic = {
+    values = {
         "scope_revision_id": scope.scope_revision_id,
-        "mode": scope.mode.value,
+        "mode": scope.mode,
         "company_profile_id": company_profile_id,
         "company_name_id": company_name_id,
         "company_name": company_name,
         "term_ids": term_ids,
         "terms": term_values,
-        "publication_start": scope.publication_start.isoformat(),
-        "publication_end": scope.publication_end.isoformat(),
+        "publication_start": scope.publication_start,
+        "publication_end": scope.publication_end,
     }
-    query_hash = _hash_json(semantic)
+    # Validate the shape before using it as the canonical semantic projection.
+    provisional = V4SearchQuery(
+        query_id="LQ4-0000000000000000",
+        query_hash="0" * 64,
+        query_text=_render_query_text(company_name, term_values),
+        **values,
+    )
+    query_hash = _hash_json(_query_semantic(provisional))
+    return provisional.model_copy(
+        update={"query_id": f"LQ4-{query_hash[:16]}", "query_hash": query_hash}
+    )
+
+
+def _query_semantic(query: V4SearchQuery) -> dict[str, object]:
+    return {
+        "scope_revision_id": query.scope_revision_id,
+        "mode": query.mode.value,
+        "company_profile_id": query.company_profile_id,
+        "company_name_id": query.company_name_id,
+        "company_name": query.company_name,
+        "term_ids": query.term_ids,
+        "terms": query.terms,
+        "publication_start": query.publication_start.isoformat(),
+        "publication_end": query.publication_end.isoformat(),
+    }
+
+
+def _plan_semantic(
+    scope_revision_id: str,
+    scope_revision_hash: str,
+    queries: tuple[V4SearchQuery, ...],
+) -> dict[str, object]:
+    return {
+        "scope_revision_id": scope_revision_id,
+        "scope_revision_hash": scope_revision_hash,
+        "queries": [query.model_dump(mode="json") for query in queries],
+    }
+
+
+def _render_query_text(company_name: str | None, terms: tuple[str, ...]) -> str:
     fragments = []
     if company_name:
         fragments.append(f'assignee:"{_escape_phrase(company_name)}"')
-    if term_values:
+    if terms:
         fragments.append(
-            "(" + " OR ".join(f'"{_escape_phrase(term)}"' for term in term_values) + ")"
+            "(" + " OR ".join(f'"{_escape_phrase(term)}"' for term in terms) + ")"
         )
-    return V4SearchQuery(
-        query_id=f"LQ4-{query_hash[:16]}",
-        query_hash=query_hash,
-        scope_revision_id=scope.scope_revision_id,
-        mode=scope.mode,
-        company_profile_id=company_profile_id,
-        company_name_id=company_name_id,
-        company_name=company_name,
-        term_ids=term_ids,
-        terms=term_values,
-        publication_start=scope.publication_start,
-        publication_end=scope.publication_end,
-        query_text=" AND ".join(fragments),
-    )
+    return " AND ".join(fragments)
 
 
 def _escape_phrase(value: str) -> str:
@@ -202,4 +248,9 @@ def _hash_json(value: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-__all__ = ["V4QueryPlan", "V4SearchQuery", "build_query_plan"]
+__all__ = [
+    "V4QueryPlan",
+    "V4SearchQuery",
+    "build_query_plan",
+    "validate_query_plan_integrity",
+]

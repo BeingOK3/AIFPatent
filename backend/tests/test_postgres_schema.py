@@ -53,6 +53,9 @@ LANDSCAPE_V4_COMPANY_MEMORY_ACTIONS_SCHEMA_PATH = Path(
 LANDSCAPE_V4_RUNS_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/087_landscape_v4_runs.sql"
 )
+LANDSCAPE_V4_QUERY_PLANS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/088_landscape_v4_query_plans.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -105,6 +108,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_v4_runs_sql = LANDSCAPE_V4_RUNS_SCHEMA_PATH.read_text(
             encoding="utf-8"
+        )
+        self.landscape_v4_query_plans_sql = (
+            LANDSCAPE_V4_QUERY_PLANS_SCHEMA_PATH.read_text(encoding="utf-8")
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -305,6 +311,22 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("workflow_version = 'landscape-v4/1.0.0'", sql)
         self.assertIn("prevent_landscape_v4_run_binding_mutation", sql)
         self.assertIn("'087_landscape_v4_runs'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_query_plans_are_relational_and_immutable(self) -> None:
+        sql = self.landscape_v4_query_plans_sql
+        for table in (
+            "landscape_v4_query_plans",
+            "landscape_v4_search_queries",
+            "landscape_v4_search_query_terms",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("prevent_landscape_v4_query_plan_mutation", sql)
+        self.assertIn("FOREIGN KEY(run_id,scope_revision_id)", sql)
+        self.assertIn("'088_landscape_v4_query_plans'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)

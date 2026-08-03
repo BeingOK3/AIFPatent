@@ -11,6 +11,8 @@ from landscape.run_repository import (
     LandscapeRunPersistenceError,
     PostgreSQLLandscapeRunRepository,
 )
+from landscape.query_planning import build_query_plan
+from landscape.query_repository import PostgreSQLQueryPlanRepository
 from landscape.scope import (
     CandidateSource,
     CandidateStatus,
@@ -222,6 +224,9 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
             RealTaxonomyStub(),
             connect=connect,
         )
+        query_repository = PostgreSQLQueryPlanRepository(
+            "postgresql://integration", connect=connect
+        )
         try:
             scope_repository.create(draft)
             confirmed = scope_repository.confirm(
@@ -235,12 +240,24 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
             self.assertEqual(run_repository.get(run.run_id), run)
             self.assertEqual(run.scope_revision_hash, confirmed.scope_revision_hash)
             self.assertEqual(run.publication_start, date(1999, 1, 1))
+            plan = build_query_plan(confirmed)
+            self.assertEqual(query_repository.put(run.run_id, plan), plan)
+            self.assertEqual(query_repository.get(run.run_id), plan)
+            self.assertEqual(
+                run_repository.get(run.run_id).status,
+                LandscapeRunStatus.ESTIMATING,
+            )
             raw.rollback()
-            count = raw.execute(
-                "SELECT count(*) AS count FROM landscape_v4_runs WHERE run_id=%s",
-                (run.run_id,),
-            ).fetchone()["count"]
-            self.assertEqual(count, 0)
+            counts = raw.execute(
+                """
+                SELECT
+                    (SELECT count(*) FROM landscape_v4_runs WHERE run_id=%s) AS runs,
+                    (SELECT count(*) FROM landscape_v4_query_plans WHERE run_id=%s) AS plans
+                """,
+                (run.run_id, run.run_id),
+            ).fetchone()
+            self.assertEqual(counts["runs"], 0)
+            self.assertEqual(counts["plans"], 0)
         finally:
             raw.rollback()
             raw.close()

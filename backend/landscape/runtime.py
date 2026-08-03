@@ -24,6 +24,7 @@ from .scope_expansion import ScopeExpansionService
 from .scope_repository import PostgreSQLScopeDraftRepository
 from .scope_service import ScopeDraftPreparationService
 from .run_repository import PostgreSQLLandscapeRunRepository
+from .query_repository import PostgreSQLQueryPlanRepository
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -123,6 +124,7 @@ class LandscapeRuntime:
     scope_repository: PostgreSQLScopeDraftRepository
     scope_service: ScopeDraftPreparationService
     run_repository: PostgreSQLLandscapeRunRepository
+    query_repository: PostgreSQLQueryPlanRepository
 
 
 def build_landscape_runtime(
@@ -149,6 +151,7 @@ def build_landscape_runtime(
         scope_repository,
         taxonomy_repository,
     )
+    query_repository = PostgreSQLQueryPlanRepository(dsn)
     store = LandscapeRunStore(runs_dir)
     harness = LandscapeWorkflowHarness(
         database,
@@ -223,4 +226,5 @@ def build_landscape_runtime(
         scope_repository,
         scope_service,
         run_repository,
+        query_repository,
     )
