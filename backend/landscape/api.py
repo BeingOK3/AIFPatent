@@ -18,6 +18,8 @@ from .scope import ScopeDraft, ScopeDraftStatus
 from .scope_repository import ScopePersistenceError, ScopeRevisionConflict
 from .scope_service import ScopePreparationError
 from .run_repository import LandscapeRunPersistenceError
+from .query_planning import build_query_plan
+from .query_repository import QueryPlanPersistenceError
 from .store import LandscapeStoreError
 
 
@@ -192,11 +194,16 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
     @router.post("/runs", status_code=201)
     async def create_run(request: CreateLandscapeRunRequest):
         try:
-            return runtime.run_repository.create(
+            run = runtime.run_repository.create(
                 scope_revision_id=request.scope_revision_id,
                 taxonomy_version=runtime.taxonomy.taxonomy_version,
             )
-        except (ValueError, ScopePersistenceError, LandscapeRunPersistenceError) as exc:
+            scope = runtime.scope_repository.get_confirmed(request.scope_revision_id)
+            plan = build_query_plan(scope)
+            runtime.query_repository.put(run.run_id, plan)
+            return runtime.run_repository.get(run.run_id)
+        except (KeyError, ValueError, ScopePersistenceError,
+                LandscapeRunPersistenceError, QueryPlanPersistenceError) as exc:
             raise HTTPException(422, str(exc))
 
     @router.get("/runs")

@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from landscape.api import create_landscape_router
 from landscape.scope_service import ScopeDraftPreparationService
 from tests.test_landscape_scope_service import ExpansionStub, MemoryRepository
+from tests.test_landscape_query_planning import confirmed_scope
 
 
 class ApiRepository(MemoryRepository):
@@ -23,6 +24,19 @@ class ApiRepository(MemoryRepository):
             "source_draft_revision": expected_revision,
         }
 
+    def get_confirmed(self, scope_revision_id):
+        scope = confirmed_scope(companies=(("华为", ("华为", "Huawei")),))
+        if scope_revision_id != "SCR-0000000000000001":
+            raise KeyError(scope_revision_id)
+        return scope.model_copy(
+            update={
+                "scope_revision_id": scope_revision_id,
+                # This fake is used only to exercise API orchestration. The
+                # production repository validates this binding from rows.
+                "scope_revision_hash": scope.scope_revision_hash,
+            }
+        )
+
 
 class ApiRunRepository:
     def __init__(self):
@@ -30,24 +44,43 @@ class ApiRunRepository:
 
     def create(self, **values):
         self.calls.append(values)
-        return {
-            "run_id": "LRN-0000000000000001",
-            "scope_revision_id": values["scope_revision_id"],
-            "taxonomy_version": values["taxonomy_version"],
-            "status": "PLANNING",
-        }
+        self.run = SimpleNamespace(
+            run_id="LRN-0000000000000001",
+            scope_revision_id=values["scope_revision_id"],
+            taxonomy_version=values["taxonomy_version"],
+            status="PLANNING",
+        )
+        return self.run
+
+    def get(self, run_id):
+        if run_id != self.run.run_id:
+            raise KeyError(run_id)
+        values = vars(self.run).copy()
+        values["status"] = "ESTIMATING"
+        return SimpleNamespace(**values)
+
+
+class ApiQueryPlanRepository:
+    def __init__(self):
+        self.plans = {}
+
+    def put(self, run_id, plan):
+        self.plans[run_id] = plan
+        return plan
 
 
 def app_fixture():
     repository = ApiRepository()
     service = ScopeDraftPreparationService(repository, ExpansionStub(delay=0))
+    run_repository = ApiRunRepository()
     runtime = SimpleNamespace(
         database=object(),
         store=object(),
         tasks=object(),
         scope_repository=repository,
         scope_service=service,
-        run_repository=ApiRunRepository(),
+        run_repository=run_repository,
+        query_repository=ApiQueryPlanRepository(),
         taxonomy=SimpleNamespace(taxonomy_version="landscape-taxonomy/fixture"),
     )
     app = FastAPI()
@@ -78,7 +111,7 @@ class LandscapeScopeApiTests(unittest.TestCase):
                     json={"scope_revision_id": "SCR-0000000000000001"},
                 )
                 self.assertEqual(created.status_code, 201)
-                self.assertEqual(created.json()["status"], "PLANNING")
+                self.assertEqual(created.json()["status"], "ESTIMATING")
 
         asyncio.run(scenario())
 
