@@ -20,6 +20,8 @@ from .execution import LandscapeExecutionService
 from .postgres_database import LandscapePostgreSQLDatabase
 from .reporting import LandscapeReportService
 from .store import LandscapeRunStore
+from .taxonomy import TaxonomyArtifact
+from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
 
 
@@ -112,6 +114,8 @@ class LandscapeRuntime:
     workflow: LandscapeWorkflow
     execution: LandscapeExecutionService
     tasks: LandscapeTaskManager
+    taxonomy_repository: PostgreSQLTaxonomyRepository
+    taxonomy: TaxonomyArtifact
 
 
 def build_landscape_runtime(
@@ -125,6 +129,13 @@ def build_landscape_runtime(
     runs_dir = config.storage.runs_dir.parent / "landscape-runs"
     database = LandscapePostgreSQLDatabase(dsn)
     database.initialize()
+    taxonomy_repository = PostgreSQLTaxonomyRepository(dsn)
+    taxonomy = taxonomy_repository.ensure_current(
+        Path(__file__).resolve().parents[2]
+        / "development"
+        / "landscape"
+        / "classify.md"
+    )
     store = LandscapeRunStore(runs_dir)
     harness = LandscapeWorkflowHarness(
         database,
@@ -180,4 +191,14 @@ def build_landscape_runtime(
         max_step_attempts=config.workflow.max_step_attempts,
     )
     tasks = LandscapeTaskManager(database, workflow, execution)
-    return LandscapeRuntime(config, database, store, harness, workflow, execution, tasks)
+    return LandscapeRuntime(
+        config,
+        database,
+        store,
+        harness,
+        workflow,
+        execution,
+        tasks,
+        taxonomy_repository,
+        taxonomy,
+    )

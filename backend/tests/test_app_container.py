@@ -47,6 +47,10 @@ class ApplicationContainerTests(unittest.TestCase):
         self.assertIn("backend /app/backend", self.dockerfile)
         self.assertIn("frontend /app/frontend", self.dockerfile)
         self.assertIn("config /app/config", self.dockerfile)
+        self.assertIn(
+            "development/landscape/classify.md /app/development/landscape/classify.md",
+            self.dockerfile,
+        )
 
     def test_build_context_excludes_runtime_data_and_secrets(self) -> None:
         for entry in (
@@ -60,6 +64,8 @@ class ApplicationContainerTests(unittest.TestCase):
             "config/provider-credentials.local.json",
         ):
             self.assertIn(entry, self.dockerignore)
+        self.assertIn("development/*", self.dockerignore)
+        self.assertIn("!development/landscape/classify.md", self.dockerignore)
 
 
 if __name__ == "__main__":

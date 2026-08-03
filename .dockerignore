@@ -13,7 +13,10 @@ data
 workspace
 logs
 comments
-development
+development/*
+!development/landscape/
+development/landscape/*
+!development/landscape/classify.md
 docs
 
 .env

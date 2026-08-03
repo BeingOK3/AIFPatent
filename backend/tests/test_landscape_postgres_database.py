@@ -44,7 +44,7 @@ class _Cursor:
 
 
 class LandscapePostgreSQLInitializationTests(unittest.TestCase):
-    def test_initialize_requires_latest_keyed_step_migration(self) -> None:
+    def test_initialize_requires_latest_taxonomy_migration(self) -> None:
         database = LandscapePostgreSQLDatabase(
             "postgresql://test:test@localhost/test"
         )
@@ -61,10 +61,10 @@ class LandscapePostgreSQLInitializationTests(unittest.TestCase):
 
         database.connect = connect  # type: ignore[method-assign]
         with self.assertRaisesRegex(
-            PostgreSQLPersistenceError, "075_landscape_repair_snapshots"
+            PostgreSQLPersistenceError, "080_landscape_taxonomy"
         ):
             database.initialize()
-        self.assertIn("075_landscape_repair_snapshots", queries[0])
+        self.assertIn("080_landscape_taxonomy", queries[0])
 
 
 class _CandidateConnection:
