@@ -38,6 +38,9 @@ LANDSCAPE_V4_SCOPE_SCHEMA_PATH = Path(
 LANDSCAPE_V4_COMPANY_REGISTRY_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/082_landscape_v4_company_registry.sql"
 )
+LANDSCAPE_V4_PROFILE_VERSIONING_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/083_landscape_v4_profile_versioning.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -75,6 +78,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_v4_company_registry_sql = (
             LANDSCAPE_V4_COMPANY_REGISTRY_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_v4_profile_versioning_sql = (
+            LANDSCAPE_V4_PROFILE_VERSIONING_SCHEMA_PATH.read_text(encoding="utf-8")
         )
 
     def test_bridge_schema_is_idempotent_and_has_required_tables(self) -> None:
@@ -255,6 +261,16 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
         self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_company_versions_allow_restoring_historical_content(self) -> None:
+        sql = self.landscape_v4_profile_versioning_sql
+        self.assertIn("ALTER TABLE landscape_v4_company_profile_versions", sql)
+        self.assertIn("DROP CONSTRAINT IF EXISTS", sql)
+        self.assertIn(
+            "landscape_v4_company_profile_versi_profile_id_snapshot_hash_key", sql
+        )
+        self.assertIn("'083_landscape_v4_profile_versioning'", sql)
+        self.assertNotIn("DROP TABLE", sql.upper())
 
     def test_corpus_schema_is_versioned_and_scoped(self) -> None:
         self.assertIn("BEGIN;", self.corpus_sql)
