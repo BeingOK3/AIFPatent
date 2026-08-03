@@ -32,6 +32,7 @@ from landscape.scope_repository import (
     prepare_scope_draft_rows,
     validate_persisted_scope_draft,
     validate_persisted_confirmed_scope,
+    validate_persisted_company_memory,
 )
 
 
@@ -343,6 +344,43 @@ class LandscapeConfirmedScopeRowCodecTests(unittest.TestCase):
                 self.scope_rows.terms,
             )
 
+    def test_company_memory_round_trip_marks_history_and_preserves_rejection(self) -> None:
+        profile = {
+            **self.profile_rows.profile,
+            "snapshot_hash": self.profile_rows.version["snapshot_hash"],
+        }
+        memory = validate_persisted_company_memory(
+            profile,
+            self.profile_rows.names,
+            requested_input_name="Huawei Technologies Co., Ltd.",
+        )
+        self.assertEqual(memory.profile_version, 3)
+        self.assertEqual(memory.company.input_name, "Huawei Technologies Co., Ltd.")
+        self.assertTrue(
+            all(item.source == CandidateSource.HISTORY for item in memory.company.names)
+        )
+        self.assertEqual(
+            [item.status for item in memory.company.names],
+            [CandidateStatus.ACTIVE, CandidateStatus.EXCLUDED],
+        )
+
+    def test_company_memory_order_or_hash_tampering_fails_closed(self) -> None:
+        profile = {
+            **self.profile_rows.profile,
+            "snapshot_hash": self.profile_rows.version["snapshot_hash"],
+        }
+        reversed_names = tuple(reversed(self.profile_rows.names))
+        with self.assertRaisesRegex(ScopePersistenceError, "order"):
+            validate_persisted_company_memory(
+                profile, reversed_names, requested_input_name="华为"
+            )
+        changed = dict(profile)
+        changed["snapshot_hash"] = "0" * 64
+        with self.assertRaisesRegex(ScopePersistenceError, "hash"):
+            validate_persisted_company_memory(
+                changed, self.profile_rows.names, requested_input_name="华为"
+            )
+
 
 class LandscapeScopeDraftRepositoryTests(unittest.TestCase):
     def test_create_writes_one_snapshot_and_reads_it_back(self) -> None:
@@ -485,6 +523,12 @@ class LandscapeScopeDraftPostgreSQLIntegrationTests(unittest.TestCase):
             self.assertEqual(len(confirmed.companies[0].names), 1)
             self.assertEqual(repository.get_confirmed(confirmed.scope_revision_id), confirmed)
             self.assertEqual(repository.confirm(draft_id, expected_revision=2), confirmed)
+            memory = repository.find_company_memory(unique_name)
+            self.assertIsNotNone(memory)
+            self.assertEqual(memory.profile_version, 1)
+            self.assertEqual(memory.company.profile_id, profile_id)
+            excluded_name = company_value.names[1].text
+            self.assertIsNone(repository.find_company_memory(excluded_name))
             terminal_draft = repository.get(draft_id)
             self.assertEqual(terminal_draft.revision, 3)
             self.assertEqual(terminal_draft.status, ScopeDraftStatus.CONFIRMED)

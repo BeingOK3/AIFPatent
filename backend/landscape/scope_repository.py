@@ -11,7 +11,9 @@ from typing import Callable, Iterator, Mapping, Sequence
 from pydantic import ValidationError
 
 from .scope import (
+    CandidateSource,
     CandidateStatus,
+    CompanyNameCandidate,
     CompanyScopeDraft,
     ConfirmedScopeRevision,
     ScopeDraft,
@@ -51,6 +53,12 @@ class PreparedConfirmedScopeRows:
     companies: tuple[dict, ...]
     names: tuple[dict, ...]
     terms: tuple[dict, ...]
+
+
+@dataclass(frozen=True)
+class CompanyProfileMemory:
+    profile_version: int
+    company: CompanyScopeDraft
 
 
 class PostgreSQLScopeDraftRepository:
@@ -251,6 +259,39 @@ class PostgreSQLScopeDraftRepository:
             raise ValueError("scope_revision_id must not be blank")
         with self._connect() as connection:
             return self._load_confirmed(connection, scope_revision_id.strip())
+
+    def find_company_memory(self, input_name: str) -> CompanyProfileMemory | None:
+        normalized = normalize_scope_text(input_name)
+        with self._connect() as connection:
+            profile = connection.execute(
+                """
+                SELECT p.profile_id,p.anchor_normalized,p.display_name,
+                       p.current_version,v.snapshot_hash
+                FROM landscape_v4_company_name_registry r
+                JOIN landscape_v4_company_profiles p
+                  ON p.profile_id=r.profile_id
+                JOIN landscape_v4_company_profile_versions v
+                  ON v.profile_id=p.profile_id AND v.version=p.current_version
+                WHERE r.normalized_text=%s AND r.status='ACTIVE'
+                """,
+                (normalized,),
+            ).fetchone()
+            if profile is None:
+                return None
+            names = connection.execute(
+                """
+                SELECT profile_id,profile_version,name_id,name_text,normalized_text,
+                       language,relation_type,source,status,rationale,sort_order,
+                       created_at
+                FROM landscape_v4_company_names
+                WHERE profile_id=%s AND profile_version=%s
+                ORDER BY sort_order
+                """,
+                (profile["profile_id"], profile["current_version"]),
+            ).fetchall()
+        return validate_persisted_company_memory(
+            profile, names, requested_input_name=input_name
+        )
 
     @staticmethod
     def _reserve_company_profile_versions(
@@ -941,6 +982,64 @@ def validate_persisted_confirmed_scope(
     return scope
 
 
+def validate_persisted_company_memory(
+    profile_row: Mapping[str, object],
+    name_rows: Sequence[Mapping[str, object]],
+    *,
+    requested_input_name: str,
+) -> CompanyProfileMemory:
+    current_version = profile_row.get("current_version")
+    if not isinstance(current_version, int) or isinstance(current_version, bool):
+        raise ScopePersistenceError("stored company profile version is invalid")
+    candidates: list[CompanyNameCandidate] = []
+    for order, row in enumerate(name_rows, start=1):
+        if row.get("profile_id") != profile_row.get("profile_id"):
+            raise ScopePersistenceError("stored company name profile mismatch")
+        if row.get("profile_version") != current_version:
+            raise ScopePersistenceError("stored company name version mismatch")
+        if row.get("sort_order") != order:
+            raise ScopePersistenceError("stored company name order mismatch")
+        try:
+            candidates.append(
+                CompanyNameCandidate(
+                    name_id=row.get("name_id"),
+                    text=row.get("name_text"),
+                    normalized_text=row.get("normalized_text"),
+                    language=row.get("language"),
+                    relation_type=row.get("relation_type"),
+                    source=row.get("source"),
+                    status=row.get("status"),
+                    rationale=row.get("rationale"),
+                )
+            )
+        except ValidationError as exc:
+            raise ScopePersistenceError("stored company name failed validation") from exc
+    if not candidates:
+        raise ScopePersistenceError("stored company profile has no names")
+    snapshot = {
+        "profile_id": profile_row.get("profile_id"),
+        "display_name": profile_row.get("display_name"),
+        "names": [item.model_dump(mode="json") for item in candidates],
+    }
+    if _hash_json(snapshot) != profile_row.get("snapshot_hash"):
+        raise ScopePersistenceError("stored company profile snapshot hash mismatch")
+    company = CompanyScopeDraft(
+        profile_id=profile_row.get("profile_id"),
+        display_name=profile_row.get("display_name"),
+        input_name=requested_input_name,
+        names=tuple(
+            CompanyNameCandidate.model_validate(
+                {**item.model_dump(mode="json"), "source": CandidateSource.HISTORY.value}
+            )
+            for item in candidates
+        ),
+    )
+    return CompanyProfileMemory(
+        profile_version=current_version,
+        company=company,
+    )
+
+
 def _assert_rows_match(
     label: str,
     actual_rows: Sequence[Mapping[str, object]],
@@ -1011,6 +1110,7 @@ __all__ = [
     "PreparedScopeDraftRows",
     "PreparedCompanyProfileRows",
     "PreparedConfirmedScopeRows",
+    "CompanyProfileMemory",
     "PostgreSQLScopeDraftRepository",
     "ScopePersistenceError",
     "ScopeRevisionConflict",
@@ -1018,5 +1118,6 @@ __all__ = [
     "prepare_company_profile_rows",
     "prepare_confirmed_scope_rows",
     "validate_persisted_confirmed_scope",
+    "validate_persisted_company_memory",
     "validate_persisted_scope_draft",
 ]
