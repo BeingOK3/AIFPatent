@@ -144,8 +144,13 @@ class ScopeDraftPreparationService:
                 f"scope draft revision changed: expected {expected_revision}, "
                 f"found {initial.revision}"
             )
-        if initial.status != ScopeDraftStatus.DRAFT:
-            raise ScopePreparationError("only a DRAFT scope can be expanded")
+        if initial.status not in {
+            ScopeDraftStatus.DRAFT,
+            ScopeDraftStatus.EXPANDING,
+        }:
+            raise ScopePreparationError(
+                "only a DRAFT or interrupted EXPANDING scope can be expanded"
+            )
 
         companies = tuple(company.input_name for company in initial.companies)
         memories = tuple(
@@ -154,14 +159,20 @@ class ScopeDraftPreparationService:
         )
         technology = initial.technology_input
         initial_terms = initial.technology_terms
-        expanding_revision = initial.revision + 1
-        expanding = initial.model_copy(
-            update={
-                "revision": expanding_revision,
-                "status": ScopeDraftStatus.EXPANDING,
-            }
-        )
-        self.repository.update(expanding, expected_revision=initial.revision)
+        if initial.status == ScopeDraftStatus.DRAFT:
+            expanding_revision = initial.revision + 1
+            expanding = initial.model_copy(
+                update={
+                    "revision": expanding_revision,
+                    "status": ScopeDraftStatus.EXPANDING,
+                }
+            )
+            self.repository.update(expanding, expected_revision=initial.revision)
+        else:
+            # The process or HTTP client may have disappeared after the durable
+            # EXPANDING checkpoint. Reusing that revision makes the operation
+            # explicitly resumable without inventing another state transition.
+            expanding_revision = initial.revision
 
         semaphore = asyncio.Semaphore(self.max_company_concurrency)
 
@@ -174,30 +185,24 @@ class ScopeDraftPreparationService:
                     timeout=self.object_timeout_seconds,
                 )
 
-        company_results = asyncio.gather(
-            *(expand_company(index) for index in range(len(companies))),
-            return_exceptions=True,
-        )
-        if technology:
-            technology_result = asyncio.create_task(
-                asyncio.wait_for(
-                    self.expansion.expand_technology(technology),
-                    timeout=self.object_timeout_seconds,
-                )
+        async def expand_technology():
+            assert technology is not None
+            return await asyncio.wait_for(
+                self.expansion.expand_technology(technology),
+                timeout=self.object_timeout_seconds,
             )
-        else:
-            technology_result = None
 
-        resolved_companies = await company_results
-        if technology_result is None:
-            resolved_terms = None
-        else:
-            try:
-                resolved_terms = await technology_result
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                resolved_terms = exc
+        operations = [
+            expand_company(index) for index in range(len(companies))
+        ]
+        if technology:
+            operations.append(expand_technology())
+        # Keeping every remote child in one gather is deliberate: cancellation
+        # of the request cancels all outstanding calls instead of orphaning the
+        # technology request while company results are being awaited.
+        resolved = await asyncio.gather(*operations, return_exceptions=True)
+        resolved_companies = resolved[: len(companies)]
+        resolved_terms = resolved[-1] if technology else None
         limitations: list[ScopeDraftLimitation] = []
         final_companies: list[CompanyScopeDraft] = []
         for name, memory, result in zip(

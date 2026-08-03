@@ -187,6 +187,43 @@ class LandscapeScopePreparationServiceTests(unittest.TestCase):
             {"COMPANY_EXPANSION_FAILED", "TECHNOLOGY_EXPANSION_FAILED"},
         )
 
+    def test_interrupted_expansion_is_durable_and_resumable(self) -> None:
+        async def scenario():
+            repository = MemoryRepository()
+            service = ScopeDraftPreparationService(
+                repository,
+                ExpansionStub(delay=0.2),
+            )
+            created = service.create_draft(
+                company_names=("华为",),
+                technology_input="数据中心液冷",
+                publication_start=date(2000, 1, 1),
+                publication_end=date(2026, 12, 31),
+                draft_id="SCD-0000000000000006",
+            )
+            running = asyncio.create_task(
+                service.expand_draft(created.draft_id, expected_revision=1)
+            )
+            while repository.get(created.draft_id).status != ScopeDraftStatus.EXPANDING:
+                await asyncio.sleep(0)
+            running.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await running
+
+            interrupted = repository.get(created.draft_id)
+            self.assertEqual(interrupted.status, ScopeDraftStatus.EXPANDING)
+            self.assertEqual(interrupted.revision, 2)
+
+            service.expansion = ExpansionStub(delay=0)
+            resumed = await service.expand_draft(
+                created.draft_id,
+                expected_revision=2,
+            )
+            self.assertEqual(resumed.status, ScopeDraftStatus.AWAITING_CONFIRMATION)
+            self.assertEqual(resumed.revision, 3)
+
+        asyncio.run(scenario())
+
     def test_invalid_empty_duplicate_or_reversed_inputs_fail_before_persistence(self) -> None:
         cases = (
             {"company_names": (), "technology_input": None},

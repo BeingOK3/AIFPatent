@@ -168,6 +168,59 @@ class LandscapeScopeApiTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_patch_cannot_erase_server_expansion_limitations(self) -> None:
+        async def scenario():
+            repository = ApiRepository()
+            service = ScopeDraftPreparationService(
+                repository,
+                ExpansionStub(fail_companies={"华为"}, delay=0),
+            )
+            runtime = SimpleNamespace(
+                database=object(),
+                store=object(),
+                tasks=object(),
+                scope_repository=repository,
+                scope_service=service,
+            )
+            app = FastAPI()
+            app.include_router(create_landscape_router(runtime))
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+            ) as client:
+                created = (
+                    await client.post(
+                        "/api/landscape/scope-drafts",
+                        json={
+                            "company_names": ["华为"],
+                            "publication_start": "2020-01-01",
+                            "publication_end": "2026-01-01",
+                        },
+                    )
+                ).json()
+                expanded = (
+                    await client.post(
+                        f"/api/landscape/scope-drafts/{created['draft_id']}/expand",
+                        json={
+                            "expected_revision": 1,
+                            "api_key": "temporary-test-key",
+                            "base_url": "https://example.test/v1",
+                            "model": "fixture-model",
+                        },
+                    )
+                ).json()
+                self.assertEqual(len(expanded["limitations"]), 1)
+                expanded["limitations"] = []
+                expanded["revision"] = 4
+                patched = await client.patch(
+                    f"/api/landscape/scope-drafts/{created['draft_id']}",
+                    json={"expected_revision": 3, "draft": expanded},
+                )
+                self.assertEqual(patched.status_code, 200)
+                self.assertEqual(len(patched.json()["limitations"]), 1)
+
+        asyncio.run(scenario())
+
 
 if __name__ == "__main__":
     unittest.main()

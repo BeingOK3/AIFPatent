@@ -145,10 +145,21 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
             raise HTTPException(422, "draft ID in path and body must match")
         if request.draft.revision != request.expected_revision + 1:
             raise HTTPException(422, "draft revision must equal expected_revision + 1")
-        reviewable = request.draft.model_copy(
-            update={"status": ScopeDraftStatus.AWAITING_CONFIRMATION}
-        )
         try:
+            current = runtime.scope_repository.get(draft_id)
+            if current.status != ScopeDraftStatus.AWAITING_CONFIRMATION:
+                raise ScopePreparationError(
+                    "only an AWAITING_CONFIRMATION scope can be edited"
+                )
+            # Expansion limitations are server-owned audit evidence. The user
+            # can edit the proposed scope, but cannot erase warnings by sending
+            # a replacement draft body.
+            reviewable = request.draft.model_copy(
+                update={
+                    "status": ScopeDraftStatus.AWAITING_CONFIRMATION,
+                    "limitations": current.limitations,
+                }
+            )
             return runtime.scope_repository.update(
                 reviewable,
                 expected_revision=request.expected_revision,
@@ -157,7 +168,7 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
             raise HTTPException(404, "scope draft not found") from exc
         except ScopeRevisionConflict as exc:
             raise HTTPException(409, str(exc)) from exc
-        except (ValueError, ScopePersistenceError) as exc:
+        except (ValueError, ScopePersistenceError, ScopePreparationError) as exc:
             raise HTTPException(422, str(exc)) from exc
 
     @router.post("/scope-drafts/{draft_id}/confirm")
