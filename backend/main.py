@@ -92,9 +92,6 @@ async def resume_idea_runs():
                 "标记需要重新输入临时 API Token 的追问 Turns: %s",
                 interrupted_turns,
             )
-    interrupted_landscape = LANDSCAPE_RUNTIME.tasks.resume_incomplete()
-    if interrupted_landscape:
-        logger.info("标记需要重新输入临时 API Token 的专利态势分析 Runs: %s", interrupted_landscape)
     if LANDSCAPE_RUNTIME.v4_tasks is not None:
         resumed_v4 = LANDSCAPE_RUNTIME.v4_tasks.resume_incomplete()
         if resumed_v4:
@@ -105,7 +102,6 @@ async def resume_idea_runs():
 async def close_idea_runtime():
     if LANDSCAPE_RUNTIME.v4_tasks is not None:
         await LANDSCAPE_RUNTIME.v4_tasks.aclose()
-    await LANDSCAPE_RUNTIME.tasks.aclose()
     if IDEA_RUNTIME.followup_manager is not None:
         await IDEA_RUNTIME.followup_manager.aclose()
     await IDEA_RUNTIME.executor.aclose()

@@ -13,8 +13,8 @@
     {
       "path": "backend/landscape/runtime.py",
       "required_tokens": [
-        "LandscapeTaskManager",
-        "self.tasks: dict[str, asyncio.Task]",
+        "V4LandscapeTaskManager",
+        "V4LandscapeWorkflow",
         "AIFPATENT_POSTGRES_DSN"
       ]
     }
