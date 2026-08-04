@@ -107,8 +107,9 @@ class ClassificationMatchingService:
                     review_round=0,
                     unresolved_reason=item.unresolved_reason or "DIRECTION_UNRESOLVED",
                 )
+        leaf_parent_pairs = _leaf_parent_pairs(taxonomy)
         first_candidates = {
-            item.analysis_unit_id: _candidate_leaves(item, taxonomy)
+            item.analysis_unit_id: _candidate_leaves(item, taxonomy, leaf_parent_pairs)
             for item in available
         }
         first = await self._decide(available, first_candidates, taxonomy, review_round=0)
@@ -254,22 +255,30 @@ class ClassificationMatchingService:
         return output
 
 
+def _leaf_parent_pairs(
+    taxonomy: TaxonomyArtifact,
+) -> tuple[tuple[str, str], ...]:
+    """Pair every leaf with its level-1 ancestor id, preserving taxonomy order."""
+    node_path_to_id = {node.path: node.category_id for node in taxonomy.nodes}
+    return tuple(
+        (node.category_id, node_path_to_id[node.path[:1]])
+        for node in taxonomy.nodes
+        if node.is_leaf
+    )
+
+
 def _candidate_leaves(
     direction: DirectionRecord,
     taxonomy: TaxonomyArtifact,
+    leaf_parent_pairs: tuple[tuple[str, str], ...],
 ) -> tuple[str, ...]:
     if not direction.candidate_level1_ids:
         return tuple(taxonomy.leaf_category_ids)
     parents = set(direction.candidate_level1_ids)
     return tuple(
-        node.category_id
-        for node in taxonomy.nodes
-        if node.is_leaf
-        and any(
-            ancestor.category_id in parents
-            for ancestor in taxonomy.nodes
-            if ancestor.path == node.path[:1]
-        )
+        leaf_id
+        for leaf_id, level1_id in leaf_parent_pairs
+        if level1_id in parents
     )
 
 

@@ -6,6 +6,8 @@ from types import SimpleNamespace
 
 from landscape.batching import make_profile
 from landscape.classification_agent import (
+    _candidate_leaves,
+    _leaf_parent_pairs,
     ClassificationBatchOutput,
     ClassificationDecision,
     ClassificationMatchingService,
@@ -117,6 +119,63 @@ class ClassificationMatchingServiceTests(unittest.TestCase):
         self.assertEqual(results[0].terminal, ClassificationTerminal.UNRESOLVED)
         self.assertEqual(results[0].unresolved_reason, "ABSTRACT_MISSING")
         self.assertEqual(model.calls, [])
+
+    def test_candidate_leaves_are_scoped_deterministic_and_complete(self):
+        taxonomy = compile_taxonomy_markdown(
+            """| 一级分类 | 二级分类 | 三级分类 |
+| --- | --- | --- |
+| Alpha | One | LeafA |
+| Alpha | Two | LeafB |
+| Beta | Three | LeafC |
+"""
+        )
+        node_by_path = {node.path: node for node in taxonomy.nodes}
+        alpha_id = node_by_path[("Alpha",)].category_id
+        beta_id = node_by_path[("Beta",)].category_id
+        leaf_ids = tuple(node.category_id for node in taxonomy.nodes if node.is_leaf)
+
+        alpha_only = DirectionRecord(
+            analysis_unit_id="AU-00000000000000aa",
+            status=DirectionStatus.AVAILABLE,
+            evidence_sufficient=True,
+            solution_mechanism="通过液体回路散热",
+            direction_summary="冷板液冷技术方向",
+            candidate_level1_ids=(alpha_id,),
+            confidence=0.8,
+            evidence_ids=("EV-aa",),
+        )
+        pairs = _leaf_parent_pairs(taxonomy)
+        scoped = _candidate_leaves(alpha_only, taxonomy, pairs)
+        self.assertEqual(
+            set(scoped),
+            {node_by_path[("Alpha", "One", "LeafA")].category_id,
+             node_by_path[("Alpha", "Two", "LeafB")].category_id},
+        )
+        self.assertEqual(scoped, tuple(leaf_id for leaf_id in leaf_ids if leaf_id in set(scoped)))
+
+        alpha_only_again = DirectionRecord(
+            analysis_unit_id="AU-00000000000000bb",
+            status=DirectionStatus.AVAILABLE,
+            evidence_sufficient=True,
+            solution_mechanism="通过液体回路散热",
+            direction_summary="冷板液冷技术方向",
+            candidate_level1_ids=(alpha_id,),
+            confidence=0.8,
+            evidence_ids=("EV-bb",),
+        )
+        self.assertEqual(_candidate_leaves(alpha_only_again, taxonomy, pairs), scoped)
+
+        unscoped = DirectionRecord(
+            analysis_unit_id="AU-00000000000000cc",
+            status=DirectionStatus.AVAILABLE,
+            evidence_sufficient=True,
+            solution_mechanism="通过液体回路散热",
+            direction_summary="冷板液冷技术方向",
+            candidate_level1_ids=(),
+            confidence=0.8,
+            evidence_ids=("EV-cc",),
+        )
+        self.assertEqual(_candidate_leaves(unscoped, taxonomy, pairs), leaf_ids)
 
 
 if __name__ == "__main__":
