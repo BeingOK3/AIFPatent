@@ -33,13 +33,14 @@ class PostgreSQLPublicationRepository:
             inserted = connection.execute(
                 """
                 INSERT INTO landscape_v4_publication_sets(
-                    run_id,freeze_hash,publication_count,analysis_unit_count,created_at
-                ) VALUES (%s,%s,%s,%s,%s)
+                    run_id,freeze_hash,publication_count,analysis_unit_count,
+                    date_excluded_count,created_at
+                ) VALUES (%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (run_id) DO NOTHING RETURNING run_id
                 """,
                 (
                     frozen.run_id, frozen.freeze_hash, frozen.publication_count,
-                    frozen.analysis_unit_count, timestamp,
+                    frozen.analysis_unit_count, frozen.date_excluded_count, timestamp,
                 ),
             ).fetchone()
             if inserted is not None:
@@ -136,6 +137,7 @@ class PostgreSQLPublicationRepository:
                 publications=publications,
                 publication_count=manifest["publication_count"],
                 analysis_unit_count=manifest["analysis_unit_count"],
+                date_excluded_count=manifest["date_excluded_count"],
                 freeze_hash=manifest["freeze_hash"],
             )
         except (ValidationError, TypeError, ValueError) as exc:

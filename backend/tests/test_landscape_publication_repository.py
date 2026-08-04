@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from contextlib import contextmanager
+from datetime import date
 
 from idea.providers.base import SearchHit
 from landscape.publication_freeze import freeze_publications
@@ -41,7 +42,7 @@ class Connection:
         if "FROM landscape_v4_runs" in normalized: return Cursor(self, {"run_id": params[0]} if self.run else None)
         if normalized.startswith("INSERT INTO landscape_v4_publication_sets"):
             if self.manifest is not None: return Cursor(self)
-            keys = ("run_id","freeze_hash","publication_count","analysis_unit_count","created_at")
+            keys = ("run_id","freeze_hash","publication_count","analysis_unit_count","date_excluded_count","created_at")
             self.manifest = dict(zip(keys, params, strict=True)); return Cursor(self, {"run_id": params[0]})
         if "FROM landscape_v4_publication_sets" in normalized: return Cursor(self, self.manifest)
         if "FROM landscape_v4_publications" in normalized:
@@ -54,6 +55,23 @@ class Connection:
 def frozen(number="US123A1"):
     hit = SearchHit(provider="fixture", provider_rank=1, publication_number=number, title="Title")
     return freeze_publications("LRN-0000000000000001", (("LQ4-0000000000000001", hit),))
+
+
+def frozen_with_date_excluded():
+    inside = SearchHit(
+        provider="fixture", provider_rank=1, publication_number="US123A1",
+        title="Inside", publication_date="2026-06-01",
+    )
+    outside = SearchHit(
+        provider="fixture", provider_rank=2, publication_number="US999A1",
+        title="Outside", publication_date="2020-01-01",
+    )
+    return freeze_publications(
+        "LRN-0000000000000001",
+        (("LQ4-0000000000000001", inside), ("LQ4-0000000000000001", outside)),
+        publication_start=date(2026, 1, 1),
+        publication_end=date(2026, 12, 31),
+    )
 
 
 class LandscapePublicationRepositoryTests(unittest.TestCase):
@@ -75,6 +93,12 @@ class LandscapePublicationRepositoryTests(unittest.TestCase):
         self.repository.put(frozen())
         with self.assertRaisesRegex(PublicationPersistenceError, "different immutable"):
             self.repository.put(frozen("US999A1"))
+
+    def test_date_excluded_count_round_trips(self):
+        value = frozen_with_date_excluded()
+        self.assertEqual(value.date_excluded_count, 1)
+        self.assertEqual(self.repository.put(value), value)
+        self.assertEqual(self.repository.get(value.run_id), value)
 
     def test_unknown_run_fails_before_rows(self):
         self.connection.run = False

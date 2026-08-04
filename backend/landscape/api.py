@@ -363,17 +363,28 @@ def _run_view(runtime: LandscapeRuntime, run_id: str) -> dict:
         "mode": run.mode,
         "scope_revision_id": run.scope_revision_id,
         "taxonomy_version": run.taxonomy_version,
-        "scope": scope,
-        "publication_start": run.publication_start,
-        "publication_end": run.publication_end,
-        "limitations": runtime.stage_repository.limitations(run_id),
+        "scope": scope.model_dump(mode="json"),
+        "publication_start": (
+            run.publication_start.isoformat()
+            if run.publication_start is not None
+            else None
+        ),
+        "publication_end": (
+            run.publication_end.isoformat()
+            if run.publication_end is not None
+            else None
+        ),
+        "limitations": [
+            item.model_dump(mode="json")
+            for item in runtime.stage_repository.limitations(run_id)
+        ],
         "created_at": run.created_at,
         "updated_at": run.updated_at,
         "started_at": run.started_at,
         "completed_at": run.completed_at,
         "error_code": run.error_code,
         "error_message": run.error_message,
-        "scale_gate": scale_gate,
+        "scale_gate": scale_gate.model_dump(mode="json") if scale_gate is not None else None,
         "credentials_available": runtime.credential_vault.has_credentials(run_id),
         "progress": {
             "completed_stages": sum(
@@ -381,7 +392,7 @@ def _run_view(runtime: LandscapeRuntime, run_id: str) -> dict:
                 for stage in stages
             ),
             "total_stages": len(stages),
-            "steps": stages,
+            "steps": [stage.model_dump(mode="json") for stage in stages],
         },
     }
 
