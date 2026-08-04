@@ -1,6 +1,6 @@
 {
   "schema_version": "landscape-current-audit/1.0.0",
-  "captured_after_commit": "3ef4fcc",
+ "captured_after_commit": "27e36bf",
   "production_entrypoints": [
     {
       "path": "backend/main.py",
@@ -39,48 +39,39 @@
       "@router.get(\"/runs/{run_id}/patents.csv\")"
     ]
   },
-  "legacy_workflow": {
-    "path": "backend/landscape/workflow.py",
-    "active_steps": [
-      "VALIDATE_SCOPE",
-      "PLAN_SEARCH",
-      "SEARCH_PUBLICATIONS",
-      "FILTER_AND_SELECT",
-      "FETCH_DETAILS",
-      "ANALYZE_PATENTS",
-      "ANALYZE_COMPANIES",
-      "ANALYZE_CROSS_COMPANY_TRENDS",
-      "VERIFY_COVERAGE",
-      "BUILD_REPORT"
-    ],
-    "legacy_non_active_steps": [
-      "REPAIR_GAPS",
-      "CLUSTER_PATENTS"
-    ]
-  },
-  "legacy_postgres_migrations": [
-    "070_landscape_company_analysis.sql",
-    "071_landscape_company_assignment_manifest.sql",
-    "072_landscape_document_fetches.sql",
-    "073_landscape_company_result_manifests.sql",
-    "074_landscape_keyed_steps.sql",
-    "075_landscape_repair_snapshots.sql"
-  ],
-  "replace_or_remove_modules": [
-    "backend/landscape/analysis.py",
-    "backend/landscape/clustering.py",
-    "backend/landscape/company_classification.py",
-    "backend/landscape/company_profiles.py",
-    "backend/landscape/company_trends.py",
-    "backend/landscape/deep_selection.py"
-  ],
-  "reuse_boundaries": [
-    "backend/landscape/api.py",
-    "backend/landscape/postgres_database.py",
-    "backend/landscape/reporting.py",
-    "backend/landscape/search.py",
-    "backend/landscape/store.py"
-  ],
+ "legacy_postgres_migrations": [
+  "070_landscape_company_analysis.sql",
+  "071_landscape_company_assignment_manifest.sql",
+  "072_landscape_document_fetches.sql",
+  "073_landscape_company_result_manifests.sql",
+  "074_landscape_keyed_steps.sql",
+  "075_landscape_repair_snapshots.sql"
+ ],
+ "removed_modules": [
+  "backend/landscape/analysis.py",
+  "backend/landscape/clustering.py",
+  "backend/landscape/company_classification.py",
+  "backend/landscape/company_profiles.py",
+  "backend/landscape/company_trends.py",
+  "backend/landscape/deep_selection.py",
+  "backend/landscape/company_batches.py",
+  "backend/landscape/company_workflow.py",
+  "backend/landscape/coverage_audit.py",
+  "backend/landscape/direction_fingerprints.py",
+  "backend/landscape/execution.py",
+  "backend/landscape/planning.py",
+  "backend/landscape/repair.py",
+  "backend/landscape/reporting.py",
+  "backend/landscape/search.py",
+  "backend/landscape/store.py",
+  "backend/landscape/taxonomy_recall.py",
+  "backend/landscape/workflow.py"
+ ],
+ "replace_or_remove_modules": [],
+ "reuse_boundaries": [
+  "backend/landscape/api.py",
+  "backend/landscape/postgres_database.py"
+ ],
   "frontend_entrypoints": [
     "frontend/landscape.html",
     "frontend/landscape.js",

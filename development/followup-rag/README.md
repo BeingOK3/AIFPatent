@@ -15,7 +15,6 @@
 ## 文件
 
 - `architecture.md`：完整架构设计基线；
-- `development-log.md`：本开发域只追加的工作记录。
 
 ## 约束
 

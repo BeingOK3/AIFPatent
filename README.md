@@ -18,7 +18,7 @@ AIFPatent 当前 `develop` 版本提供可直接运行的首次报告 RAG 闭环
 
 当前 `develop` 已默认启用并通过真实 DeepSeek 运行态验收的报告内证据追问 MVP：可从完成的首次报告选择深读文献建立 Thread，每轮重新检索冻结 Corpus，运行独立七节点 Workflow，输出结构化回答并展开可回查的 Citation 原文；页面提供 SSE 状态与取消，模型 Base URL/Model/API Key 仍为刷新即丢失的瞬时 BYOK。首次报告与追问现在共用相同的 RRF、章节权重、多样性和冻结范围门禁；未配置部署级 Embedding 时均明确降级为 `LEXICAL_ONLY`，不会伪装成向量混合召回。
 
-尚未完成：选择并配置真实跨语言 Embedding Provider 后的质量验收、真实人工标注评测集、reranker、专利族变体与法律状态增强、多租户/认证。详细边界记录在 `development/followup-rag/development-log.md`。
+尚未完成：选择并配置真实跨语言 Embedding Provider 后的质量验收、真实人工标注评测集、reranker、专利族变体与法律状态增强、多租户/认证。详细边界记录在 `development/followup-rag/README.md`。
 
 ## 新机器直接运行
 

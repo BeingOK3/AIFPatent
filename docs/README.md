@@ -4,13 +4,11 @@
 
 当前文件：
 
-- `aifpatent-architecture.md`：已实现 IDEA 评审、报告内追问、专利态势分析和部署栈的当前架构、数据流、故障语义及明确限制。
-- `aifpatent-architecture-diagram.md`：当前全系统可编辑 Mermaid 架构图，覆盖 IDEA、专利态势、RAG、存储和容器部署。
+- `rag-chunking-retrieval-and-selection.md`：IDEA 首次报告 RAG 的 Chunk、动态装载与精读专利选择说明。
 
 其他资料：
 
 - 根 `README.md`：安装、启动、使用、CLI 和接口入口；
-- `development/core/`：AIFPatent 核心系统开发与迁移历史；
 - `development/followup-rag/`：追问、耐久语料和混合 RAG 的设计、实现与验收历史。
 - `development/landscape/`：专利态势重构的产品需求、分类标准和开发规格。
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import unittest
 from pathlib import Path
 
@@ -30,7 +29,6 @@ class LandscapeV4CurrentImplementationAuditTests(unittest.TestCase):
 
     def test_recorded_source_boundaries_exist(self) -> None:
         groups = (
-            self.audit["replace_or_remove_modules"],
             self.audit["reuse_boundaries"],
             self.audit["frontend_entrypoints"],
         )
@@ -38,6 +36,11 @@ class LandscapeV4CurrentImplementationAuditTests(unittest.TestCase):
             for relative_path in paths:
                 with self.subTest(path=relative_path):
                     self.assertTrue((ROOT / relative_path).is_file())
+
+    def test_recorded_removed_modules_stay_removed(self) -> None:
+        for relative_path in self.audit["removed_modules"]:
+            with self.subTest(path=relative_path):
+                self.assertFalse((ROOT / relative_path).exists())
 
     def test_source_contract_tokens_still_match_current_code(self) -> None:
         token_contracts = [
@@ -56,20 +59,6 @@ class LandscapeV4CurrentImplementationAuditTests(unittest.TestCase):
         for token in self.audit["legacy_api"]["removed_tokens"]:
             with self.subTest(removed_token=token):
                 self.assertNotIn(token, api_source)
-
-    def test_workflow_step_inventory_matches_source(self) -> None:
-        source = (ROOT / self.audit["legacy_workflow"]["path"]).read_text(
-            encoding="utf-8"
-        )
-        enum_block = source.split("class LandscapeWorkflowStep", 1)[1].split(
-            "WORKFLOW_STEPS", 1
-        )[0]
-        declared = re.findall(r'^\s+[A-Z_]+ = "([A-Z_]+)"$', enum_block, re.MULTILINE)
-        expected = [
-            *self.audit["legacy_workflow"]["active_steps"],
-            *self.audit["legacy_workflow"]["legacy_non_active_steps"],
-        ]
-        self.assertCountEqual(declared, expected)
 
     def test_landscape_migration_inventory_matches_repository(self) -> None:
         migration_root = ROOT / "deploy" / "rag" / "postgres-init"

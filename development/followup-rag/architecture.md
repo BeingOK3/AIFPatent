@@ -8,7 +8,7 @@
 >
 > 适用范围：AIFPatent 专利全文语料、首次 IDEA 评审、评审后追问、混合 RAG、方案变体与二次研究
 >
-> 当前系统前置文档：`../../docs/aifpatent-architecture.md`
+> 当前系统前置说明：根 `README.md` 与 `docs/rag-chunking-retrieval-and-selection.md`
 
 ## 1. 文档目的
 
