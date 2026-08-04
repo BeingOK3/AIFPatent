@@ -33,70 +33,94 @@ class PostgreSQLPatentSnapshotRepository:
                 raise PatentSnapshotPersistenceError(
                     "patent snapshots must exactly cover frozen publications"
                 )
-            existing = connection.execute(
-                "SELECT publication_id FROM landscape_v4_patent_snapshots WHERE run_id=%s",
-                (result.run_id,),
-            ).fetchall()
-            if not existing:
-                self._insert(connection, result)
+            for order, snapshot in enumerate(result.snapshots, start=1):
+                self._insert_one(connection, result.run_id, snapshot, order)
             stored = self._load(connection, result.run_id)
             if stored != result:
                 raise PatentSnapshotPersistenceError("patent snapshots are immutable")
             return stored
+
+    def put_one(
+        self,
+        run_id: str,
+        snapshot: PatentSnapshot,
+        *,
+        sort_order: int,
+    ) -> PatentSnapshot:
+        snapshot = PatentSnapshot.model_validate(snapshot.model_dump(mode="json"))
+        if sort_order < 1:
+            raise ValueError("snapshot sort order must be positive")
+        with self._connect() as connection:
+            self._insert_one(connection, run_id, snapshot, sort_order)
+            stored = self._load_one(connection, run_id, snapshot.publication_id)
+            if stored != snapshot:
+                raise PatentSnapshotPersistenceError("patent snapshot is immutable")
+            return stored
+
+    def list(self, run_id: str) -> tuple[PatentSnapshot, ...]:
+        with self._connect() as connection:
+            return self._load_partial(connection, run_id)
 
     def get(self, run_id: str) -> PatentSnapshotSet:
         with self._connect() as connection:
             return self._load(connection, run_id)
 
     @staticmethod
-    def _insert(connection, result: PatentSnapshotSet) -> None:
-        with connection.cursor() as cursor:
-            cursor.executemany(
-                """
-                INSERT INTO landscape_v4_patent_snapshots(
-                    run_id,publication_id,status,publication_number,application_number,
-                    family_id,title,priority_date,filing_date,publication_date,url,
-                    language,abstract_text,provider,failure_reason,content_hash,sort_order
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """,
-                [
-                    (
-                        result.run_id,
-                        item.publication_id,
-                        item.status.value,
-                        item.publication_number,
-                        item.application_number,
-                        item.family_id,
-                        item.title,
-                        item.priority_date,
-                        item.filing_date,
-                        item.publication_date,
-                        item.url,
-                        item.language,
-                        item.abstract_text,
-                        item.provider,
-                        item.failure_reason,
-                        item.content_hash,
-                        order,
-                    )
-                    for order, item in enumerate(result.snapshots, start=1)
-                ],
-            )
-            cursor.executemany(
-                """
-                INSERT INTO landscape_v4_patent_snapshot_applicants(
-                    run_id,publication_id,applicant_name,sort_order
-                ) VALUES (%s,%s,%s,%s)
-                """,
-                [
-                    (result.run_id, item.publication_id, applicant, order)
-                    for item in result.snapshots
-                    for order, applicant in enumerate(item.applicants, start=1)
-                ],
-            )
+    def _insert_one(connection, run_id: str, item: PatentSnapshot, sort_order: int) -> None:
+        if connection.execute(
+            "SELECT publication_id FROM landscape_v4_publications WHERE run_id=%s AND publication_id=%s",
+            (run_id, item.publication_id),
+        ).fetchone() is None:
+            raise KeyError((run_id, item.publication_id))
+        inserted = connection.execute(
+            """
+            INSERT INTO landscape_v4_patent_snapshots(
+                run_id,publication_id,status,publication_number,application_number,
+                family_id,title,priority_date,filing_date,publication_date,url,
+                language,abstract_text,provider,failure_reason,content_hash,sort_order
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (run_id,publication_id) DO NOTHING RETURNING publication_id
+            """,
+            (
+                run_id, item.publication_id, item.status.value,
+                item.publication_number, item.application_number, item.family_id,
+                item.title, item.priority_date, item.filing_date,
+                item.publication_date, item.url, item.language,
+                item.abstract_text, item.provider, item.failure_reason,
+                item.content_hash, sort_order,
+            ),
+        ).fetchone()
+        if inserted is not None and item.applicants:
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO landscape_v4_patent_snapshot_applicants(
+                        run_id,publication_id,applicant_name,sort_order
+                    ) VALUES (%s,%s,%s,%s)
+                    """,
+                    [
+                        (run_id, item.publication_id, applicant, order)
+                        for order, applicant in enumerate(item.applicants, start=1)
+                    ],
+                )
 
     @staticmethod
     def _load(connection, run_id: str) -> PatentSnapshotSet:
+        snapshots = PostgreSQLPatentSnapshotRepository._load_partial(connection, run_id)
+        expected_rows = connection.execute(
+            "SELECT publication_id FROM landscape_v4_publications WHERE run_id=%s",
+            (run_id,),
+        ).fetchall()
+        if {item.publication_id for item in snapshots} != {
+            row["publication_id"] for row in expected_rows
+        }:
+            raise PatentSnapshotPersistenceError(
+                "patent snapshots do not yet cover frozen publications"
+            )
+        return PatentSnapshotSet(run_id=run_id, snapshots=snapshots)
+
+    @staticmethod
+    def _load_partial(connection, run_id: str) -> tuple[PatentSnapshot, ...]:
         rows = connection.execute(
             """
             SELECT * FROM landscape_v4_patent_snapshots
@@ -104,8 +128,6 @@ class PostgreSQLPatentSnapshotRepository:
             """,
             (run_id,),
         ).fetchall()
-        if not rows:
-            raise KeyError(run_id)
         applicant_rows = connection.execute(
             """
             SELECT publication_id,applicant_name,sort_order
@@ -140,16 +162,26 @@ class PostgreSQLPatentSnapshotRepository:
                     failure_reason=row["failure_reason"],
                     content_hash=row["content_hash"],
                 )
-                for expected, row in enumerate(rows, start=1)
-                if _contiguous(row, expected)
+                for row in rows
             )
             if applicants:
                 raise PatentSnapshotPersistenceError("snapshot applicant has no parent")
-            return PatentSnapshotSet(run_id=run_id, snapshots=snapshots)
+            return snapshots
         except (ValidationError, TypeError, ValueError) as exc:
             raise PatentSnapshotPersistenceError(
                 "stored patent snapshots failed validation"
             ) from exc
+
+    @staticmethod
+    def _load_one(connection, run_id: str, publication_id: str) -> PatentSnapshot:
+        matches = tuple(
+            item
+            for item in PostgreSQLPatentSnapshotRepository._load_partial(connection, run_id)
+            if item.publication_id == publication_id
+        )
+        if not matches:
+            raise KeyError((run_id, publication_id))
+        return matches[0]
 
     @contextmanager
     def _connect(self) -> Iterator[object]:
@@ -170,12 +202,6 @@ def _date(value) -> date | None:
     if value is None or isinstance(value, date):
         return value
     return date.fromisoformat(str(value))
-
-
-def _contiguous(row, expected: int) -> bool:
-    if row["sort_order"] != expected:
-        raise PatentSnapshotPersistenceError("snapshot order is not contiguous")
-    return True
 
 
 __all__ = ["PatentSnapshotPersistenceError", "PostgreSQLPatentSnapshotRepository"]
