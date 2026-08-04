@@ -32,6 +32,7 @@ from .scale_repository import PostgreSQLScaleGateRepository
 from .search_coordinator import LandscapeSearchCoordinator
 from .abstract_repository import PostgreSQLAbstractEvidenceRepository
 from .task_queue import PostgreSQLTaskQueue
+from .model_scheduler import ModelBudget, ModelScheduler
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -139,6 +140,7 @@ class LandscapeRuntime:
     search_coordinator: LandscapeSearchCoordinator
     abstract_repository: PostgreSQLAbstractEvidenceRepository
     task_queue: PostgreSQLTaskQueue
+    model_scheduler: ModelScheduler
 
 
 def build_landscape_runtime(
@@ -182,6 +184,15 @@ def build_landscape_runtime(
     )
     abstract_repository = PostgreSQLAbstractEvidenceRepository(dsn)
     task_queue = PostgreSQLTaskQueue(dsn)
+    model_scheduler = ModelScheduler(
+        ModelBudget(
+            max_concurrency=min(8, config.workflow.document_agent_concurrency),
+            rpm=_int_env("AIFPATENT_MODEL_RPM", 60, minimum=1),
+            tpm=_int_env("AIFPATENT_MODEL_TPM", 200_000, minimum=1),
+            max_input_tokens=_int_env("AIFPATENT_MODEL_MAX_INPUT_TOKENS", 600_000, minimum=1),
+            max_output_tokens=_int_env("AIFPATENT_MODEL_MAX_OUTPUT_TOKENS", 8_192, minimum=1),
+        )
+    )
     store = LandscapeRunStore(runs_dir)
     harness = LandscapeWorkflowHarness(
         database,
@@ -264,4 +275,16 @@ def build_landscape_runtime(
         search_coordinator,
         abstract_repository,
         task_queue,
+        model_scheduler,
     )
+
+
+def _int_env(name: str, default: int, *, minimum: int) -> int:
+    value = os.environ.get(name, str(default)).strip()
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer") from exc
+    if parsed < minimum:
+        raise RuntimeError(f"{name} must be >= {minimum}")
+    return parsed
