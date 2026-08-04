@@ -50,6 +50,15 @@
 
     <section id="run-panel" class="panel run-panel hidden" aria-live="polite">
       <div class="run-header"><div><p class="eyebrow">RUN STATUS</p><h2 id="run-title">专利态势分析</h2></div><div class="run-actions"><span id="run-status" class="status">QUEUED</span><button id="cancel-run" class="secondary hidden">取消任务</button></div></div>
+      <div id="scale-gate-actions" class="scale-gate-actions hidden">
+        <p id="scale-gate-message"></p>
+        <button id="approve-scale" type="button" class="primary">确认规模并继续</button>
+        <button id="reject-scale" type="button" class="secondary">取消本次运行</button>
+      </div>
+      <div id="credential-actions" class="scale-gate-actions hidden">
+        <p>模型凭据已过期或服务重启。重新挂载当前页面中的凭据即可从检查点继续。</p>
+        <button id="attach-credentials" type="button" class="primary">重新挂载凭据</button>
+      </div>
       <div id="step-list" class="step-list"></div>
       <section id="debug-view" class="debug-view"><h3>系统运行调试</h3><div id="debug-content" class="muted">等待任务启动…</div></section>
       <div id="report-view" class="report-view hidden"></div>

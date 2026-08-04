@@ -35,24 +35,23 @@ class LandscapeFrontendContractTests(unittest.TestCase):
             "EXCLUDED:REJECT",
             "EXCLUDED:RETIRE",
             "USER_ADDED",
+            'jsonRequest("/api/landscape/runs"',
+            "scope_revision_id",
+            "/credentials",
         ):
             self.assertIn(fragment, self.javascript)
         self.assertIn('id="scope-review-panel"', self.html)
         self.assertIn('id="confirm-scope"', self.html)
-        self.assertNotIn('jsonRequest("/api/landscape/runs", { method: "POST"', self.javascript)
 
-    def test_aliases_and_debug_are_rendered(self) -> None:
+    def test_v4_progress_scale_gate_and_debug_are_rendered(self) -> None:
         for fragment in (
-            "/api/landscape/runs/", "/debug", "searched_competitor_aliases",
-            "本次检索到的友商别名", "系统运行调试", "provider_statuses",
-            "provider_attempts", "technical_direction_expansion", "中英文技术词",
-            "日期详情补全",
-            "/deep-analyze",
-            "开始精读已选",
-            "待发起精读",
-            "deep_read",
+            "/api/landscape/runs/", "/debug", "stage_name",
+            "系统运行调试", "query_plan", "scale_gate", "规模闸门",
+            "/scale-decision", "WAITING_FOR_CREDENTIALS", "attachCredentials",
         ):
             self.assertIn(fragment, self.javascript if fragment != "系统运行调试" else self.html)
+        self.assertIn('id="scale-gate-actions"', self.html)
+        self.assertIn('id="credential-actions"', self.html)
         self.assertIn("debug-view", self.css)
 
     def test_all_landscape_javascript_ids_exist_in_page(self) -> None:
@@ -74,29 +73,16 @@ class LandscapeFrontendContractTests(unittest.TestCase):
         self.assertIn('value="CUSTOM"', self.html)
         self.assertNotIn('max="12"', self.html)
 
-    def test_company_trend_report_renders_company_data_and_hides_legacy_clusters(self) -> None:
+    def test_report_4_renders_auditable_results_without_deep_read(self) -> None:
         for fragment in (
-            "company_patent_counts",
-            "各公司专利族数量",
-            "统计口径：时间与友商条件过滤后",
-            "patent.family_status",
-            "item.family_footprint",
-            "analysis_selection",
-            "公司覆盖",
-            "全族状态",
-            "overall_legal_status",
-            "company_profiles",
-            "cross_company_analysis",
-            "公司技术画像",
-            "跨公司整体技术趋势",
-            "company_trend_coverage",
-            "company_trend_coverage_history",
-            "公司趋势覆盖审计",
-            "landscape-report/2.0.0",
-            "历史技术聚类",
+            "landscape-report/4.0.0", "metric_cube", "mode_view",
+            "counting_disclosure", "query_audit", "representatives",
+            "classification_terminal", "Unresolved", "Others",
+            'target="_blank"', 'rel="noopener noreferrer"',
         ):
             self.assertIn(fragment, self.javascript)
-        self.assertNotIn("申请日趋势", self.javascript)
+        self.assertNotIn("deep-analyze", self.javascript)
+        self.assertNotIn("deep_read", self.javascript)
 
 
 if __name__ == "__main__":
