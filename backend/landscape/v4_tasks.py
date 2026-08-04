@@ -124,5 +124,13 @@ class V4LandscapeTaskManager:
         for run_id in list(self.tasks):
             await self.cancel(run_id)
 
+    def resume_incomplete(self) -> int:
+        resumed = 0
+        for run in self.run_repository.list(500):
+            if run.status in _TERMINAL or run.status == LandscapeRunStatus.AWAITING_SCALE_CONFIRMATION:
+                continue
+            resumed += self.start(run.run_id)
+        return resumed
+
 
 __all__ = ["V4LandscapeTaskManager"]

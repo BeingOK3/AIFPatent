@@ -137,7 +137,10 @@ class V4LandscapeWorkflow:
                 LandscapeRunStatus.RUNNING,
                 expected=(LandscapeRunStatus.READY,),
             )
-        elif run.status != LandscapeRunStatus.RUNNING:
+        elif run.status not in {
+            LandscapeRunStatus.RUNNING,
+            LandscapeRunStatus.WAITING_FOR_CREDENTIALS,
+        }:
             raise V4WorkflowError(
                 f"preanalysis cannot execute from run status {run.status.value}"
             )
