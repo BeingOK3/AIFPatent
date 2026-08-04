@@ -46,6 +46,9 @@ from .analytics_repository import (
 )
 from .stage_repository import PostgreSQLStageRepository
 from .family_repository import PostgreSQLFamilyRepository
+from .organization_repository import PostgreSQLOrganizationRepository
+from .patent_snapshot_repository import PostgreSQLPatentSnapshotRepository
+from .patent_snapshot_fetch import PatentSnapshotFetchService
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -160,6 +163,9 @@ class LandscapeRuntime:
     representative_repository: PostgreSQLRepresentativeRepository
     stage_repository: PostgreSQLStageRepository
     family_repository: PostgreSQLFamilyRepository
+    organization_repository: PostgreSQLOrganizationRepository
+    patent_snapshot_repository: PostgreSQLPatentSnapshotRepository
+    patent_snapshot_fetch: PatentSnapshotFetchService | None
     task_queue: PostgreSQLTaskQueue
     model_scheduler: ModelScheduler
     credential_vault: CredentialVault
@@ -213,6 +219,8 @@ def build_landscape_runtime(
     representative_repository = PostgreSQLRepresentativeRepository(dsn)
     stage_repository = PostgreSQLStageRepository(dsn)
     family_repository = PostgreSQLFamilyRepository(dsn)
+    organization_repository = PostgreSQLOrganizationRepository(dsn)
+    patent_snapshot_repository = PostgreSQLPatentSnapshotRepository(dsn)
     task_queue = PostgreSQLTaskQueue(dsn)
     model_scheduler = ModelScheduler(
         ModelBudget(
@@ -253,6 +261,17 @@ def build_landscape_runtime(
         provider = ExaMcpProvider(config.search.providers.exa_mcp, cache=cache)
         providers.append(provider)
         timeouts[provider.name] = config.search.providers.exa_mcp.timeout_seconds
+    patent_snapshot_fetch = (
+        PatentSnapshotFetchService(
+            providers,
+            patent_snapshot_repository,
+            max_concurrency=min(8, config.workflow.document_agent_concurrency),
+            timeout_seconds=min(90, config.model.timeout_seconds),
+            max_attempts_per_provider=config.workflow.max_step_attempts,
+        )
+        if providers
+        else None
+    )
     report_service = LandscapeReportService(database, store)
     execution = LandscapeExecutionService(
         database=database,
@@ -313,6 +332,9 @@ def build_landscape_runtime(
         representative_repository,
         stage_repository,
         family_repository,
+        organization_repository,
+        patent_snapshot_repository,
+        patent_snapshot_fetch,
         task_queue,
         model_scheduler,
         credential_vault,
