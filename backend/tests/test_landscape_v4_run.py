@@ -39,6 +39,9 @@ from landscape.direction_record import DirectionRecord, DirectionStatus
 from landscape.semantic_result_repository import PostgreSQLDirectionRepository
 from landscape.organization_assignment import assign_organizations
 from landscape.organization_repository import PostgreSQLOrganizationRepository
+from landscape.patent_snapshot import make_snapshot_set, snapshot_from_document
+from landscape.patent_snapshot_repository import PostgreSQLPatentSnapshotRepository
+from idea.providers.base import FetchedDocument
 
 
 class Cursor:
@@ -298,6 +301,9 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
         organization_repository = PostgreSQLOrganizationRepository(
             "postgresql://integration", connect=connect
         )
+        snapshot_repository = PostgreSQLPatentSnapshotRepository(
+            "postgresql://integration", connect=connect
+        )
         try:
             scope_repository.create(draft)
             confirmed = scope_repository.confirm(
@@ -345,10 +351,30 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 publication_repository.get(run.run_id), publications
             )
+            snapshots = make_snapshot_set(
+                publications,
+                (
+                    snapshot_from_document(
+                        publications.publications[0],
+                        FetchedDocument(
+                            provider="integration",
+                            publication_number="US1234567A1",
+                            assignees=[unique_name],
+                            url="https://example.test/US1234567A1",
+                            abstract_text="An integration abstract with enough technical detail.",
+                        ),
+                    ),
+                ),
+            )
+            self.assertEqual(snapshot_repository.put(snapshots), snapshots)
+            self.assertEqual(snapshot_repository.get(run.run_id), snapshots)
             organization_result = assign_organizations(
                 run.run_id,
                 confirmed,
-                {publications.publications[0].publication_id: (unique_name,)},
+                {
+                    item.publication_id: item.applicants
+                    for item in snapshots.snapshots
+                },
             )
             self.assertEqual(
                 organization_repository.put(organization_result),
@@ -383,15 +409,17 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
                     (SELECT count(*) FROM landscape_v4_publication_sets WHERE run_id=%s) AS publication_sets,
                     (SELECT count(*) FROM landscape_v4_family_manifests WHERE run_id=%s) AS families,
                     (SELECT count(*) FROM landscape_v4_organization_manifests WHERE run_id=%s) AS organizations,
+                    (SELECT count(*) FROM landscape_v4_patent_snapshots WHERE run_id=%s) AS snapshots,
                     (SELECT count(*) FROM landscape_v4_direction_records WHERE run_id=%s) AS directions
                 """,
-                (run.run_id, run.run_id, run.run_id, run.run_id, run.run_id, run.run_id),
+                (run.run_id, run.run_id, run.run_id, run.run_id, run.run_id, run.run_id, run.run_id),
             ).fetchone()
             self.assertEqual(counts["runs"], 0)
             self.assertEqual(counts["plans"], 0)
             self.assertEqual(counts["publication_sets"], 0)
             self.assertEqual(counts["families"], 0)
             self.assertEqual(counts["organizations"], 0)
+            self.assertEqual(counts["snapshots"], 0)
             self.assertEqual(counts["directions"], 0)
         finally:
             raw.rollback()

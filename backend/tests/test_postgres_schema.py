@@ -89,6 +89,9 @@ LANDSCAPE_V4_ANALYSIS_UNITS_SCHEMA_PATH = Path(
 LANDSCAPE_V4_ORGANIZATIONS_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/099_landscape_v4_organizations.sql"
 )
+LANDSCAPE_V4_PATENT_SNAPSHOTS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/100_landscape_v4_patent_snapshots.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -117,6 +120,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_organizations_sql = (
             LANDSCAPE_V4_ORGANIZATIONS_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_patent_snapshots_sql = (
+            LANDSCAPE_V4_PATENT_SNAPSHOTS_SCHEMA_PATH.read_text(encoding="utf-8")
         )
         self.landscape_company_manifest_sql = (
             LANDSCAPE_COMPANY_MANIFEST_SCHEMA_PATH.read_text(encoding="utf-8")
@@ -497,6 +503,19 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("landscape_v4_publication_applicants", sql)
         self.assertIn("is_unconfirmed", sql)
         self.assertIn("'099_landscape_v4_organizations'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_patent_snapshots_are_abstract_only(self) -> None:
+        sql = self.landscape_patent_snapshots_sql
+        self.assertIn("landscape_v4_patent_snapshots", sql)
+        self.assertIn("landscape_v4_patent_snapshot_applicants", sql)
+        self.assertIn("abstract_text", sql)
+        self.assertNotIn("claims_text", sql)
+        self.assertNotIn("description_text", sql)
+        self.assertIn("'100_landscape_v4_patent_snapshots'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
