@@ -37,6 +37,8 @@ from landscape.family_repository import PostgreSQLFamilyRepository
 from landscape.family_resolution import resolve_frozen_publications
 from landscape.direction_record import DirectionRecord, DirectionStatus
 from landscape.semantic_result_repository import PostgreSQLDirectionRepository
+from landscape.organization_assignment import assign_organizations
+from landscape.organization_repository import PostgreSQLOrganizationRepository
 
 
 class Cursor:
@@ -293,6 +295,9 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
         direction_repository = PostgreSQLDirectionRepository(
             "postgresql://integration", connect=connect
         )
+        organization_repository = PostgreSQLOrganizationRepository(
+            "postgresql://integration", connect=connect
+        )
         try:
             scope_repository.create(draft)
             confirmed = scope_repository.confirm(
@@ -340,6 +345,19 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 publication_repository.get(run.run_id), publications
             )
+            organization_result = assign_organizations(
+                run.run_id,
+                confirmed,
+                {publications.publications[0].publication_id: (unique_name,)},
+            )
+            self.assertEqual(
+                organization_repository.put(organization_result),
+                organization_result,
+            )
+            self.assertEqual(
+                organization_repository.get(run.run_id),
+                organization_result,
+            )
             families = resolve_frozen_publications(publications)
             self.assertEqual(family_repository.put(run.run_id, families), families)
             analysis_unit_id = families.analysis_units[0].analysis_unit_id
@@ -364,14 +382,16 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
                     (SELECT count(*) FROM landscape_v4_query_plans WHERE run_id=%s) AS plans,
                     (SELECT count(*) FROM landscape_v4_publication_sets WHERE run_id=%s) AS publication_sets,
                     (SELECT count(*) FROM landscape_v4_family_manifests WHERE run_id=%s) AS families,
+                    (SELECT count(*) FROM landscape_v4_organization_manifests WHERE run_id=%s) AS organizations,
                     (SELECT count(*) FROM landscape_v4_direction_records WHERE run_id=%s) AS directions
                 """,
-                (run.run_id, run.run_id, run.run_id, run.run_id, run.run_id),
+                (run.run_id, run.run_id, run.run_id, run.run_id, run.run_id, run.run_id),
             ).fetchone()
             self.assertEqual(counts["runs"], 0)
             self.assertEqual(counts["plans"], 0)
             self.assertEqual(counts["publication_sets"], 0)
             self.assertEqual(counts["families"], 0)
+            self.assertEqual(counts["organizations"], 0)
             self.assertEqual(counts["directions"], 0)
         finally:
             raw.rollback()

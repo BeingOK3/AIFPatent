@@ -86,6 +86,9 @@ LANDSCAPE_V4_WORKFLOW_SCHEMA_PATH = Path(
 LANDSCAPE_V4_ANALYSIS_UNITS_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/098_landscape_v4_analysis_units.sql"
 )
+LANDSCAPE_V4_ORGANIZATIONS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/099_landscape_v4_organizations.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -111,6 +114,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_analysis_units_sql = (
             LANDSCAPE_V4_ANALYSIS_UNITS_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_organizations_sql = (
+            LANDSCAPE_V4_ORGANIZATIONS_SCHEMA_PATH.read_text(encoding="utf-8")
         )
         self.landscape_company_manifest_sql = (
             LANDSCAPE_COMPANY_MANIFEST_SCHEMA_PATH.read_text(encoding="utf-8")
@@ -478,6 +484,19 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("UNIQUE(run_id,publication_id)", sql)
         self.assertIn("landscape_v4_direction_records_analysis_unit_fkey", sql)
         self.assertIn("'098_landscape_v4_analysis_units'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_organizations_preserve_primary_co_and_raw_applicants(self) -> None:
+        sql = self.landscape_organizations_sql
+        self.assertIn("landscape_v4_organization_manifests", sql)
+        self.assertIn("landscape_v4_publication_organizations", sql)
+        self.assertIn("landscape_v4_publication_co_organizations", sql)
+        self.assertIn("landscape_v4_publication_applicants", sql)
+        self.assertIn("is_unconfirmed", sql)
+        self.assertIn("'099_landscape_v4_organizations'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
