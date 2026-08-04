@@ -156,6 +156,13 @@ class LandscapeScopeApiTests(unittest.TestCase):
                 )
                 self.assertEqual(credentials.status_code, 200)
                 self.assertNotIn("temporary-secret", credentials.text)
+                for method, path in (
+                    ("POST", "/api/landscape/runs/LRN-0000000000000001/rerun"),
+                    ("POST", "/api/landscape/runs/LRN-0000000000000001/deep-analyze"),
+                    ("GET", "/api/landscape/runs/LRN-0000000000000001/patents.csv"),
+                ):
+                    removed = await client.request(method, path, json={})
+                    self.assertEqual(removed.status_code, 404)
 
         asyncio.run(scenario())
 

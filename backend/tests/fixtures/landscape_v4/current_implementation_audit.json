@@ -31,9 +31,12 @@
     "path": "backend/landscape/api.py",
     "required_tokens": [
       "@router.post(\"/runs\")",
+      "@router.get(\"/runs/{run_id}/report\")"
+    ],
+    "removed_tokens": [
       "@router.post(\"/runs/{run_id}/rerun\")",
       "@router.post(\"/runs/{run_id}/deep-analyze\")",
-      "@router.get(\"/runs/{run_id}/report\")"
+      "@router.get(\"/runs/{run_id}/patents.csv\")"
     ]
   },
   "legacy_workflow": {

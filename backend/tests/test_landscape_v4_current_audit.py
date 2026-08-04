@@ -50,6 +50,12 @@ class LandscapeV4CurrentImplementationAuditTests(unittest.TestCase):
             for token in contract["required_tokens"]:
                 with self.subTest(path=contract["path"], token=token):
                     self.assertIn(token, source)
+        api_source = (ROOT / self.audit["legacy_api"]["path"]).read_text(
+            encoding="utf-8"
+        )
+        for token in self.audit["legacy_api"]["removed_tokens"]:
+            with self.subTest(removed_token=token):
+                self.assertNotIn(token, api_source)
 
     def test_workflow_step_inventory_matches_source(self) -> None:
         source = (ROOT / self.audit["legacy_workflow"]["path"]).read_text(

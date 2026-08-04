@@ -6,14 +6,13 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, field_validator
 
 from idea.model_client import RuntimeModelConfig, runtime_model_config
 
 from .database import LandscapeDatabase
 from .runtime import LandscapeRuntime
-from .schemas import LandscapeScope
 from .scope import ScopeDraft, ScopeDraftStatus
 from .scope_repository import ScopePersistenceError, ScopeRevisionConflict
 from .scope_service import ScopePreparationError
@@ -21,7 +20,6 @@ from .run_repository import LandscapeRunPersistenceError
 from .query_planning import build_query_plan
 from .query_repository import QueryPlanPersistenceError
 from .scale_repository import ScaleGatePersistenceError
-from .store import LandscapeStoreError
 
 
 class ApiModel(BaseModel):
@@ -71,10 +69,6 @@ class CreateLandscapeRunRequest(ApiModel):
     scope_revision_id: str = Field(pattern=r"^SCR-[0-9a-f]{16}$")
 
 
-class DeleteLandscapeRunRequest(ApiModel):
-    operator_label: str | None = Field(default=None, max_length=100)
-
-
 class CreateScopeDraftRequest(ApiModel):
     company_names: tuple[str, ...] = Field(default=(), max_length=50)
     technology_input: str | None = Field(default=None, max_length=500)
@@ -101,10 +95,6 @@ class ScaleDecisionRequest(ApiModel):
 
 def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
     router = APIRouter(prefix="/api/landscape", tags=["专利态势分析"])
-    database = runtime.database
-    store = runtime.store
-    tasks = runtime.tasks
-
     @router.post("/scope-drafts", status_code=201)
     async def create_scope_draft(request: CreateScopeDraftRequest):
         try:
@@ -331,64 +321,6 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
             "status": run.status,
         }
 
-    @router.post("/runs/{run_id}/rerun")
-    async def rerun(run_id: str, request: LandscapeRuntimeRequest):
-        try:
-            source = database.get_run(run_id)
-            scope = LandscapeScope.model_validate(source["scope_json"])
-            new_run = database.create_run(
-                scope=scope,
-                model=request.model,
-                workflow_version=source["workflow_version"],
-                prompt_version=source["prompt_version"],
-                config_snapshot={
-                    "model": request.model,
-                    "base_url": str(request.base_url).rstrip("/"),
-                    "credential_source": "per_run_memory",
-                    "serpapi_credential_source": "local_json",
-                },
-                parent_run_id=run_id,
-            )
-            store.initialize_run(
-                new_run["run_id"], scope=scope, model=request.model,
-                workflow_version=new_run["workflow_version"], prompt_version=new_run["prompt_version"],
-            )
-            tasks.start(new_run["run_id"], request.runtime_config())
-            return _run_view(runtime, new_run["run_id"])
-        except KeyError:
-            raise HTTPException(404, "landscape run not found")
-        except (ValueError, LandscapeStoreError) as exc:
-            raise HTTPException(422, str(exc))
-
-    @router.post("/runs/{run_id}/deep-analyze")
-    async def deep_analyze_selected(
-        run_id: str, request: LandscapeRuntimeRequest
-    ):
-        """Run optional deep analysis only for persisted selected patents."""
-        try:
-            run = database.get_run(run_id)
-            if run["status"] not in {"COMPLETED", "COMPLETED_WITH_LIMITATIONS"}:
-                raise HTTPException(
-                    409,
-                    "deep analysis requires a completed landscape run",
-                )
-            with runtime_model_config(request.runtime_config()):
-                result = await runtime.execution.analyze_selected_patents(run_id)
-                report = await runtime.execution.build_report(
-                    run_id, deep_analysis=result, allow_report_revision=True
-                )
-            return {
-                "run_id": run_id,
-                "deep_analysis": result,
-                "report": report["report"],
-            }
-        except KeyError:
-            raise HTTPException(404, "landscape run not found")
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(422, str(exc)[:2000])
-
     @router.get("/runs/{run_id}/report")
     async def get_report(run_id: str):
         try:
@@ -410,28 +342,6 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
                 "Content-Disposition": f'attachment; filename="landscape-{run_id}.md"'
             },
         )
-
-    @router.get("/runs/{run_id}/patents.csv")
-    async def download_csv(run_id: str):
-        try:
-            database.get_run(run_id)
-            paths = store.paths(run_id)
-            store.verify(run_id)
-        except KeyError:
-            raise HTTPException(404, "landscape run not found")
-        except LandscapeStoreError:
-            raise HTTPException(404, "report not available")
-        return FileResponse(paths.patents_csv, filename=f"landscape-{run_id}.csv", media_type="text/csv")
-
-    @router.delete("/runs/{run_id}")
-    async def delete_run(run_id: str, request: DeleteLandscapeRunRequest | None = None):
-        try:
-            await tasks.cancel(run_id)
-            store.delete_run(run_id)
-            database.delete_run(run_id)
-        except KeyError:
-            raise HTTPException(404, "landscape run not found")
-        return {"deleted": run_id}
 
     return router
 
