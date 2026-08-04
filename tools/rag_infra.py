@@ -224,7 +224,13 @@ def _docker_command(action: str) -> list[str]:
             'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
             "-f /docker-entrypoint-initdb.d/093_landscape_v4_tasks.sql && "
             'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
-            "-f /docker-entrypoint-initdb.d/094_landscape_v4_direction_classification.sql",
+            "-f /docker-entrypoint-initdb.d/094_landscape_v4_direction_classification.sql && "
+            'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
+            "-f /docker-entrypoint-initdb.d/095_landscape_v4_others.sql && "
+            'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
+            "-f /docker-entrypoint-initdb.d/096_landscape_v4_metrics_trends.sql && "
+            'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
+            "-f /docker-entrypoint-initdb.d/097_landscape_v4_workflow_state.sql",
         ],
         "ensure-bucket": [
             "exec",

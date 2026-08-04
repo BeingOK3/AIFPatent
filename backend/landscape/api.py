@@ -207,6 +207,7 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
             scope = runtime.scope_repository.get_confirmed(request.scope_revision_id)
             plan = build_query_plan(scope)
             runtime.query_repository.put(run.run_id, plan)
+            runtime.stage_repository.ensure(run.run_id)
             return runtime.run_repository.get(run.run_id)
         except (KeyError, ValueError, ScopePersistenceError,
                 LandscapeRunPersistenceError, QueryPlanPersistenceError) as exc:
@@ -215,7 +216,12 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
     @router.get("/runs")
     async def list_runs(limit: int = 100):
         try:
-            return {"runs": [_run_view(runtime, item["run_id"]) for item in database.list_runs(limit)]}
+            return {
+                "runs": [
+                    _run_view(runtime, run.run_id)
+                    for run in runtime.run_repository.list(limit)
+                ]
+            }
         except ValueError as exc:
             raise HTTPException(422, str(exc))
 
@@ -250,14 +256,28 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
     @router.get("/runs/{run_id}/debug")
     async def get_run_debug(run_id: str):
         try:
-            return database.debug_snapshot(run_id)
+            run = runtime.run_repository.get(run_id)
+            plan = runtime.query_repository.get(run_id)
+            try:
+                gate = runtime.scale_repository.get(run_id)
+            except KeyError:
+                gate = None
+            return {
+                "run_id": run.run_id,
+                "scope_revision_id": run.scope_revision_id,
+                "taxonomy_version": run.taxonomy_version,
+                "query_plan": plan,
+                "scale_gate": gate,
+                "stages": runtime.stage_repository.list(run_id),
+                "limitations": runtime.stage_repository.limitations(run_id),
+            }
         except KeyError:
             raise HTTPException(404, "landscape run not found")
 
     @router.get("/runs/{run_id}/events")
     async def run_events(run_id: str):
         try:
-            database.get_run(run_id)
+            runtime.run_repository.get(run_id)
         except KeyError:
             raise HTTPException(404, "landscape run not found")
 
@@ -287,10 +307,18 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
     @router.post("/runs/{run_id}/cancel")
     async def cancel_run(run_id: str):
         try:
-            cancelled = await tasks.cancel(run_id)
+            if hasattr(runtime, "v4_tasks"):
+                await runtime.v4_tasks.cancel(run_id)
+            previous = runtime.run_repository.get(run_id)
+            run = runtime.run_repository.cancel(run_id)
+            runtime.credential_vault.revoke(run_id)
         except KeyError:
             raise HTTPException(404, "landscape run not found")
-        return {"run_id": run_id, "cancelled": cancelled, "status": database.get_run(run_id)["status"]}
+        return {
+            "run_id": run_id,
+            "cancelled": run.status != previous.status,
+            "status": run.status,
+        }
 
     @router.post("/runs/{run_id}/rerun")
     async def rerun(run_id: str, request: LandscapeRuntimeRequest):
@@ -412,22 +440,42 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
 
 
 def _run_view(runtime: LandscapeRuntime, run_id: str) -> dict:
-    run = runtime.database.get_run(run_id)
+    run = runtime.run_repository.get(run_id)
+    scope = runtime.scope_repository.get_confirmed(run.scope_revision_id)
+    try:
+        stages = runtime.stage_repository.list(run_id)
+    except KeyError:
+        stages = ()
+    try:
+        scale_gate = runtime.scale_repository.get(run_id)
+    except KeyError:
+        scale_gate = None
     return {
         "run_id": run_id,
-        "status": run["status"],
-        "mode": run["mode"],
-        "scope": run["scope_json"],
-        "model": run["model"],
-        "publication_start": run["publication_start"],
-        "publication_end": run["publication_end"],
-        "limitations": run["limitation_json"],
-        "created_at": run["created_at"],
-        "started_at": run["started_at"],
-        "completed_at": run["completed_at"],
-        "error_code": run["error_code"],
-        "error_message": run["error_message"],
-        "progress": runtime.harness.progress(run_id),
+        "status": run.status,
+        "mode": run.mode,
+        "scope_revision_id": run.scope_revision_id,
+        "taxonomy_version": run.taxonomy_version,
+        "scope": scope,
+        "publication_start": run.publication_start,
+        "publication_end": run.publication_end,
+        "limitations": runtime.stage_repository.limitations(run_id),
+        "created_at": run.created_at,
+        "updated_at": run.updated_at,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "error_code": run.error_code,
+        "error_message": run.error_message,
+        "scale_gate": scale_gate,
+        "credentials_available": runtime.credential_vault.has_credentials(run_id),
+        "progress": {
+            "completed_stages": sum(
+                stage.status in {"SUCCEEDED", "SUCCEEDED_WITH_LIMITATIONS"}
+                for stage in stages
+            ),
+            "total_stages": len(stages),
+            "steps": stages,
+        },
     }
 
 

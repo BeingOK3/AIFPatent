@@ -60,6 +60,9 @@ class ApiRunRepository:
         values["status"] = "ESTIMATING"
         return SimpleNamespace(**values)
 
+    def list(self, limit=100):
+        return (self.get(self.run.run_id),) if hasattr(self, "run") else ()
+
 
 class ApiQueryPlanRepository:
     def __init__(self):
@@ -73,6 +76,26 @@ class ApiQueryPlanRepository:
 class ApiScaleRepository:
     def decide(self, run_id, *, approve):
         return {"run_id": run_id, "decision": "APPROVED" if approve else "REJECTED"}
+
+    def get(self, run_id):
+        raise KeyError(run_id)
+
+
+class ApiStageRepository:
+    def __init__(self):
+        self.runs = set()
+
+    def ensure(self, run_id):
+        self.runs.add(run_id)
+        return ()
+
+    def list(self, run_id):
+        if run_id not in self.runs:
+            raise KeyError(run_id)
+        return ()
+
+    def limitations(self, run_id):
+        return ()
 
 
 def app_fixture():
@@ -88,6 +111,7 @@ def app_fixture():
         run_repository=run_repository,
         query_repository=ApiQueryPlanRepository(),
         scale_repository=ApiScaleRepository(),
+        stage_repository=ApiStageRepository(),
         credential_vault=CredentialVault(),
         taxonomy=SimpleNamespace(taxonomy_version="landscape-taxonomy/fixture"),
     )

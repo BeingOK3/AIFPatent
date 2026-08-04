@@ -38,6 +38,13 @@ from .semantic_result_repository import (
     PostgreSQLClassificationRepository,
     PostgreSQLDirectionRepository,
 )
+from .others_repository import PostgreSQLOthersRepository
+from .analytics_repository import (
+    PostgreSQLMetricRepository,
+    PostgreSQLRepresentativeRepository,
+    PostgreSQLTrendRepository,
+)
+from .stage_repository import PostgreSQLStageRepository
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -146,6 +153,11 @@ class LandscapeRuntime:
     abstract_repository: PostgreSQLAbstractEvidenceRepository
     direction_repository: PostgreSQLDirectionRepository
     classification_repository: PostgreSQLClassificationRepository
+    others_repository: PostgreSQLOthersRepository
+    metric_repository: PostgreSQLMetricRepository
+    v4_trend_repository: PostgreSQLTrendRepository
+    representative_repository: PostgreSQLRepresentativeRepository
+    stage_repository: PostgreSQLStageRepository
     task_queue: PostgreSQLTaskQueue
     model_scheduler: ModelScheduler
     credential_vault: CredentialVault
@@ -193,6 +205,11 @@ def build_landscape_runtime(
     abstract_repository = PostgreSQLAbstractEvidenceRepository(dsn)
     direction_repository = PostgreSQLDirectionRepository(dsn)
     classification_repository = PostgreSQLClassificationRepository(dsn)
+    others_repository = PostgreSQLOthersRepository(dsn)
+    metric_repository = PostgreSQLMetricRepository(dsn)
+    v4_trend_repository = PostgreSQLTrendRepository(dsn)
+    representative_repository = PostgreSQLRepresentativeRepository(dsn)
+    stage_repository = PostgreSQLStageRepository(dsn)
     task_queue = PostgreSQLTaskQueue(dsn)
     model_scheduler = ModelScheduler(
         ModelBudget(
@@ -287,6 +304,11 @@ def build_landscape_runtime(
         abstract_repository,
         direction_repository,
         classification_repository,
+        others_repository,
+        metric_repository,
+        v4_trend_repository,
+        representative_repository,
+        stage_repository,
         task_queue,
         model_scheduler,
         credential_vault,

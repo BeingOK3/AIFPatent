@@ -74,6 +74,15 @@ LANDSCAPE_V4_TASKS_SCHEMA_PATH = Path(
 LANDSCAPE_V4_DIRECTION_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/094_landscape_v4_direction_classification.sql"
 )
+LANDSCAPE_V4_OTHERS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/095_landscape_v4_others.sql"
+)
+LANDSCAPE_V4_ANALYTICS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/096_landscape_v4_metrics_trends.sql"
+)
+LANDSCAPE_V4_WORKFLOW_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/097_landscape_v4_workflow_state.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -86,6 +95,15 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.followup_sql = FOLLOWUP_SCHEMA_PATH.read_text(encoding="utf-8")
         self.report_hybrid_sql = REPORT_HYBRID_SCHEMA_PATH.read_text(encoding="utf-8")
         self.landscape_company_sql = LANDSCAPE_COMPANY_SCHEMA_PATH.read_text(
+            encoding="utf-8"
+        )
+        self.landscape_others_sql = LANDSCAPE_V4_OTHERS_SCHEMA_PATH.read_text(
+            encoding="utf-8"
+        )
+        self.landscape_analytics_sql = LANDSCAPE_V4_ANALYTICS_SCHEMA_PATH.read_text(
+            encoding="utf-8"
+        )
+        self.landscape_workflow_sql = LANDSCAPE_V4_WORKFLOW_SCHEMA_PATH.read_text(
             encoding="utf-8"
         )
         self.landscape_company_manifest_sql = (
@@ -393,6 +411,54 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("landscape_v4_direction_values", sql)
         self.assertIn("BEFORE UPDATE OR DELETE", sql)
         self.assertIn("'094_landscape_v4_direction_classification'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_others_clusters_are_partitioned_and_immutable(self) -> None:
+        sql = self.landscape_others_sql
+        self.assertIn("landscape_v4_others_manifests", sql)
+        self.assertIn("landscape_v4_others_clusters", sql)
+        self.assertIn("landscape_v4_others_members", sql)
+        self.assertIn("UNIQUE(run_id, analysis_unit_id)", sql)
+        self.assertIn("BEFORE UPDATE OR DELETE", sql)
+        self.assertIn("'095_landscape_v4_others'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_analytics_are_relational_recomputable_and_immutable(self) -> None:
+        sql = self.landscape_analytics_sql
+        for table in (
+            "landscape_v4_metric_manifests",
+            "landscape_v4_metric_buckets",
+            "landscape_v4_metric_cells",
+            "landscape_v4_metric_cell_values",
+            "landscape_v4_trend_manifests",
+            "landscape_v4_trend_candidates",
+            "landscape_v4_trend_bucket_metrics",
+            "landscape_v4_trend_values",
+            "landscape_v4_representative_manifests",
+            "landscape_v4_representatives",
+        ):
+            self.assertIn(table, sql)
+        self.assertIn("BEFORE UPDATE OR DELETE", sql)
+        self.assertIn("'096_landscape_v4_metrics_trends'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_workflow_state_is_resumable_and_auditable(self) -> None:
+        sql = self.landscape_workflow_sql
+        self.assertIn("landscape_v4_run_stages", sql)
+        self.assertIn("landscape_v4_run_limitations", sql)
+        self.assertIn("completed_count", sql)
+        self.assertIn("error_code", sql)
+        self.assertIn("BEFORE UPDATE OR DELETE", sql)
+        self.assertIn("'097_landscape_v4_workflow_state'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
