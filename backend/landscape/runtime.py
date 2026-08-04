@@ -13,6 +13,7 @@ from idea.providers import (
     GooglePatentsProvider,
     SerpApiPatentProvider,
 )
+from idea.providers.base import PagedSearchProvider
 
 from .database import LandscapeDatabase
 from .company_workflow import LandscapeCompanyFanout
@@ -52,6 +53,7 @@ from .patent_snapshot_fetch import PatentSnapshotFetchService
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
+from .v4_workflow import V4LandscapeWorkflow
 
 
 @dataclass
@@ -166,6 +168,7 @@ class LandscapeRuntime:
     organization_repository: PostgreSQLOrganizationRepository
     patent_snapshot_repository: PostgreSQLPatentSnapshotRepository
     patent_snapshot_fetch: PatentSnapshotFetchService | None
+    v4_workflow: V4LandscapeWorkflow | None
     task_queue: PostgreSQLTaskQueue
     model_scheduler: ModelScheduler
     credential_vault: CredentialVault
@@ -272,6 +275,27 @@ def build_landscape_runtime(
         if providers
         else None
     )
+    paged_provider = next(
+        (provider for provider in providers if isinstance(provider, PagedSearchProvider)),
+        None,
+    )
+    v4_workflow = (
+        V4LandscapeWorkflow(
+            run_repository=run_repository,
+            scope_repository=scope_repository,
+            stage_repository=stage_repository,
+            search_coordinator=search_coordinator,
+            publication_repository=publication_repository,
+            snapshot_fetch=patent_snapshot_fetch,
+            snapshot_repository=patent_snapshot_repository,
+            family_repository=family_repository,
+            abstract_repository=abstract_repository,
+            organization_repository=organization_repository,
+            provider=paged_provider,
+        )
+        if patent_snapshot_fetch is not None and paged_provider is not None
+        else None
+    )
     report_service = LandscapeReportService(database, store)
     execution = LandscapeExecutionService(
         database=database,
@@ -335,6 +359,7 @@ def build_landscape_runtime(
         organization_repository,
         patent_snapshot_repository,
         patent_snapshot_fetch,
+        v4_workflow,
         task_queue,
         model_scheduler,
         credential_vault,
