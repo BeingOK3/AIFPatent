@@ -117,8 +117,8 @@ class LandscapeScopeExpansionTests(unittest.TestCase):
         result = asyncio.run(
             ScopeExpansionService(StubModel([company_output(*proposals)])).expand_company("华为")
         )
-        self.assertEqual(len(result.names), 41)
-        self.assertEqual(result.names[-1].text, "测试关联公司39有限公司")
+        self.assertEqual(len(result.names), 13)
+        self.assertEqual(result.names[-1].text, "测试关联公司11有限公司")
 
     def test_technology_expansion_is_bilingual_reviewable_and_deduplicated(self) -> None:
         output = technology_output(
@@ -192,7 +192,7 @@ class LandscapeScopeExpansionTests(unittest.TestCase):
                 "无线通信"
             )
         )
-        self.assertEqual(len(result), 61)
+        self.assertEqual(len(result), 17)
 
     def test_model_cannot_mislabel_language_or_return_english_rationale(self) -> None:
         with self.assertRaisesRegex(ValidationError, "ZH candidate"):

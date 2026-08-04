@@ -25,6 +25,8 @@ from .scope_repository import CompanyProfileMemory
 
 COMPANY_SCOPE_EXPANDER = "patent-landscape-v4-company-scope-expander"
 TECHNOLOGY_SCOPE_EXPANDER = "patent-landscape-v4-technology-scope-expander"
+MAX_NEW_COMPANY_CANDIDATES = 12
+MAX_TECHNOLOGY_CANDIDATES = 16
 
 COMPANY_PROMPT = """
 You prepare a reviewable patent-assignee search scope for exactly one user-named company or group.
@@ -34,8 +36,8 @@ GROUP_MEMBER. Never silently merge an unrelated entity, product, or brand. Copy 
 Existing ACTIVE and long-term REJECT/RETIRE names are evidence: propose only genuinely new
 incremental candidates, and never repeat a rejected or retired name. Every candidate needs a
 concise Simplified-Chinese rationale.
-Return no more than 24 candidates total. Prioritize legal names, translations, abbreviations, and
-former names; include no more than 8 high-confidence subsidiaries/group members and never attempt
+Return no more than 12 candidates total. Prioritize legal names, translations, abbreviations, and
+former names; include no more than 4 high-confidence subsidiaries/group members and never attempt
 an exhaustive corporate registry listing.
 The user will review every proposal; do not decide ACTIVE/EXCLUDED status.
 """
@@ -48,7 +50,7 @@ synonyms, abbreviations, broader/narrower terms, key components, and closely rel
 that improves recall without crossing into a different technology. Copy original_input exactly.
 Return at least one useful Chinese and one useful English candidate. Every candidate needs a concise
 Simplified-Chinese rationale. The user will review all proposals; do not activate them yourself.
-Return 12-36 candidates total; prefer precision over filling the maximum.
+Return 8-16 candidates total; prefer precision over filling the maximum.
 """
 
 
@@ -154,7 +156,7 @@ class ScopeExpansionService:
                 continue
             seen.add(candidate.normalized_text)
             names.append(candidate)
-            if len(names) - len(base.names) == 40:
+            if len(names) - len(base.names) == MAX_NEW_COMPANY_CANDIDATES:
                 break
         return CompanyScopeDraft(
             profile_id=base.profile_id,
@@ -200,7 +202,7 @@ class ScopeExpansionService:
                 continue
             seen.add(candidate.normalized_text)
             terms.append(candidate)
-            if len(terms) == 61:
+            if len(terms) == MAX_TECHNOLOGY_CANDIDATES + 1:
                 break
         return tuple(terms)
 
@@ -269,6 +271,8 @@ def _require_chinese_rationale(value: str) -> None:
 
 __all__ = [
     "COMPANY_SCOPE_EXPANDER",
+    "MAX_NEW_COMPANY_CANDIDATES",
+    "MAX_TECHNOLOGY_CANDIDATES",
     "TECHNOLOGY_SCOPE_EXPANDER",
     "CompanyExpansionOutput",
     "ProposedCompanyName",

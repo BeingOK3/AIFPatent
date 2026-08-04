@@ -15,6 +15,8 @@ from .scope import (
     normalize_scope_text,
 )
 from .scope_expansion import (
+    MAX_NEW_COMPANY_CANDIDATES,
+    MAX_TECHNOLOGY_CANDIDATES,
     ScopeExpansionService,
     fallback_company_scope,
     fallback_technology_terms,
@@ -222,12 +224,12 @@ class ScopeDraftPreparationService:
                 continue
             final_companies.append(result)
             base_count = len(memory.company.names)
-            if len(result.names) - base_count >= 40:
+            if len(result.names) - base_count >= MAX_NEW_COMPANY_CANDIDATES:
                 limitations.append(
                     ScopeDraftLimitation(
                         code="COMPANY_CANDIDATE_LIMIT_REACHED",
                         object_key=name,
-                        message="公司名称候选达到本地审查上限 40 项，模型的其余建议未进入草稿。",
+                        message="公司名称扩展已达到本地审查上限 12 个新增候选；如需更多名称，请由用户手工补充。",
                     )
                 )
 
@@ -244,12 +246,12 @@ class ScopeDraftPreparationService:
             final_terms = ()
         else:
             final_terms = resolved_terms
-            if len(final_terms) >= 61:
+            if len(final_terms) >= MAX_TECHNOLOGY_CANDIDATES + 1:
                 limitations.append(
                     ScopeDraftLimitation(
                         code="TECHNOLOGY_CANDIDATE_LIMIT_REACHED",
                         object_key=technology or "technology",
-                        message="技术词候选达到本地审查上限 60 个新增词，其余建议未进入草稿。",
+                        message="技术词扩展已达到本地审查上限 16 个新增词；如需更多词，请由用户手工补充。",
                     )
                 )
 
