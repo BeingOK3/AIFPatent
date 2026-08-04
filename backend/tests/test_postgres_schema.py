@@ -65,6 +65,9 @@ LANDSCAPE_V4_PUBLICATIONS_SCHEMA_PATH = Path(
 LANDSCAPE_V4_SCALE_GATE_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/091_landscape_v4_scale_gate.sql"
 )
+LANDSCAPE_V4_ABSTRACT_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/092_landscape_v4_abstract_evidence.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -362,6 +365,13 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("OLD.decision IS NOT NULL", sql)
         self.assertIn("'APPROVED','REJECTED'", sql)
         self.assertIn("'091_landscape_v4_scale_gate'", sql)
+
+    def test_landscape_v4_abstract_evidence_is_sentence_scoped_and_immutable(self) -> None:
+        sql = LANDSCAPE_V4_ABSTRACT_SCHEMA_PATH.read_text(encoding="utf-8")
+        self.assertIn("landscape_v4_abstract_evidence", sql)
+        self.assertIn("landscape_v4_abstract_sentences", sql)
+        self.assertIn("BEFORE UPDATE OR DELETE", sql)
+        self.assertIn("'092_landscape_v4_abstract_evidence'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)

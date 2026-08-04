@@ -193,6 +193,7 @@ class RagInfrastructureTests(unittest.TestCase):
         self.assertIn("089_landscape_v4_search_pages.sql", migrate)
         self.assertIn("090_landscape_v4_publications.sql", migrate)
         self.assertIn("091_landscape_v4_scale_gate.sql", migrate)
+        self.assertIn("092_landscape_v4_abstract_evidence.sql", migrate)
 
     def test_up_migrates_between_dependency_and_application_start(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

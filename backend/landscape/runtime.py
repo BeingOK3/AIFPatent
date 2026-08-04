@@ -30,6 +30,7 @@ from .search_execution import PagedSearchExecutionService
 from .publication_repository import PostgreSQLPublicationRepository
 from .scale_repository import PostgreSQLScaleGateRepository
 from .search_coordinator import LandscapeSearchCoordinator
+from .abstract_repository import PostgreSQLAbstractEvidenceRepository
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -135,6 +136,7 @@ class LandscapeRuntime:
     publication_repository: PostgreSQLPublicationRepository
     scale_repository: PostgreSQLScaleGateRepository
     search_coordinator: LandscapeSearchCoordinator
+    abstract_repository: PostgreSQLAbstractEvidenceRepository
 
 
 def build_landscape_runtime(
@@ -176,6 +178,7 @@ def build_landscape_runtime(
         publication_repository=publication_repository,
         execution=search_execution,
     )
+    abstract_repository = PostgreSQLAbstractEvidenceRepository(dsn)
     store = LandscapeRunStore(runs_dir)
     harness = LandscapeWorkflowHarness(
         database,
@@ -256,4 +259,5 @@ def build_landscape_runtime(
         publication_repository,
         scale_repository,
         search_coordinator,
+        abstract_repository,
     )
