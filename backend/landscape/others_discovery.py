@@ -65,6 +65,8 @@ class OthersDiscovery(ScopeModel):
 
     @model_validator(mode="after")
     def validate_partition(self) -> "OthersDiscovery":
+        if tuple(sorted(self.clusters, key=lambda cluster: cluster.cluster_id)) != self.clusters:
+            raise ValueError("Others clusters must use stable cluster ID order")
         members = tuple(
             sorted(member for cluster in self.clusters for member in cluster.member_ids)
         )
@@ -116,8 +118,13 @@ def discover_others_directions(
     }
     partitions = _complete_link_partition(others_ids, similarities, merge_threshold)
     clusters = tuple(
-        _build_cluster(members, records, vectors, similarities, min_feature_count)
-        for members in partitions
+        sorted(
+            (
+                _build_cluster(members, records, vectors, similarities, min_feature_count)
+                for members in partitions
+            ),
+            key=lambda cluster: cluster.cluster_id,
+        )
     )
     return OthersDiscovery(source_member_ids=others_ids, clusters=clusters)
 
@@ -171,11 +178,8 @@ def _complete_link_partition(
         for other_key, _ in active:
             pair = tuple(sorted((merged_key, other_key)))
             new_score = min(
-                scores[tuple(sorted((source, target)))]
-                if source != target
-                else 1.0
-                for source in merged
-                for target in clusters[other_key]
+                scores[tuple(sorted((left, other_key)))],
+                scores[tuple(sorted((right, other_key)))],
             )
             scores[pair] = new_score
             heapq.heappush(

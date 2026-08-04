@@ -85,9 +85,10 @@ class LandscapeOthersDiscoveryTests(unittest.TestCase):
             first.source_member_ids,
             ("AU-0000000000000001", "AU-0000000000000002", "AU-0000000000000003"),
         )
-        self.assertEqual([len(cluster.member_ids) for cluster in first.clusters], [2, 1])
-        self.assertEqual(first.clusters[0].kind, OthersClusterKind.CANDIDATE)
-        self.assertEqual(first.clusters[1].kind, OthersClusterKind.SINGLETON)
+        self.assertEqual(sorted(len(cluster.member_ids) for cluster in first.clusters), [1, 2])
+        by_size = {len(cluster.member_ids): cluster for cluster in first.clusters}
+        self.assertEqual(by_size[2].kind, OthersClusterKind.CANDIDATE)
+        self.assertEqual(by_size[1].kind, OthersClusterKind.SINGLETON)
         self.assertNotIn("AU-0000000000000004", first.source_member_ids)
 
     def test_low_information_singleton_is_explicit_noise(self):
