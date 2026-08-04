@@ -52,7 +52,9 @@ class LandscapeSearchCoordinatorTests(unittest.TestCase):
         async def scenario():
             estimate = await service.estimate("run", provider)
             self.assertEqual(len(provider.calls), 1)
-            frozen = await service.complete("run", provider)
+            results = await service.retrieve("run", provider)
+            self.assertIsNone(publications.value)
+            frozen = service.freeze("run", results)
             return estimate, frozen
         estimate, frozen = asyncio.run(scenario())
         self.assertEqual(estimate.estimated_total_results, 2)
