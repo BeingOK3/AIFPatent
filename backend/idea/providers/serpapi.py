@@ -380,15 +380,23 @@ class SerpApiPatentProvider(SearchProvider):
 
     @staticmethod
     def _extract_assignees(query_text: str) -> tuple[str, list[str]]:
-        """Move a pure assignee OR expression to SerpAPI's structured parameter."""
+        """Move confirmed assignees to SerpAPI's structured parameter.
+
+        Combined Landscape queries must keep their technology expression in
+        ``q`` while applying company names through ``assignee``. Sending the
+        literal ``assignee:\"...\" AND (...)`` syntax in ``q`` yields empty or
+        misleading Google Patents results.
+        """
         names = list(dict.fromkeys(_ASSIGNEE_PATTERN.findall(query_text)))
         if not names:
             return query_text, []
         residual = _ASSIGNEE_PATTERN.sub("", query_text)
-        residual = re.sub(r"\bOR\b", "", residual, flags=re.IGNORECASE)
-        if residual.strip(" ()"):
-            return query_text, []
-        return names[0], names
+        residual = re.sub(r"^\s*(?:AND|OR)\b", "", residual, flags=re.IGNORECASE)
+        residual = re.sub(r"\b(?:AND|OR)\s*$", "", residual, flags=re.IGNORECASE)
+        residual = residual.strip()
+        if not residual.strip(" ()"):
+            residual = names[0]
+        return residual, names
 
     async def _call(self, arguments: dict[str, Any]) -> dict[str, Any]:
         cache_key = "serpapi:" + json.dumps(

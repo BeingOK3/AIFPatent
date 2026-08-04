@@ -145,6 +145,25 @@ class SerpApiProviderTests(unittest.TestCase):
         )
         self.assertNotIn("assignee:", arguments["q"])
 
+    def test_combined_assignee_and_technology_use_separate_provider_parameters(self) -> None:
+        query = self.query().model_copy(
+            update={
+                "text": (
+                    'assignee:"Google LLC" AND '
+                    '("liquid cooling data center" OR "液冷数据中心") '
+                    "after=publication:20240101 before=publication:20240401"
+                )
+            }
+        )
+        asyncio.run(self.provider().search(query))
+        arguments = self.calls[0]
+        self.assertEqual(arguments["assignee"], "Google LLC")
+        self.assertEqual(
+            arguments["q"],
+            '("liquid cooling data center" OR "液冷数据中心")',
+        )
+        self.assertNotIn("assignee:", arguments["q"])
+
     def test_no_results_payload_is_a_successful_empty_result(self) -> None:
         async def no_results(_arguments):
             return {"error": "Google Patents hasn't returned any results for this query."}
