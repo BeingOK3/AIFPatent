@@ -81,47 +81,111 @@
     const expanded = await jsonRequest(`/api/landscape/scope-drafts/${encodeURIComponent(draft.draft_id)}/expand`, { method: "POST", body: JSON.stringify({ expected_revision: draft.revision, ...collectRuntimeConfig() }) });
     rememberDraft(expanded); $("form-message").textContent = "扩展完成，请逐项审查后确认。";
   }
-  function decisionOptions(item, company) {
-    const current = item.status === "PROPOSED" ? "" : item.status === "ACTIVE" ? "ACTIVE" : `EXCLUDED:${item.memory_action || "NONE"}`;
-    const options = [["", "请选择"], ["ACTIVE", "纳入本次检索"], ["EXCLUDED:NONE", "仅本次排除"]];
-    if (company) options.push(["EXCLUDED:REJECT", "长期拒绝，不再建议"]);
-    if (company && item.source === "HISTORY") options.push(["EXCLUDED:RETIRE", "从长期档案停用"]);
-    return options.map(([value, label]) => `<option value="${value}"${value === current ? " selected" : ""}>${label}</option>`).join("");
+  function candidateStatusLabel(item) {
+    if (item.status !== "EXCLUDED") return "";
+    if (item.memory_action === "REJECT") return "长期拒绝";
+    if (item.memory_action === "RETIRE") return "已停用";
+    return "仅本次排除";
   }
-  function candidateRow(item, company) {
+  function candidateLabel(item, company) {
     const relation = company ? item.relation_type : item.relation_to_original;
-    return `<div class="candidate-row"><div><strong>${escapeHtml(item.text)}</strong><small>${escapeHtml(item.language)} · ${escapeHtml(relation)} · ${escapeHtml(item.source)}</small>${item.rationale ? `<p>${escapeHtml(item.rationale)}</p>` : ""}</div><select class="${company ? "company" : "term"}-decision" data-id="${escapeHtml(company ? item.name_id : item.term_id)}">${decisionOptions(item, company)}</select></div>`;
+    const status = candidateStatusLabel(item);
+    return `${item.text} · ${item.language} · ${relation} · ${item.source}${status ? ` · ${status}` : ""}`;
+  }
+  function chipActions(item, company) {
+    const id = escapeHtml(item.name_id || item.term_id);
+    const buttons = [`<button type="button" class="chip-action chip-remove" data-id="${id}" title="仅本次排除" aria-label="仅本次排除">×</button>`];
+    if (company) {
+      buttons.push(`<button type="button" class="chip-action chip-reject" data-id="${id}" title="长期拒绝，不再建议" aria-label="长期拒绝">拒</button>`);
+      if (item.source === "HISTORY") buttons.push(`<button type="button" class="chip-action chip-retire" data-id="${id}" title="从长期档案停用" aria-label="从长期档案停用">停</button>`);
+    }
+    return buttons.join("");
+  }
+  function chipHTML(item, company) {
+    return `<span class="chip"><span class="chip-text" title="${escapeHtml(candidateLabel(item, company))}">${escapeHtml(item.text)}</span>${chipActions(item, company)}</span>`;
+  }
+  function chipList(items, company) {
+    return items.length ? `<div class="chip-list">${items.map((item) => chipHTML(item, company)).join("")}</div>` : `<p class="muted">尚未纳入任何${company ? "名称" : "技术词"}。</p>`;
+  }
+  function pickerHTML(candidates, company) {
+    const options = candidates.map((item) => {
+      const id = item.name_id || item.term_id;
+      const rationale = item.rationale ? ` · ${item.rationale}` : "";
+      return `<option value="${escapeHtml(id)}" title="${escapeHtml(candidateLabel(item, company) + rationale)}">${escapeHtml(candidateLabel(item, company))}</option>`;
+    }).join("");
+    return `<div class="add-picker">
+      <button type="button" class="secondary toggle-add">＋ 添加${company ? "公司名称/别名" : "技术词"}</button>
+      <div class="picker hidden">
+        ${options ? `<div class="picker-row"><select class="picker-select" aria-label="${company ? "候选公司名称" : "候选技术词"}">${options}</select><button type="button" class="secondary pick-add">添加选中项</button></div>` : `<p class="muted">没有更多候选，可直接在下方新增。</p>`}
+        <div class="picker-row"><input class="picker-input" maxlength="300" placeholder="新增${company ? "名称或别名" : "中文或英文技术词"}"><button type="button" class="secondary pick-custom">新增并纳入</button></div>
+      </div>
+    </div>`;
   }
   function renderScopeDraft() {
     const draft = state.scopeDraft; if (!draft) return;
     $("scope-review-panel").classList.remove("hidden"); $("scope-review-status").textContent = draft.status;
     $("scope-review-summary").textContent = `${MODE_LABELS[draftMode(draft)]} · 公开日 ${draft.publication_start} 至 ${draft.publication_end}（含起止日）· 修订 ${draft.revision}`;
     $("scope-limitations").innerHTML = (draft.limitations || []).map((item) => `<div class="limitation"><b>${escapeHtml(item.code)}</b>：${escapeHtml(item.message)}</div>`).join("");
-    $("company-review-list").innerHTML = (draft.companies || []).map((company) => `<section class="review-group" data-profile-id="${escapeHtml(company.profile_id)}"><h3>${escapeHtml(company.display_name)}</h3><p class="muted">别名、法定名称与集团成员分开审查。</p>${company.names.map((item) => candidateRow(item, true)).join("")}<div class="add-candidate"><input class="new-company-name" maxlength="300" placeholder="新增公司名称或别名"><button type="button" class="secondary add-company-name">添加并纳入</button></div></section>`).join("");
-    $("technology-review").innerHTML = draft.technology_input ? `<section class="review-group"><h3>双语技术检索词</h3><p class="muted">确认时至少保留一个中文词和一个英文词。</p>${draft.technology_terms.map((item) => candidateRow(item, false)).join("")}<div class="add-candidate"><input id="new-technology-term" maxlength="300" placeholder="新增中文或英文技术词"><button type="button" id="add-technology-term" class="secondary">添加并纳入</button></div></section>` : "";
+    $("company-review-list").innerHTML = (draft.companies || []).map((company) => {
+      const active = company.names.filter((item) => item.status === "ACTIVE");
+      const pool = company.names.filter((item) => item.status !== "ACTIVE");
+      return `<section class="review-group" data-profile-id="${escapeHtml(company.profile_id)}"><h3>${escapeHtml(company.display_name)}</h3><p class="muted">下拉选择纳入检索的名称；未选中的候选默认仅本次排除。</p>${chipList(active, true)}${pickerHTML(pool, true)}</section>`;
+    }).join("");
+    $("technology-review").innerHTML = draft.technology_input ? `<section class="review-group"><h3>双语技术检索词</h3><p class="muted">确认时至少保留一个中文词和一个英文词。</p>${chipList(draft.technology_terms.filter((item) => item.status === "ACTIVE"), false)}${pickerHTML(draft.technology_terms.filter((item) => item.status !== "ACTIVE"), false)}</section>` : "";
     const editable = draft.status === "AWAITING_CONFIRMATION";
     $("resume-scope-expansion").classList.toggle("hidden", !["DRAFT", "EXPANDING"].includes(draft.status));
     $("save-scope-review").classList.toggle("hidden", !editable); $("confirm-scope").classList.toggle("hidden", !editable);
     $("start-confirmed-run").classList.toggle("hidden", draft.status !== "CONFIRMED");
   }
-  function captureReviewDecisions(draft, requireAll) {
-    const decisions = new Map(Array.from(document.querySelectorAll(".company-decision,.term-decision"), (item) => [item.dataset.id, item.value]));
-    const apply = (item, id) => { const value = decisions.get(id); if (!value) { if (requireAll) throw new Error(`仍有未审查候选：${item.text}`); return; } const [status, action = "NONE"] = value.split(":"); item.status = status; if ("memory_action" in item) item.memory_action = action; };
-    draft.companies.forEach((company) => company.names.forEach((item) => apply(item, item.name_id))); draft.technology_terms.forEach((item) => apply(item, item.term_id)); return draft;
+  function findCandidate(id) {
+    for (const company of state.scopeDraft.companies) {
+      const item = company.names.find((candidate) => candidate.name_id === id);
+      if (item) return item;
+    }
+    return state.scopeDraft.technology_terms.find((item) => item.term_id === id);
   }
-  function addCompanyName(button) {
-    captureReviewDecisions(state.scopeDraft, false); const group = button.closest(".review-group"); const input = group.querySelector(".new-company-name"); const text = input.value.trim(); if (!text) return;
-    const company = state.scopeDraft.companies.find((item) => item.profile_id === group.dataset.profileId); const normalized = normalizeText(text);
-    if (company.names.some((item) => item.normalized_text === normalized)) throw new Error("该公司名称已在候选中。");
-    company.names.push({ name_id: stableId("CNM"), text, normalized_text: normalized, language: detectLanguage(text), relation_type: "ALIAS", source: "USER_ADDED", status: "ACTIVE", memory_action: "NONE", rationale: "用户在范围审查中新增" }); renderScopeDraft();
+  function setCandidateStatus(id, status, memoryAction) {
+    const item = findCandidate(id);
+    if (!item) throw new Error("候选不存在，请刷新页面后重试。");
+    item.status = status;
+    if ("memory_action" in item) item.memory_action = memoryAction || "NONE";
+    renderScopeDraft();
   }
-  function addTechnologyTerm() {
-    captureReviewDecisions(state.scopeDraft, false); const input = $("new-technology-term"); const text = input.value.trim(); if (!text) return; const normalized = normalizeText(text); const language = detectLanguage(text);
-    if (language === "OTHER") throw new Error("技术词必须包含中文或英文字母。");
-    if (state.scopeDraft.technology_terms.some((item) => item.normalized_text === normalized)) throw new Error("该技术词已在候选中。");
-    state.scopeDraft.technology_terms.push({ term_id: stableId("TRM"), text, normalized_text: normalized, language, relation_to_original: "RELATED", source: "USER_ADDED", status: "ACTIVE", rationale: "用户在范围审查中新增" }); renderScopeDraft();
+  function pickCandidate(group) {
+    const select = group.querySelector(".picker-select");
+    if (!select || !select.value) return;
+    setCandidateStatus(select.value, "ACTIVE", "NONE");
   }
-  function reviewedDraft() { const draft = captureReviewDecisions(structuredClone(state.scopeDraft), true); draft.revision += 1; draft.status = "AWAITING_CONFIRMATION"; return draft; }
+  function addCustomCandidate(group) {
+    const input = group.querySelector(".picker-input");
+    const text = input.value.trim(); if (!text) return;
+    const normalized = normalizeText(text);
+    const language = detectLanguage(text);
+    const company = group.dataset.profileId ? state.scopeDraft.companies.find((item) => item.profile_id === group.dataset.profileId) : null;
+    if (company) {
+      if (company.names.some((item) => item.normalized_text === normalized)) throw new Error("该公司名称已在候选中。");
+      company.names.push({ name_id: stableId("CNM"), text, normalized_text: normalized, language, relation_type: "ALIAS", source: "USER_ADDED", status: "ACTIVE", memory_action: "NONE", rationale: "用户在范围审查中新增" });
+    } else {
+      if (language === "OTHER") throw new Error("技术词必须包含中文或英文字母。");
+      if (state.scopeDraft.technology_terms.some((item) => item.normalized_text === normalized)) throw new Error("该技术词已在候选中。");
+      state.scopeDraft.technology_terms.push({ term_id: stableId("TRM"), text, normalized_text: normalized, language, relation_to_original: "RELATED", source: "USER_ADDED", status: "ACTIVE", rationale: "用户在范围审查中新增" });
+    }
+    input.value = "";
+    renderScopeDraft();
+  }
+  function reviewedDraft() {
+    const draft = structuredClone(state.scopeDraft);
+    draft.companies.forEach((company) => company.names.forEach((item) => { if (item.status === "PROPOSED") { item.status = "EXCLUDED"; item.memory_action = "NONE"; } }));
+    draft.technology_terms.forEach((item) => { if (item.status === "PROPOSED") item.status = "EXCLUDED"; });
+    const emptyCompany = draft.companies.find((company) => !company.names.some((item) => item.status === "ACTIVE"));
+    if (emptyCompany) throw new Error(`公司「${emptyCompany.display_name}」至少要纳入一个名称。`);
+    if (draft.technology_input) {
+      const languages = new Set(draft.technology_terms.filter((item) => item.status === "ACTIVE").map((item) => item.language));
+      if (!languages.has("ZH") || !languages.has("EN")) throw new Error("技术方向至少要保留一个中文词和一个英文词。");
+    }
+    draft.revision += 1; draft.status = "AWAITING_CONFIRMATION";
+    return draft;
+  }
   async function saveScopeReview() {
     const current = state.scopeDraft; const draft = reviewedDraft();
     const saved = await jsonRequest(`/api/landscape/scope-drafts/${encodeURIComponent(current.draft_id)}`, { method: "PATCH", body: JSON.stringify({ expected_revision: current.revision, draft }) });
@@ -212,7 +276,18 @@
   $("resume-scope-expansion").addEventListener("click", () => expandScopeDraft().catch((error) => { $("scope-review-message").textContent = error.message; }));
   $("save-scope-review").addEventListener("click", () => saveScopeReview().catch((error) => { $("scope-review-message").textContent = error.message; })); $("confirm-scope").addEventListener("click", confirmScope);
   $("start-confirmed-run").addEventListener("click", startConfirmedScope);
-  $("scope-review-panel").addEventListener("click", (event) => { try { const button = event.target.closest(".add-company-name"); if (button) addCompanyName(button); if (event.target.id === "add-technology-term") addTechnologyTerm(); } catch (error) { $("scope-review-message").textContent = error.message; } });
+  $("scope-review-panel").addEventListener("click", (event) => {
+    try {
+      const button = event.target.closest("button"); if (!button) return;
+      const group = button.closest(".review-group");
+      if (button.classList.contains("toggle-add")) { const picker = button.nextElementSibling; if (picker) picker.classList.toggle("hidden"); return; }
+      if (button.classList.contains("pick-add")) { pickCandidate(group); return; }
+      if (button.classList.contains("pick-custom")) { addCustomCandidate(group); return; }
+      if (button.classList.contains("chip-remove")) { setCandidateStatus(button.dataset.id, "EXCLUDED", "NONE"); return; }
+      if (button.classList.contains("chip-reject")) { setCandidateStatus(button.dataset.id, "EXCLUDED", "REJECT"); return; }
+      if (button.classList.contains("chip-retire")) { setCandidateStatus(button.dataset.id, "EXCLUDED", "RETIRE"); return; }
+    } catch (error) { $("scope-review-message").textContent = error.message; }
+  });
   $("approve-scale").addEventListener("click", () => decideScale().catch((error) => { $("form-message").textContent = error.message; })); $("reject-scale").addEventListener("click", () => cancelRun().catch((error) => { $("form-message").textContent = error.message; })); $("attach-credentials").addEventListener("click", () => attachCredentials().catch((error) => { $("form-message").textContent = error.message; }));
   presetDates(); updateMode(); restoreScopeDraft(); loadHistory();
 })();
