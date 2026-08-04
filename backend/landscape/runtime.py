@@ -143,9 +143,16 @@ def build_landscape_runtime(
     task_queue = PostgreSQLTaskQueue(dsn)
     model_scheduler = ModelScheduler(
         ModelBudget(
-            max_concurrency=min(8, config.workflow.document_agent_concurrency),
+            max_concurrency=min(
+                16,
+                _int_env(
+                    "AIFPATENT_MODEL_MAX_CONCURRENCY",
+                    min(8, config.workflow.document_agent_concurrency),
+                    minimum=1,
+                ),
+            ),
             rpm=_int_env("AIFPATENT_MODEL_RPM", 60, minimum=1),
-            tpm=_int_env("AIFPATENT_MODEL_TPM", 200_000, minimum=1),
+            tpm=_int_env("AIFPATENT_MODEL_TPM", 1_000_000, minimum=1),
             max_input_tokens=_int_env("AIFPATENT_MODEL_MAX_INPUT_TOKENS", 600_000, minimum=1),
             max_output_tokens=_int_env("AIFPATENT_MODEL_MAX_OUTPUT_TOKENS", 8_192, minimum=1),
         )

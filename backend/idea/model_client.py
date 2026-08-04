@@ -278,16 +278,21 @@ class StructuredModelClient:
             "response_format": {"type": "json_object"},
             "stream": False,
         }
-        if self._uses_volcengine_gateway():
-            # Ark Coding models such as Kimi expose their chain of thought through
-            # reasoning_content and count it against max_tokens.  For strict JSON
-            # extraction this can consume the entire budget, leave content empty,
-            # or exceed the request timeout.  Ark explicitly supports disabling
-            # thinking, which makes the response behave like a normal structured
-            # completion.  Keep the adapter host-scoped so other OpenAI-compatible
-            # providers never receive a vendor-specific field.
+        if self._should_disable_thinking():
+            # Ark Coding models such as Kimi and DeepSeek v4-flash expose their
+            # chain of thought through reasoning_content and count it against
+            # max_tokens.  For strict JSON extraction this can consume the
+            # entire budget, leave content empty, or exceed the request timeout.
+            # DeepSeek acceptance was verified on 2026-08-04 with a live probe
+            # (thinking={"type": "disabled"} zeroes reasoning_content and cuts
+            # structured generation latency).  Keep the adapter host-scoped so
+            # other OpenAI-compatible providers never receive a vendor field.
             payload["thinking"] = {"type": "disabled"}
         return payload
+
+    def _should_disable_thinking(self) -> bool:
+        hostname = (urlsplit(self.base_url()).hostname or "").lower()
+        return self._uses_volcengine_gateway() or hostname == "api.deepseek.com"
 
     def _uses_volcengine_gateway(self) -> bool:
         hostname = (urlsplit(self.base_url()).hostname or "").lower()

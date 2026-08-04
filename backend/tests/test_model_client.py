@@ -224,6 +224,18 @@ class StructuredModelClientTests(unittest.TestCase):
             payload = client._payload([])
         self.assertEqual(payload["thinking"], {"type": "disabled"})
 
+    def test_deepseek_runtime_disables_thinking_for_structured_output(self) -> None:
+        client = StructuredModelClient(self.settings)
+        with runtime_model_config(
+            RuntimeModelConfig(
+                "https://api.deepseek.com",
+                "ephemeral-test-token",
+                "deepseek-v4-flash",
+            )
+        ):
+            payload = client._payload([])
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+
     def test_non_volcengine_runtime_does_not_receive_vendor_thinking_field(self) -> None:
         client = StructuredModelClient(self.settings)
         with runtime_model_config(
