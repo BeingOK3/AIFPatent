@@ -11,6 +11,7 @@ from .direction_agent import DirectionUnitPacket
 from .direction_record import DirectionRecord, DirectionStatus
 from .family_resolution import resolve_families
 from .organization_assignment import assign_organizations
+from .others_discovery import discover_others_directions
 from .patent_snapshot import PatentSnapshotStatus, snapshot_bibliography
 from .stage_repository import V4StageName, V4StageStatus
 from .v4_run import LandscapeRunStatus
@@ -51,6 +52,7 @@ class V4LandscapeWorkflow:
         direction_repository=None,
         classification_repository=None,
         taxonomy_repository=None,
+        others_repository=None,
     ):
         self.run_repository = run_repository
         self.scope_repository = scope_repository
@@ -68,6 +70,7 @@ class V4LandscapeWorkflow:
         self.direction_repository = direction_repository
         self.classification_repository = classification_repository
         self.taxonomy_repository = taxonomy_repository
+        self.others_repository = others_repository
 
     async def execute_through_classification(self, run_id: str) -> V4WorkflowOutcome:
         outcome = await self.execute_preanalysis(run_id)
@@ -119,6 +122,7 @@ class V4LandscapeWorkflow:
             "direction_repository": self.direction_repository,
             "classification_repository": self.classification_repository,
             "taxonomy_repository": self.taxonomy_repository,
+            "others_repository": self.others_repository,
         }
         missing = [name for name, value in required.items() if value is None]
         if missing:
@@ -128,7 +132,8 @@ class V4LandscapeWorkflow:
         run = self.run_repository.get(run_id)
         taxonomy = self.taxonomy_repository.get(run.taxonomy_version)
         directions = await self._extract_directions(run_id, taxonomy)
-        await self._match_taxonomy(run_id, directions, taxonomy)
+        classifications = await self._match_taxonomy(run_id, directions, taxonomy)
+        self._discover_others(run_id, directions, classifications)
 
     async def _extract_directions(self, run_id: str, taxonomy):
         resolution = self.family_repository.get(run_id)
@@ -243,6 +248,26 @@ class V4LandscapeWorkflow:
             with_limitations=bool(unresolved_count),
         )
         return results
+
+    def _discover_others(self, run_id: str, directions, classifications):
+        if self._succeeded(run_id, V4StageName.DISCOVER_OTHERS):
+            return self.others_repository.get(run_id)
+        others_count = sum(
+            result.terminal.value == "OTHERS" for result in classifications
+        )
+        self.stage_repository.start(
+            run_id, V4StageName.DISCOVER_OTHERS, total_count=others_count
+        )
+        discovery = discover_others_directions(classifications, directions)
+        self.others_repository.put(run_id, discovery)
+        self.stage_repository.progress(
+            run_id,
+            V4StageName.DISCOVER_OTHERS,
+            completed_count=others_count,
+            total_count=others_count,
+        )
+        self.stage_repository.succeed(run_id, V4StageName.DISCOVER_OTHERS)
+        return discovery
 
     async def _retrieve(self, run_id: str):
         if self._succeeded(run_id, V4StageName.RETRIEVE_PAGES):

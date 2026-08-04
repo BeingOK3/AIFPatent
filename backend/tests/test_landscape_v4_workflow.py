@@ -284,19 +284,23 @@ class V4LandscapeWorkflowTests(unittest.TestCase):
             abstract_repository.put(_run_id, evidence)
         direction_repository = KeyedRepository()
         classification_repository = KeyedRepository()
+        others_repository = ValueRepository()
         workflow.abstract_repository = abstract_repository
         workflow.direction_extraction = DirectionService()
         workflow.classification_matching = ClassificationService()
         workflow.direction_repository = direction_repository
         workflow.classification_repository = classification_repository
         workflow.taxonomy_repository = SimpleNamespace(get=lambda version: SEMANTIC_TAXONOMY)
+        workflow.others_repository = others_repository
 
         asyncio.run(workflow.execute_semantics("LRN-0123456789abcdef"))
 
         self.assertEqual(stages.statuses[STAGE_ORDER[5]], V4StageStatus.SUCCEEDED)
         self.assertEqual(stages.statuses[STAGE_ORDER[6]], V4StageStatus.SUCCEEDED)
+        self.assertEqual(stages.statuses[STAGE_ORDER[7]], V4StageStatus.SUCCEEDED)
         self.assertEqual(len(direction_repository.values), 1)
         self.assertEqual(len(classification_repository.values), 1)
+        self.assertEqual(len(others_repository.puts), 1)
 
 
 if __name__ == "__main__":
