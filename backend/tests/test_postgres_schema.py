@@ -71,6 +71,9 @@ LANDSCAPE_V4_ABSTRACT_SCHEMA_PATH = Path(
 LANDSCAPE_V4_TASKS_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/093_landscape_v4_tasks.sql"
 )
+LANDSCAPE_V4_DIRECTION_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/094_landscape_v4_direction_classification.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -382,6 +385,14 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("UNIQUE(run_id,task_key)", sql)
         self.assertIn("'LEASED'", sql)
         self.assertIn("'093_landscape_v4_tasks'", sql)
+
+    def test_landscape_v4_direction_and_classification_results_are_immutable(self) -> None:
+        sql = LANDSCAPE_V4_DIRECTION_SCHEMA_PATH.read_text(encoding="utf-8")
+        self.assertIn("landscape_v4_direction_records", sql)
+        self.assertIn("landscape_v4_classification_results", sql)
+        self.assertIn("landscape_v4_direction_values", sql)
+        self.assertIn("BEFORE UPDATE OR DELETE", sql)
+        self.assertIn("'094_landscape_v4_direction_classification'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
