@@ -85,7 +85,7 @@ class LandscapeFrontendContractTests(unittest.TestCase):
 
     def test_report_4_renders_auditable_results_without_deep_read(self) -> None:
         for fragment in (
-            "landscape-report/4.0.0", "metric_cube", "mode_view",
+            "landscape-report/4.0.0", "landscape-report/4.1.0", "metric_cube", "mode_view", "macro_summary", "宏观趋势总结", "macro-narrative",
             "counting_disclosure", "query_audit", "representatives",
             "classification_terminal", "Unresolved", "Others",
             'target="_blank"', 'rel="noopener noreferrer"',

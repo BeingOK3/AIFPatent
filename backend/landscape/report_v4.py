@@ -10,6 +10,7 @@ from pydantic import Field, model_validator
 from .classification_terminal import ClassificationResult, ClassificationTerminal
 from .direction_record import DirectionRecord
 from .family_resolution import FamilyResolution
+from .macro_summary import MacroSummary, build_macro_summary
 from .mode_views import LandscapeModeView, build_mode_view
 from .organization_assignment import OrganizationAssignmentSet
 from .others_discovery import OthersDiscovery
@@ -23,7 +24,7 @@ from .trends import TrendCandidate, deterministic_trend_narrative
 from .metrics import MetricCube
 
 
-REPORT_SCHEMA_VERSION = "landscape-report/4.0.0"
+REPORT_SCHEMA_VERSION = "landscape-report/4.1.0"
 
 
 class QueryAudit(ScopeModel):
@@ -71,6 +72,7 @@ class LandscapeReportV4(ScopeModel):
     counts: ReportCounts
     metric_cube: MetricCube
     mode_view: LandscapeModeView
+    macro_summary: MacroSummary
     others: OthersDiscovery
     trends: tuple[TrendCandidate, ...]
     representatives: tuple[RepresentativePatent, ...]
@@ -192,6 +194,18 @@ def build_report_v4(
         mode=scope.mode,
         confirmed_organization_ids=confirmed_organization_ids,
     )
+    direction_name_by_id: dict[str, str] = {}
+    for representative in representatives:
+        if representative.direction_id not in direction_name_by_id and representative.classification_path:
+            direction_name_by_id[representative.direction_id] = " / ".join(
+                representative.classification_path
+            )
+    macro_summary = build_macro_summary(
+        cube=metric_cube,
+        trends=trends,
+        organizations=organizations,
+        direction_name_by_id=direction_name_by_id,
+    )
     semantic = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "run_id": run.run_id,
@@ -215,6 +229,7 @@ def build_report_v4(
         ),
         "metric_cube": metric_cube,
         "mode_view": mode_view,
+        "macro_summary": macro_summary,
         "others": others,
         "trends": trends,
         "representatives": representatives,
@@ -248,6 +263,29 @@ def render_report_markdown(report: LandscapeReportV4) -> str:
     ]
     for limitation in report.limitations:
         lines.append(f"- {limitation.code}：{limitation.message}")
+    macro = report.macro_summary
+    lines.extend(["", "## 宏观趋势总结", ""])
+    lines.append(macro.narrative)
+    pulse = "；".join(
+        f"{point.label} {point.analysis_unit_count}" for point in macro.overall_pulse
+    )
+    lines.append(f"时间分布：{pulse}。")
+    if macro.top_directions:
+        lines.append(
+            "Top 方向："
+            + "；".join(
+                f"{item.name}（{item.analysis_unit_count}，{item.change_type}）"
+                for item in macro.top_directions
+            )
+        )
+    if macro.top_organizations:
+        lines.append(
+            "Top 机构："
+            + "；".join(
+                f"{item.name}（{item.analysis_unit_count}）"
+                for item in macro.top_organizations
+            )
+        )
     lines.extend(["", "## 实际查询", ""])
     for query in report.query_audit:
         lines.append(
