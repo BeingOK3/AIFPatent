@@ -121,8 +121,19 @@ class V4LandscapeTaskManager:
         return True
 
     async def aclose(self) -> None:
-        for run_id in list(self.tasks):
-            await self.cancel(run_id)
+        # Process shutdown is not a user cancellation. Leave durable Run and
+        # stage states intact so the next worker can resume from checkpoints.
+        # Credentials are memory-only and must be supplied again after restart.
+        pending = list(self.tasks.items())
+        for _run_id, task in pending:
+            if not task.done():
+                task.cancel()
+        if pending:
+            await asyncio.gather(
+                *(task for _run_id, task in pending), return_exceptions=True
+            )
+        for run_id, _task in pending:
+            self.credential_vault.revoke(run_id)
 
     def resume_incomplete(self) -> int:
         resumed = 0

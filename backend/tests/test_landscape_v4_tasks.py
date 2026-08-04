@@ -71,7 +71,43 @@ class Workflow:
         )
 
 
+class BlockingWorkflow(Workflow):
+    def __init__(self, runs):
+        super().__init__(runs)
+        self.started = asyncio.Event()
+
+    async def execute_semantics(self, run_id):
+        self.calls.append("semantics")
+        self.started.set()
+        await asyncio.Event().wait()
+
+
 class V4LandscapeTaskManagerTests(unittest.TestCase):
+    def test_process_shutdown_preserves_run_for_restart_recovery(self):
+        async def scenario():
+            runs = RunRepository()
+            stages = StageRepository()
+            vault = CredentialVault()
+            vault.put(
+                "RUN-1",
+                RuntimeModelConfig(
+                    base_url="https://example.test/v1",
+                    api_key="secret-value",
+                    model="fixture",
+                ),
+            )
+            workflow = BlockingWorkflow(runs)
+            manager = V4LandscapeTaskManager(workflow, runs, stages, vault)
+            manager.start("RUN-1")
+            await workflow.started.wait()
+            await manager.aclose()
+            return runs, manager, vault
+
+        runs, manager, vault = asyncio.run(scenario())
+        self.assertEqual(runs.value.status, LandscapeRunStatus.RUNNING)
+        self.assertEqual(manager.tasks, {})
+        self.assertFalse(vault.has_credentials("RUN-1"))
+
     def test_missing_credentials_waits_after_provider_preanalysis(self):
         async def scenario():
             runs = RunRepository()
