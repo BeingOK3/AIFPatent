@@ -6,6 +6,7 @@ from idea.providers.base import FetchedDocument, PagedSearchProvider
 
 from .abstract_evidence import abstract_from_document, abstract_provider_failure
 from .abstract_evidence import AbstractStatus
+from .analytics_assembly import assemble_metric_units
 from .classification_terminal import ClassificationResult
 from .direction_agent import DirectionUnitPacket
 from .direction_record import DirectionRecord, DirectionStatus
@@ -13,6 +14,9 @@ from .family_resolution import resolve_families
 from .organization_assignment import assign_organizations
 from .others_discovery import discover_others_directions
 from .patent_snapshot import PatentSnapshotStatus, snapshot_bibliography
+from .metrics import build_metric_cube
+from .representatives import select_representative_patents
+from .trends import build_trend_candidates
 from .stage_repository import V4StageName, V4StageStatus
 from .v4_run import LandscapeRunStatus
 
@@ -53,6 +57,9 @@ class V4LandscapeWorkflow:
         classification_repository=None,
         taxonomy_repository=None,
         others_repository=None,
+        metric_repository=None,
+        trend_repository=None,
+        representative_repository=None,
     ):
         self.run_repository = run_repository
         self.scope_repository = scope_repository
@@ -71,6 +78,16 @@ class V4LandscapeWorkflow:
         self.classification_repository = classification_repository
         self.taxonomy_repository = taxonomy_repository
         self.others_repository = others_repository
+        self.metric_repository = metric_repository
+        self.trend_repository = trend_repository
+        self.representative_repository = representative_repository
+
+    async def execute_through_analytics(self, run_id: str) -> V4WorkflowOutcome:
+        outcome = await self.execute_through_classification(run_id)
+        if outcome == V4WorkflowOutcome.AWAITING_SCALE_CONFIRMATION:
+            return outcome
+        self.execute_analytics(run_id)
+        return outcome
 
     async def execute_through_classification(self, run_id: str) -> V4WorkflowOutcome:
         outcome = await self.execute_preanalysis(run_id)
@@ -134,6 +151,122 @@ class V4LandscapeWorkflow:
         directions = await self._extract_directions(run_id, taxonomy)
         classifications = await self._match_taxonomy(run_id, directions, taxonomy)
         self._discover_others(run_id, directions, classifications)
+
+    def execute_analytics(self, run_id: str) -> None:
+        required = {
+            "metric_repository": self.metric_repository,
+            "trend_repository": self.trend_repository,
+            "representative_repository": self.representative_repository,
+            "organization_repository": self.organization_repository,
+        }
+        missing = [name for name, value in required.items() if value is None]
+        if missing:
+            raise V4WorkflowError(
+                "analytics workflow dependencies are missing: " + ", ".join(missing)
+            )
+        run = self.run_repository.get(run_id)
+        taxonomy = self.taxonomy_repository.get(run.taxonomy_version)
+        resolution = self.family_repository.get(run_id)
+        directions = tuple(
+            self.direction_repository.get(run_id, unit.analysis_unit_id)
+            for unit in resolution.analysis_units
+        )
+        classifications = tuple(
+            self.classification_repository.get(run_id, unit.analysis_unit_id)
+            for unit in resolution.analysis_units
+        )
+        assembly = assemble_metric_units(
+            resolution,
+            self.snapshot_repository.get(run_id),
+            self.organization_repository.get(run_id),
+            classifications,
+            directions,
+            self.others_repository.get(run_id),
+            taxonomy,
+        )
+        cube = self._compute_metrics(run_id, run, assembly)
+        self._build_trends(run_id, cube, assembly.units)
+        self._select_representatives(run_id, assembly.units)
+
+    def _compute_metrics(self, run_id: str, run, assembly):
+        if self._succeeded(run_id, V4StageName.COMPUTE_METRICS):
+            return self.metric_repository.get(run_id)
+        self.stage_repository.start(
+            run_id,
+            V4StageName.COMPUTE_METRICS,
+            total_count=len(assembly.units),
+        )
+        cube = build_metric_cube(
+            assembly.units,
+            publication_start=run.publication_start,
+            publication_end=run.publication_end,
+        )
+        self.metric_repository.put(run_id, cube)
+        self.stage_repository.progress(
+            run_id,
+            V4StageName.COMPUTE_METRICS,
+            completed_count=len(assembly.units),
+            total_count=len(assembly.units),
+        )
+        excluded = assembly.excluded_missing_date_analysis_unit_ids
+        if excluded:
+            self.stage_repository.add_limitation(
+                run_id,
+                V4StageName.COMPUTE_METRICS,
+                code="MISSING_PUBLICATION_DATE",
+                message="Analysis units without a verifiable publication date were excluded from time metrics.",
+                affected_count=len(excluded),
+            )
+        self.stage_repository.succeed(
+            run_id,
+            V4StageName.COMPUTE_METRICS,
+            with_limitations=bool(excluded),
+        )
+        return cube
+
+    def _build_trends(self, run_id: str, cube, units):
+        if self._succeeded(run_id, V4StageName.BUILD_TRENDS):
+            return self.trend_repository.get(run_id)
+        self.stage_repository.start(run_id, V4StageName.BUILD_TRENDS)
+        candidates = build_trend_candidates(cube, units)
+        self.trend_repository.put(run_id, candidates)
+        self.stage_repository.progress(
+            run_id,
+            V4StageName.BUILD_TRENDS,
+            completed_count=len(candidates),
+            total_count=len(candidates),
+        )
+        self.stage_repository.succeed(run_id, V4StageName.BUILD_TRENDS)
+        return candidates
+
+    def _select_representatives(self, run_id: str, units):
+        if self._succeeded(run_id, V4StageName.SELECT_REPRESENTATIVES):
+            return self.representative_repository.get(run_id)
+        direction_ids = tuple(
+            sorted({unit.direction_id for unit in units if unit.direction_id != "UNRESOLVED"})
+        )
+        self.stage_repository.start(
+            run_id,
+            V4StageName.SELECT_REPRESENTATIVES,
+            total_count=len(direction_ids),
+        )
+        representatives = tuple(
+            representative
+            for direction_id in direction_ids
+            for representative in select_representative_patents(
+                units,
+                direction_id=direction_id,
+            )
+        )
+        self.representative_repository.put(run_id, representatives)
+        self.stage_repository.progress(
+            run_id,
+            V4StageName.SELECT_REPRESENTATIVES,
+            completed_count=len(direction_ids),
+            total_count=len(direction_ids),
+        )
+        self.stage_repository.succeed(run_id, V4StageName.SELECT_REPRESENTATIVES)
+        return representatives
 
     async def _extract_directions(self, run_id: str, taxonomy):
         resolution = self.family_repository.get(run_id)

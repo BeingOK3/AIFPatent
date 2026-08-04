@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from datetime import date
 from types import SimpleNamespace
 
 from idea.providers.base import FetchedDocument, SearchHit
@@ -23,7 +24,11 @@ from tests.test_landscape_query_planning import confirmed_scope
 class RunRepository:
     def __init__(self, scope_id, status=LandscapeRunStatus.PLANNING):
         self.value = SimpleNamespace(
-            status=status, scope_revision_id=scope_id, taxonomy_version="TAX-TEST"
+            status=status,
+            scope_revision_id=scope_id,
+            taxonomy_version="TAX-TEST",
+            publication_start=date(2020, 1, 1),
+            publication_end=date(2025, 12, 31),
         )
 
     def get(self, run_id):
@@ -36,6 +41,8 @@ class RunRepository:
             status=LandscapeRunStatus(target),
             scope_revision_id=self.value.scope_revision_id,
             taxonomy_version=self.value.taxonomy_version,
+            publication_start=self.value.publication_start,
+            publication_end=self.value.publication_end,
         )
         return self.value
 
@@ -101,6 +108,8 @@ class SearchCoordinator:
             ),
             scope_revision_id=self.run_repository.value.scope_revision_id,
             taxonomy_version=self.run_repository.value.taxonomy_version,
+            publication_start=self.run_repository.value.publication_start,
+            publication_end=self.run_repository.value.publication_end,
         )
 
     async def retrieve(self, run_id, provider):
@@ -301,6 +310,20 @@ class V4LandscapeWorkflowTests(unittest.TestCase):
         self.assertEqual(len(direction_repository.values), 1)
         self.assertEqual(len(classification_repository.values), 1)
         self.assertEqual(len(others_repository.puts), 1)
+
+        metric_repository = ValueRepository()
+        trend_repository = ValueRepository()
+        representative_repository = ValueRepository()
+        workflow.metric_repository = metric_repository
+        workflow.trend_repository = trend_repository
+        workflow.representative_repository = representative_repository
+        workflow.execute_analytics("LRN-0123456789abcdef")
+        self.assertEqual(stages.statuses[STAGE_ORDER[8]], V4StageStatus.SUCCEEDED_WITH_LIMITATIONS)
+        self.assertEqual(stages.statuses[STAGE_ORDER[9]], V4StageStatus.SUCCEEDED)
+        self.assertEqual(stages.statuses[STAGE_ORDER[10]], V4StageStatus.SUCCEEDED)
+        self.assertEqual(len(metric_repository.puts), 1)
+        self.assertEqual(len(trend_repository.puts), 1)
+        self.assertEqual(len(representative_repository.puts), 1)
 
 
 if __name__ == "__main__":

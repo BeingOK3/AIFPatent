@@ -336,6 +336,9 @@ def build_landscape_runtime(
             classification_repository=classification_repository,
             taxonomy_repository=taxonomy_repository,
             others_repository=others_repository,
+            metric_repository=metric_repository,
+            trend_repository=v4_trend_repository,
+            representative_repository=representative_repository,
         )
         if patent_snapshot_fetch is not None and paged_provider is not None
         else None
