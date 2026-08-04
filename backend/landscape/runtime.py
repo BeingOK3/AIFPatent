@@ -34,6 +34,10 @@ from .abstract_repository import PostgreSQLAbstractEvidenceRepository
 from .task_queue import PostgreSQLTaskQueue
 from .model_scheduler import ModelBudget, ModelScheduler
 from .credential_lease import CredentialVault
+from .semantic_result_repository import (
+    PostgreSQLClassificationRepository,
+    PostgreSQLDirectionRepository,
+)
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -140,6 +144,8 @@ class LandscapeRuntime:
     scale_repository: PostgreSQLScaleGateRepository
     search_coordinator: LandscapeSearchCoordinator
     abstract_repository: PostgreSQLAbstractEvidenceRepository
+    direction_repository: PostgreSQLDirectionRepository
+    classification_repository: PostgreSQLClassificationRepository
     task_queue: PostgreSQLTaskQueue
     model_scheduler: ModelScheduler
     credential_vault: CredentialVault
@@ -185,6 +191,8 @@ def build_landscape_runtime(
         execution=search_execution,
     )
     abstract_repository = PostgreSQLAbstractEvidenceRepository(dsn)
+    direction_repository = PostgreSQLDirectionRepository(dsn)
+    classification_repository = PostgreSQLClassificationRepository(dsn)
     task_queue = PostgreSQLTaskQueue(dsn)
     model_scheduler = ModelScheduler(
         ModelBudget(
@@ -277,6 +285,8 @@ def build_landscape_runtime(
         scale_repository,
         search_coordinator,
         abstract_repository,
+        direction_repository,
+        classification_repository,
         task_queue,
         model_scheduler,
         credential_vault,
