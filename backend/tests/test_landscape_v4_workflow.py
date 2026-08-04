@@ -10,12 +10,21 @@ from landscape.publication_freeze import freeze_publications
 from landscape.stage_repository import STAGE_ORDER, V4StageStatus
 from landscape.v4_run import LandscapeRunStatus
 from landscape.v4_workflow import V4LandscapeWorkflow, V4WorkflowOutcome
+from landscape.classification_terminal import (
+    ClassificationAction,
+    ClassificationResult,
+    ClassificationTerminal,
+)
+from landscape.direction_record import DirectionRecord, DirectionStatus
+from landscape.taxonomy import compile_taxonomy_markdown
 from tests.test_landscape_query_planning import confirmed_scope
 
 
 class RunRepository:
     def __init__(self, scope_id, status=LandscapeRunStatus.PLANNING):
-        self.value = SimpleNamespace(status=status, scope_revision_id=scope_id)
+        self.value = SimpleNamespace(
+            status=status, scope_revision_id=scope_id, taxonomy_version="TAX-TEST"
+        )
 
     def get(self, run_id):
         return self.value
@@ -26,6 +35,7 @@ class RunRepository:
         self.value = SimpleNamespace(
             status=LandscapeRunStatus(target),
             scope_revision_id=self.value.scope_revision_id,
+            taxonomy_version=self.value.taxonomy_version,
         )
         return self.value
 
@@ -90,6 +100,7 @@ class SearchCoordinator:
                 else LandscapeRunStatus.READY
             ),
             scope_revision_id=self.run_repository.value.scope_revision_id,
+            taxonomy_version=self.run_repository.value.taxonomy_version,
         )
 
     async def retrieve(self, run_id, provider):
@@ -138,6 +149,59 @@ class ValueRepository:
         self.puts.append(values)
         self.value = values[-1]
         return self.value
+
+
+class KeyedRepository:
+    def __init__(self):
+        self.values = {}
+
+    def put(self, run_id, value):
+        self.values[value.analysis_unit_id if hasattr(value, "analysis_unit_id") else value.publication_id] = value
+        return value
+
+    def get(self, run_id, item_id):
+        return self.values[item_id]
+
+
+class DirectionService:
+    async def extract(self, packets, taxonomy):
+        level1 = next(node.category_id for node in taxonomy.nodes if node.level == 1)
+        return tuple(
+            DirectionRecord(
+                analysis_unit_id=packet.analysis_unit_id,
+                status=DirectionStatus.AVAILABLE,
+                evidence_sufficient=True,
+                solution_mechanism="通过液体回路散热",
+                direction_summary="冷板液冷方向",
+                candidate_level1_ids=(level1,),
+                confidence=0.8,
+                evidence_ids=(packet.evidence_ids[0],),
+            )
+            for packet in packets
+        )
+
+
+class ClassificationService:
+    async def classify(self, directions, taxonomy):
+        return tuple(
+            ClassificationResult(
+                analysis_unit_id=item.analysis_unit_id,
+                action=ClassificationAction.NONE_OF_CANDIDATES,
+                terminal=ClassificationTerminal.OTHERS,
+                evidence_ids=item.evidence_ids,
+                confidence=0.7,
+                review_round=0,
+            )
+            for item in directions
+        )
+
+
+SEMANTIC_TAXONOMY = compile_taxonomy_markdown(
+    """| 一级分类 | 二级分类 | 三级分类 |
+| --- | --- | --- |
+| Hardware | Cooling | Liquid |
+"""
+)
 
 
 class V4LandscapeWorkflowTests(unittest.TestCase):
@@ -210,6 +274,29 @@ class V4LandscapeWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(search.calls, ["estimate"])
         self.assertEqual(stages.statuses[STAGE_ORDER[1]], V4StageStatus.PENDING)
+
+    def test_semantic_stages_follow_preanalysis_and_persist_every_unit(self):
+        values = self.make_workflow()
+        workflow, _, stages, _, _, _, old_abstracts, _ = values
+        asyncio.run(workflow.execute_preanalysis("LRN-0123456789abcdef"))
+        abstract_repository = KeyedRepository()
+        for _run_id, evidence in old_abstracts.puts:
+            abstract_repository.put(_run_id, evidence)
+        direction_repository = KeyedRepository()
+        classification_repository = KeyedRepository()
+        workflow.abstract_repository = abstract_repository
+        workflow.direction_extraction = DirectionService()
+        workflow.classification_matching = ClassificationService()
+        workflow.direction_repository = direction_repository
+        workflow.classification_repository = classification_repository
+        workflow.taxonomy_repository = SimpleNamespace(get=lambda version: SEMANTIC_TAXONOMY)
+
+        asyncio.run(workflow.execute_semantics("LRN-0123456789abcdef"))
+
+        self.assertEqual(stages.statuses[STAGE_ORDER[5]], V4StageStatus.SUCCEEDED)
+        self.assertEqual(stages.statuses[STAGE_ORDER[6]], V4StageStatus.SUCCEEDED)
+        self.assertEqual(len(direction_repository.values), 1)
+        self.assertEqual(len(classification_repository.values), 1)
 
 
 if __name__ == "__main__":

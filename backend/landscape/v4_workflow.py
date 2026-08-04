@@ -5,6 +5,10 @@ from enum import StrEnum
 from idea.providers.base import FetchedDocument, PagedSearchProvider
 
 from .abstract_evidence import abstract_from_document, abstract_provider_failure
+from .abstract_evidence import AbstractStatus
+from .classification_terminal import ClassificationResult
+from .direction_agent import DirectionUnitPacket
+from .direction_record import DirectionRecord, DirectionStatus
 from .family_resolution import resolve_families
 from .organization_assignment import assign_organizations
 from .patent_snapshot import PatentSnapshotStatus, snapshot_bibliography
@@ -42,6 +46,11 @@ class V4LandscapeWorkflow:
         abstract_repository,
         organization_repository,
         provider: PagedSearchProvider,
+        direction_extraction=None,
+        classification_matching=None,
+        direction_repository=None,
+        classification_repository=None,
+        taxonomy_repository=None,
     ):
         self.run_repository = run_repository
         self.scope_repository = scope_repository
@@ -54,6 +63,18 @@ class V4LandscapeWorkflow:
         self.abstract_repository = abstract_repository
         self.organization_repository = organization_repository
         self.provider = provider
+        self.direction_extraction = direction_extraction
+        self.classification_matching = classification_matching
+        self.direction_repository = direction_repository
+        self.classification_repository = classification_repository
+        self.taxonomy_repository = taxonomy_repository
+
+    async def execute_through_classification(self, run_id: str) -> V4WorkflowOutcome:
+        outcome = await self.execute_preanalysis(run_id)
+        if outcome == V4WorkflowOutcome.AWAITING_SCALE_CONFIRMATION:
+            return outcome
+        await self.execute_semantics(run_id)
+        return outcome
 
     async def execute_preanalysis(self, run_id: str) -> V4WorkflowOutcome:
         self.stage_repository.ensure(run_id)
@@ -90,6 +111,138 @@ class V4LandscapeWorkflow:
         snapshots = await self._resolve(run_id, frozen)
         self._fetch_abstracts_and_organizations(run_id, snapshots)
         return V4WorkflowOutcome.PREANALYSIS_COMPLETE
+
+    async def execute_semantics(self, run_id: str) -> None:
+        required = {
+            "direction_extraction": self.direction_extraction,
+            "classification_matching": self.classification_matching,
+            "direction_repository": self.direction_repository,
+            "classification_repository": self.classification_repository,
+            "taxonomy_repository": self.taxonomy_repository,
+        }
+        missing = [name for name, value in required.items() if value is None]
+        if missing:
+            raise V4WorkflowError(
+                "semantic workflow dependencies are missing: " + ", ".join(missing)
+            )
+        run = self.run_repository.get(run_id)
+        taxonomy = self.taxonomy_repository.get(run.taxonomy_version)
+        directions = await self._extract_directions(run_id, taxonomy)
+        await self._match_taxonomy(run_id, directions, taxonomy)
+
+    async def _extract_directions(self, run_id: str, taxonomy):
+        resolution = self.family_repository.get(run_id)
+        if self._succeeded(run_id, V4StageName.EXTRACT_DIRECTIONS):
+            return tuple(
+                self.direction_repository.get(run_id, unit.analysis_unit_id)
+                for unit in resolution.analysis_units
+            )
+        total = resolution.analysis_unit_count
+        self.stage_repository.start(
+            run_id, V4StageName.EXTRACT_DIRECTIONS, total_count=total
+        )
+        packets = []
+        terminal: dict[str, DirectionRecord] = {}
+        for unit in resolution.analysis_units:
+            abstracts = tuple(
+                self.abstract_repository.get(run_id, publication_id)
+                for publication_id in unit.member_publication_ids
+            )
+            available = tuple(
+                item for item in abstracts if item.status == AbstractStatus.AVAILABLE
+            )
+            if not available:
+                terminal[unit.analysis_unit_id] = DirectionRecord(
+                    analysis_unit_id=unit.analysis_unit_id,
+                    status=DirectionStatus.UNRESOLVED,
+                    evidence_sufficient=False,
+                    confidence=0,
+                    unresolved_reason="NO_AVAILABLE_ABSTRACT_IN_ANALYSIS_UNIT",
+                )
+                continue
+            packets.append(
+                DirectionUnitPacket(
+                    analysis_unit_id=unit.analysis_unit_id,
+                    patent_abstracts=tuple(
+                        f"标题：{item.title}\n摘要：{item.normalized_abstract}"
+                        for item in available
+                    ),
+                    evidence_ids=tuple(
+                        evidence_id
+                        for item in available
+                        for evidence_id in item.evidence_ids
+                    ),
+                )
+            )
+        if packets:
+            extracted = await self.direction_extraction.extract(
+                tuple(packets), taxonomy
+            )
+            terminal.update(
+                (item.analysis_unit_id, item) for item in extracted
+            )
+        for completed, unit in enumerate(resolution.analysis_units, start=1):
+            self.direction_repository.put(run_id, terminal[unit.analysis_unit_id])
+            self.stage_repository.progress(
+                run_id,
+                V4StageName.EXTRACT_DIRECTIONS,
+                completed_count=completed,
+                total_count=total,
+            )
+        unresolved_count = sum(
+            item.status == DirectionStatus.UNRESOLVED for item in terminal.values()
+        )
+        if unresolved_count:
+            self.stage_repository.add_limitation(
+                run_id,
+                V4StageName.EXTRACT_DIRECTIONS,
+                code="DIRECTION_UNRESOLVED",
+                message="Some analysis units lack sufficient abstract evidence or model output.",
+                affected_count=unresolved_count,
+            )
+        self.stage_repository.succeed(
+            run_id,
+            V4StageName.EXTRACT_DIRECTIONS,
+            with_limitations=bool(unresolved_count),
+        )
+        return tuple(terminal[unit.analysis_unit_id] for unit in resolution.analysis_units)
+
+    async def _match_taxonomy(self, run_id: str, directions, taxonomy):
+        if self._succeeded(run_id, V4StageName.MATCH_TAXONOMY):
+            return tuple(
+                self.classification_repository.get(run_id, item.analysis_unit_id)
+                for item in directions
+            )
+        total = len(directions)
+        self.stage_repository.start(
+            run_id, V4StageName.MATCH_TAXONOMY, total_count=total
+        )
+        results: tuple[ClassificationResult, ...] = (
+            await self.classification_matching.classify(directions, taxonomy)
+        )
+        for completed, result in enumerate(results, start=1):
+            self.classification_repository.put(run_id, result)
+            self.stage_repository.progress(
+                run_id,
+                V4StageName.MATCH_TAXONOMY,
+                completed_count=completed,
+                total_count=total,
+            )
+        unresolved_count = sum(result.terminal.value == "UNRESOLVED" for result in results)
+        if unresolved_count:
+            self.stage_repository.add_limitation(
+                run_id,
+                V4StageName.MATCH_TAXONOMY,
+                code="CLASSIFICATION_UNRESOLVED",
+                message="Some analysis units could not be classified from abstract evidence.",
+                affected_count=unresolved_count,
+            )
+        self.stage_repository.succeed(
+            run_id,
+            V4StageName.MATCH_TAXONOMY,
+            with_limitations=bool(unresolved_count),
+        )
+        return results
 
     async def _retrieve(self, run_id: str):
         if self._succeeded(run_id, V4StageName.RETRIEVE_PAGES):
