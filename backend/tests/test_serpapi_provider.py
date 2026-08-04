@@ -240,6 +240,28 @@ class SerpApiProviderTests(unittest.TestCase):
         self.assertEqual(document.claims_text[span["start"] : span["end"]], span["text"])
         self.assertIn("worldwide_applications", document.raw_metadata)
 
+    def test_abstract_only_fetch_does_not_request_description(self) -> None:
+        description_calls = []
+
+        async def description(url):
+            description_calls.append(url)
+            return "must not be fetched"
+
+        provider = SerpApiPatentProvider(
+            self.settings,
+            transport=self.transport,
+            description_transport=description,
+        )
+        request = FetchRequest(
+            request_id="F-SERP-ABSTRACT",
+            publication_number="US123A1",
+            include_description=False,
+        )
+        result = asyncio.run(ProviderRunner().fetch(provider, request, timeout_seconds=1))
+        self.assertEqual(result.status, ProviderStatus.SUCCESS)
+        self.assertEqual(description_calls, [])
+        self.assertEqual(result.document.description_text, "")
+
     def test_missing_local_key_fails_once_and_does_not_echo_secret(self) -> None:
         self.credentials.write_text(
             json.dumps({"serpapi": {"api_key": ""}}), encoding="utf-8"

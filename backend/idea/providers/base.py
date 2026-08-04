@@ -37,6 +37,7 @@ class FetchRequest(ContractModel):
     publication_number: str | None = None
     url: str | None = None
     language: str = "en"
+    include_description: bool = True
 
     @model_validator(mode="after")
     def require_identifier(self) -> "FetchRequest":

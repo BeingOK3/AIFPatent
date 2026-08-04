@@ -359,7 +359,7 @@ class SerpApiPatentProvider(SearchProvider):
         )
         description = ""
         description_link = str(payload.get("description_link") or "")
-        if description_link.startswith("https://serpapi.com/"):
+        if request.include_description and description_link.startswith("https://serpapi.com/"):
             try:
                 description = await self.description_transport(description_link)
             except Exception:
