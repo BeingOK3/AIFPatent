@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, field_validator
 
 from idea.model_client import RuntimeModelConfig, runtime_model_config
@@ -199,6 +199,10 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
     # @router.post("/runs") is the v4 formal Run endpoint (201 on success).
     @router.post("/runs", status_code=201)
     async def create_run(request: CreateLandscapeRunRequest):
+        if hasattr(runtime, "v4_workflow") and (
+            runtime.v4_workflow is None or runtime.v4_tasks is None
+        ):
+            raise HTTPException(503, "Landscape v4 requires a paged patent provider")
         try:
             run = runtime.run_repository.create(
                 scope_revision_id=request.scope_revision_id,
@@ -208,6 +212,8 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
             plan = build_query_plan(scope)
             runtime.query_repository.put(run.run_id, plan)
             runtime.stage_repository.ensure(run.run_id)
+            if getattr(runtime, "v4_tasks", None) is not None:
+                runtime.v4_tasks.start(run.run_id)
             return runtime.run_repository.get(run.run_id)
         except (KeyError, ValueError, ScopePersistenceError,
                 LandscapeRunPersistenceError, QueryPlanPersistenceError) as exc:
@@ -228,10 +234,13 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
     @router.post("/runs/{run_id}/scale-decision")
     async def decide_scale(run_id: str, request: ScaleDecisionRequest):
         try:
-            return runtime.scale_repository.decide(
+            decision = runtime.scale_repository.decide(
                 run_id,
                 approve=request.approve,
             )
+            if request.approve and getattr(runtime, "v4_tasks", None) is not None:
+                runtime.v4_tasks.start(run_id)
+            return decision
         except KeyError as exc:
             raise HTTPException(404, "scale gate not found") from exc
         except ScaleGatePersistenceError as exc:
@@ -244,6 +253,8 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
         except KeyError as exc:
             raise HTTPException(404, "landscape run not found") from exc
         runtime.credential_vault.put(run_id, request.runtime_config())
+        if getattr(runtime, "v4_tasks", None) is not None:
+            runtime.v4_tasks.start(run_id)
         return {"run_id": run_id, "credentials_available": True}
 
     @router.get("/runs/{run_id}")
@@ -307,7 +318,7 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
     @router.post("/runs/{run_id}/cancel")
     async def cancel_run(run_id: str):
         try:
-            if hasattr(runtime, "v4_tasks"):
+            if getattr(runtime, "v4_tasks", None) is not None:
                 await runtime.v4_tasks.cancel(run_id)
             previous = runtime.run_repository.get(run_id)
             run = runtime.run_repository.cancel(run_id)
@@ -381,38 +392,24 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
     @router.get("/runs/{run_id}/report")
     async def get_report(run_id: str):
         try:
-            database.get_run(run_id)
-            paths = store.paths(run_id)
-            store.verify(run_id)
-            report = json.loads(paths.report_json.read_text(encoding="utf-8"))
-            # Reports are frozen artifacts, but this field is a presentation
-            # contract added after existing completed Runs.  Rebuilding reads
-            # only already-frozen candidates, documents and analyses; it does
-            # not call a provider or model, and lets old reports expose the
-            # explicit deferred-deep-read action instead of a misleading 0.
-            if "deep_read" not in report:
-                return (
-                    await runtime.execution.build_report(
-                        run_id, allow_report_revision=True
-                    )
-                )["report"]
+            report, _markdown = runtime.report_v4_repository.get(run_id)
             return report
         except KeyError:
             raise HTTPException(404, "landscape run not found")
-        except (LandscapeStoreError, OSError, json.JSONDecodeError):
-            raise HTTPException(404, "report not available")
 
     @router.get("/runs/{run_id}/report.md")
     async def download_markdown(run_id: str):
         try:
-            database.get_run(run_id)
-            paths = store.paths(run_id)
-            store.verify(run_id)
+            _report, markdown = runtime.report_v4_repository.get(run_id)
         except KeyError:
             raise HTTPException(404, "landscape run not found")
-        except LandscapeStoreError:
-            raise HTTPException(404, "report not available")
-        return FileResponse(paths.report_md, filename=f"landscape-{run_id}.md")
+        return Response(
+            markdown,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="landscape-{run_id}.md"'
+            },
+        )
 
     @router.get("/runs/{run_id}/patents.csv")
     async def download_csv(run_id: str):

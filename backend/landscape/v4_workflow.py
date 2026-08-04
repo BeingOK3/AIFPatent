@@ -93,6 +93,11 @@ class V4LandscapeWorkflow:
         self._verify_run(run_id)
         return outcome
 
+    def execute_after_semantics(self, run_id: str) -> None:
+        self.execute_analytics(run_id)
+        self._build_report(run_id)
+        self._verify_run(run_id)
+
     async def execute_through_analytics(self, run_id: str) -> V4WorkflowOutcome:
         outcome = await self.execute_through_classification(run_id)
         if outcome == V4WorkflowOutcome.AWAITING_SCALE_CONFIRMATION:

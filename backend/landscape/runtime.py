@@ -58,6 +58,7 @@ from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
 from .v4_workflow import V4LandscapeWorkflow
 from .report_v4_repository import PostgreSQLReportV4Repository
+from .v4_tasks import V4LandscapeTaskManager
 
 
 @dataclass
@@ -174,6 +175,7 @@ class LandscapeRuntime:
     patent_snapshot_fetch: PatentSnapshotFetchService | None
     v4_workflow: V4LandscapeWorkflow | None
     report_v4_repository: PostgreSQLReportV4Repository
+    v4_tasks: V4LandscapeTaskManager | None
     task_queue: PostgreSQLTaskQueue
     model_scheduler: ModelScheduler
     direction_extraction: DirectionExtractionService
@@ -347,6 +349,16 @@ def build_landscape_runtime(
         if patent_snapshot_fetch is not None and paged_provider is not None
         else None
     )
+    v4_tasks = (
+        V4LandscapeTaskManager(
+            v4_workflow,
+            run_repository,
+            stage_repository,
+            credential_vault,
+        )
+        if v4_workflow is not None
+        else None
+    )
     report_service = LandscapeReportService(database, store)
     execution = LandscapeExecutionService(
         database=database,
@@ -412,6 +424,7 @@ def build_landscape_runtime(
         patent_snapshot_fetch,
         v4_workflow,
         report_v4_repository,
+        v4_tasks,
         task_queue,
         model_scheduler,
         direction_extraction,
