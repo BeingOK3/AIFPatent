@@ -59,6 +59,9 @@ LANDSCAPE_V4_QUERY_PLANS_SCHEMA_PATH = Path(
 LANDSCAPE_V4_SEARCH_PAGES_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/089_landscape_v4_search_pages.sql"
 )
+LANDSCAPE_V4_PUBLICATIONS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/090_landscape_v4_publications.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -337,6 +340,18 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("PRIMARY KEY(run_id,query_id,page_number)", sql)
         self.assertIn("BEFORE UPDATE OR DELETE", sql)
         self.assertIn("'089_landscape_v4_search_pages'", sql)
+
+    def test_landscape_v4_publications_are_relational_and_immutable(self) -> None:
+        sql = LANDSCAPE_V4_PUBLICATIONS_SCHEMA_PATH.read_text(encoding="utf-8")
+        for table in (
+            "landscape_v4_publication_sets",
+            "landscape_v4_publications",
+            "landscape_v4_publication_sources",
+        ):
+            self.assertIn(table, sql)
+        self.assertIn("UNIQUE(run_id,publication_identity)", sql)
+        self.assertIn("BEFORE UPDATE OR DELETE", sql)
+        self.assertIn("'090_landscape_v4_publications'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)

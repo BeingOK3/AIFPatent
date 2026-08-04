@@ -27,6 +27,7 @@ from .run_repository import PostgreSQLLandscapeRunRepository
 from .query_repository import PostgreSQLQueryPlanRepository
 from .search_page_repository import PostgreSQLSearchPageRepository
 from .search_execution import PagedSearchExecutionService
+from .publication_repository import PostgreSQLPublicationRepository
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -129,6 +130,7 @@ class LandscapeRuntime:
     query_repository: PostgreSQLQueryPlanRepository
     search_page_repository: PostgreSQLSearchPageRepository
     search_execution: PagedSearchExecutionService
+    publication_repository: PostgreSQLPublicationRepository
 
 
 def build_landscape_runtime(
@@ -161,6 +163,7 @@ def build_landscape_runtime(
         max_concurrency=min(8, config.workflow.document_agent_concurrency),
         page_size=100,
     )
+    publication_repository = PostgreSQLPublicationRepository(dsn)
     store = LandscapeRunStore(runs_dir)
     harness = LandscapeWorkflowHarness(
         database,
@@ -238,4 +241,5 @@ def build_landscape_runtime(
         query_repository,
         search_page_repository,
         search_execution,
+        publication_repository,
     )

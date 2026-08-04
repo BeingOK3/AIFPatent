@@ -13,6 +13,9 @@ from landscape.run_repository import (
 )
 from landscape.query_planning import build_query_plan
 from landscape.query_repository import PostgreSQLQueryPlanRepository
+from landscape.publication_freeze import freeze_publications
+from landscape.publication_repository import PostgreSQLPublicationRepository
+from idea.providers.base import SearchHit
 from landscape.scope import (
     CandidateSource,
     CandidateStatus,
@@ -227,6 +230,9 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
         query_repository = PostgreSQLQueryPlanRepository(
             "postgresql://integration", connect=connect
         )
+        publication_repository = PostgreSQLPublicationRepository(
+            "postgresql://integration", connect=connect
+        )
         try:
             scope_repository.create(draft)
             confirmed = scope_repository.confirm(
@@ -247,17 +253,37 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
                 run_repository.get(run.run_id).status,
                 LandscapeRunStatus.ESTIMATING,
             )
+            publications = freeze_publications(
+                run.run_id,
+                ((
+                    plan.queries[0].query_id,
+                    SearchHit(
+                        provider="integration",
+                        provider_rank=1,
+                        publication_number="US1234567A1",
+                        title="Integration publication",
+                    ),
+                ),),
+            )
+            self.assertEqual(
+                publication_repository.put(publications), publications
+            )
+            self.assertEqual(
+                publication_repository.get(run.run_id), publications
+            )
             raw.rollback()
             counts = raw.execute(
                 """
                 SELECT
                     (SELECT count(*) FROM landscape_v4_runs WHERE run_id=%s) AS runs,
-                    (SELECT count(*) FROM landscape_v4_query_plans WHERE run_id=%s) AS plans
+                    (SELECT count(*) FROM landscape_v4_query_plans WHERE run_id=%s) AS plans,
+                    (SELECT count(*) FROM landscape_v4_publication_sets WHERE run_id=%s) AS publication_sets
                 """,
-                (run.run_id, run.run_id),
+                (run.run_id, run.run_id, run.run_id),
             ).fetchone()
             self.assertEqual(counts["runs"], 0)
             self.assertEqual(counts["plans"], 0)
+            self.assertEqual(counts["publication_sets"], 0)
         finally:
             raw.rollback()
             raw.close()
