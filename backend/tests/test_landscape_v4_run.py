@@ -33,6 +33,10 @@ from landscape.scope import (
 )
 from landscape.scope_repository import PostgreSQLScopeDraftRepository
 from landscape.v4_run import LandscapeRunStatus
+from landscape.family_repository import PostgreSQLFamilyRepository
+from landscape.family_resolution import resolve_frozen_publications
+from landscape.direction_record import DirectionRecord, DirectionStatus
+from landscape.semantic_result_repository import PostgreSQLDirectionRepository
 
 
 class Cursor:
@@ -283,6 +287,12 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
         scale_repository = PostgreSQLScaleGateRepository(
             "postgresql://integration", connect=connect
         )
+        family_repository = PostgreSQLFamilyRepository(
+            "postgresql://integration", connect=connect
+        )
+        direction_repository = PostgreSQLDirectionRepository(
+            "postgresql://integration", connect=connect
+        )
         try:
             scope_repository.create(draft)
             confirmed = scope_repository.confirm(
@@ -330,19 +340,39 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 publication_repository.get(run.run_id), publications
             )
+            families = resolve_frozen_publications(publications)
+            self.assertEqual(family_repository.put(run.run_id, families), families)
+            analysis_unit_id = families.analysis_units[0].analysis_unit_id
+            direction = DirectionRecord(
+                analysis_unit_id=analysis_unit_id,
+                status=DirectionStatus.AVAILABLE,
+                evidence_sufficient=True,
+                solution_mechanism="integration mechanism",
+                direction_summary="integration direction",
+                evidence_ids=("EV-integration",),
+                confidence=0.8,
+            )
+            self.assertEqual(
+                direction_repository.put(run.run_id, direction),
+                direction,
+            )
             raw.rollback()
             counts = raw.execute(
                 """
                 SELECT
                     (SELECT count(*) FROM landscape_v4_runs WHERE run_id=%s) AS runs,
                     (SELECT count(*) FROM landscape_v4_query_plans WHERE run_id=%s) AS plans,
-                    (SELECT count(*) FROM landscape_v4_publication_sets WHERE run_id=%s) AS publication_sets
+                    (SELECT count(*) FROM landscape_v4_publication_sets WHERE run_id=%s) AS publication_sets,
+                    (SELECT count(*) FROM landscape_v4_family_manifests WHERE run_id=%s) AS families,
+                    (SELECT count(*) FROM landscape_v4_direction_records WHERE run_id=%s) AS directions
                 """,
-                (run.run_id, run.run_id, run.run_id),
+                (run.run_id, run.run_id, run.run_id, run.run_id, run.run_id),
             ).fetchone()
             self.assertEqual(counts["runs"], 0)
             self.assertEqual(counts["plans"], 0)
             self.assertEqual(counts["publication_sets"], 0)
+            self.assertEqual(counts["families"], 0)
+            self.assertEqual(counts["directions"], 0)
         finally:
             raw.rollback()
             raw.close()
