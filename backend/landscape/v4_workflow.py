@@ -535,7 +535,19 @@ class V4LandscapeWorkflow:
             completed_count=frozen.publication_count,
             total_count=frozen.publication_count,
         )
-        self.stage_repository.succeed(run_id, V4StageName.FREEZE_PUBLICATIONS)
+        if frozen.date_excluded_count:
+            self.stage_repository.add_limitation(
+                run_id,
+                V4StageName.FREEZE_PUBLICATIONS,
+                code="PUBLICATION_DATE_OUTSIDE_WINDOW",
+                message="Provider hits outside the confirmed publication interval were excluded locally.",
+                affected_count=frozen.date_excluded_count,
+            )
+        self.stage_repository.succeed(
+            run_id,
+            V4StageName.FREEZE_PUBLICATIONS,
+            with_limitations=bool(frozen.date_excluded_count),
+        )
         return frozen
 
     async def _resolve(self, run_id: str, frozen):

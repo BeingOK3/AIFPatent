@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date
 from types import SimpleNamespace
 
 from idea.providers.base import SearchHit
@@ -46,6 +47,25 @@ class LandscapePublicationFreezeTests(unittest.TestCase):
         self.assertEqual(publication.assignee, "示例公司")
         self.assertEqual(publication.snippet, "abstract-like search snippet")
         self.assertEqual(publication.priority_date.isoformat(), "2022-01-02")
+
+    def test_known_publication_dates_are_filtered_by_inclusive_window(self):
+        values = (
+            ("q", hit("US1A1").model_copy(update={"publication_date": "2023-12-31"})),
+            ("q", hit("US2A1").model_copy(update={"publication_date": "2024-01-01"})),
+            ("q", hit("US3A1").model_copy(update={"publication_date": "2024-03-31"})),
+            ("q", hit("US4A1").model_copy(update={"publication_date": "2024-04-01"})),
+        )
+        result = freeze_publications(
+            "run",
+            values,
+            publication_start=date(2024, 1, 1),
+            publication_end=date(2024, 3, 31),
+        )
+        self.assertEqual(
+            [item.publication_number for item in result.publications],
+            ["US2A1", "US3A1"],
+        )
+        self.assertEqual(result.date_excluded_count, 2)
 
 
 if __name__ == "__main__": unittest.main()

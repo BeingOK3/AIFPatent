@@ -46,6 +46,7 @@ class FrozenPublicationSet(ScopeModel):
     publications: tuple[FrozenPublication, ...]
     publication_count: int = Field(ge=0)
     analysis_unit_count: int = Field(ge=0)
+    date_excluded_count: int = Field(default=0, ge=0)
     freeze_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
@@ -68,10 +69,27 @@ class FrozenPublicationSet(ScopeModel):
 def freeze_publications(
     run_id: str,
     hits: tuple[tuple[str, SearchHit], ...],
+    *,
+    publication_start: date | None = None,
+    publication_end: date | None = None,
 ) -> FrozenPublicationSet:
+    if (publication_start is None) != (publication_end is None):
+        raise PublicationFreezeError("both publication date bounds are required")
+    if publication_start and publication_end and publication_end < publication_start:
+        raise PublicationFreezeError("publication date range is reversed")
     by_identity: dict[str, dict] = {}
+    excluded_identities: set[str] = set()
     for query_id, hit in hits:
         identity = _identity(hit)
+        published = _parse_date(hit.publication_date)
+        if (
+            published is not None
+            and publication_start is not None
+            and publication_end is not None
+            and not publication_start <= published <= publication_end
+        ):
+            excluded_identities.add(identity)
+            continue
         current = by_identity.get(identity)
         source_queries = set(current["source_queries"]) if current else set()
         source_queries.add(query_id)
@@ -97,6 +115,7 @@ def freeze_publications(
         publications=frozen,
         publication_count=len(frozen),
         analysis_unit_count=len(frozen),
+        date_excluded_count=len(excluded_identities),
         freeze_hash=freeze_hash,
     )
 

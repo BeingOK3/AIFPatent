@@ -77,7 +77,19 @@ class LandscapeSearchCoordinator:
     def freeze(
         self, run_id: str, results: tuple[QuerySearchResult, ...]
     ) -> FrozenPublicationSet:
-        frozen = self.execution.freeze_results(run_id, results)
+        plan = self.query_repository.get(run_id)
+        starts = {query.publication_start for query in plan.queries}
+        ends = {query.publication_end for query in plan.queries}
+        if len(starts) != 1 or len(ends) != 1:
+            raise SearchCoordinationError(
+                "query plan contains inconsistent publication date windows"
+            )
+        frozen = self.execution.freeze_results(
+            run_id,
+            results,
+            publication_start=next(iter(starts)),
+            publication_end=next(iter(ends)),
+        )
         return self.publication_repository.put(frozen)
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Protocol
 
 from idea.providers.base import PagedSearchProvider, SearchPage, SearchQuery
@@ -32,9 +33,17 @@ class QuerySearchResult:
 def to_provider_query(query: V4SearchQuery, *, limit: int = 100) -> SearchQuery:
     if not 1 <= limit <= 500:
         raise ValueError("limit must be between 1 and 500")
+    # Google Patents treats ``after`` and ``before`` as strict bounds. Move
+    # both ends out by one day so the user-selected interval remains
+    # inclusive. The freeze stage still applies an authoritative local gate.
+    after = (query.publication_start - timedelta(days=1)).strftime("%Y%m%d")
+    before = (query.publication_end + timedelta(days=1)).strftime("%Y%m%d")
     return SearchQuery(
         query_id=query.query_id,
-        text=query.query_text,
+        text=(
+            f"{query.query_text} after=publication:{after} "
+            f"before=publication:{before}"
+        ),
         language="mixed" if any("\u3400" <= char <= "\u9fff" for term in query.terms for char in term) else "en",
         round_number=1,
         limit=limit,
@@ -143,7 +152,11 @@ class PagedSearchExecutionService:
 
     @staticmethod
     def freeze_results(
-        run_id: str, results: tuple[QuerySearchResult, ...]
+        run_id: str,
+        results: tuple[QuerySearchResult, ...],
+        *,
+        publication_start=None,
+        publication_end=None,
     ) -> FrozenPublicationSet:
         return freeze_publications(
             run_id,
@@ -152,6 +165,8 @@ class PagedSearchExecutionService:
                 for result in results
                 for hit in result.hits
             ),
+            publication_start=publication_start,
+            publication_end=publication_end,
         )
 
     @staticmethod

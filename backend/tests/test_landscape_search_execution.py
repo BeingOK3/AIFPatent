@@ -4,7 +4,7 @@ import asyncio
 import unittest
 
 from idea.providers.base import PageStopReason, SearchHit, SearchPage
-from landscape.search_execution import PagedSearchExecutionService, SearchExecutionError
+from landscape.search_execution import PagedSearchExecutionService, SearchExecutionError, to_provider_query
 from tests.test_landscape_query_planning import confirmed_scope
 from landscape.query_planning import build_query_plan
 
@@ -41,6 +41,14 @@ class Checkpoints:
 
 
 class LandscapeSearchExecutionTests(unittest.TestCase):
+    def test_provider_query_contains_inclusive_publication_window(self):
+        query = build_query_plan(
+            confirmed_scope(companies=(("华为", ("华为",)),))
+        ).queries[0]
+        provider_query = to_provider_query(query)
+        self.assertIn("after=publication:19891231", provider_query.text)
+        self.assertIn("before=publication:20270101", provider_query.text)
+
     def test_pages_are_sequential_and_resume_from_checkpoint(self):
         plan = build_query_plan(confirmed_scope(companies=(("华为", ("华为",)),)))
         provider, checkpoints = Provider(), Checkpoints()
