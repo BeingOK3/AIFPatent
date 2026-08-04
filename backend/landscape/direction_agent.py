@@ -72,14 +72,18 @@ class DirectionExtractionService:
         by_id = {packet.analysis_unit_id: packet for packet in packets}
         if len(by_id) != len(packets):
             raise ValueError("direction packets contain duplicate analysis units")
+        level1_count = sum(node.level == 1 for node in taxonomy.nodes)
+        if level1_count > self.profile.max_taxonomy_candidates:
+            raise ValueError("taxonomy level-1 candidates exceed the batch profile")
         items = tuple(
             BatchItem(
                 item_id=packet.analysis_unit_id,
                 input_tokens=_estimate_tokens(packet.model_dump(mode="json")),
                 output_tokens=700,
-                taxonomy_candidates=len(
-                    [node for node in taxonomy.nodes if node.level == 1]
-                ),
+                # Level-1 categories are shared once by the whole request, not
+                # repeated per unit. Charging them per item artificially cut
+                # otherwise safe batches in half on the production taxonomy.
+                taxonomy_candidates=0,
             )
             for packet in packets
         )

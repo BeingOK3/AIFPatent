@@ -169,7 +169,7 @@ def build_landscape_runtime(
         ),
         max_batch_output_tokens=min(8_192, config.model.max_output_tokens),
         max_batch_items=_int_env(
-            "AIFPATENT_MODEL_MAX_BATCH_ITEMS", 8, minimum=1
+            "AIFPATENT_MODEL_MAX_BATCH_ITEMS", 16, minimum=1
         ),
         max_taxonomy_candidates=500,
     )
