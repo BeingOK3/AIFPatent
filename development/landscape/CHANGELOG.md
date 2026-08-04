@@ -70,3 +70,32 @@
   - 趋势遵循规格：样本不足时仅输出当前布局/观察，不虚构增长下降。
 - 密钥安全：DeepSeek 密钥仅作临时环境变量/进程内存租约使用，未入库、未进
   报告、未进 Git（已扫描确认 0 命中）。
+
+### 7. 性能优化与复测（commit `28e95ce`）
+
+背景实测（探针，2026-08-04）：
+- DeepSeek v4-flash 在结构化输出时会默认生成大量 `reasoning_content`
+  （8192 上限探针中思考内容占 5693 字符），既占满输出预算又拖慢生成；
+  实测 `thinking: {"type": "disabled"}` 与 `reasoning_effort: "none"` 均可使
+  思考内容归零（完成 token 24→6，耗时减半），`max_tokens=20000` 亦被接受。
+- 并发探针：16 个并发小请求无 429，延迟持平；应用此前并发=3，远低于
+  DeepSeek 可承受上限；本地 CPU/内存几乎空闲（模型阶段 CPU 0.1%~9%、
+  内存 ~150MB），瓶颈完全在模型 API 生成与并发限制。
+
+改动：
+- `model_client.py`：DeepSeek（api.deepseek.com）结构化输出同样关闭思考，
+  与既有 Ark 路径共用 `thinking: {"type": "disabled"}`；
+- `runtime.py`：新增 `AIFPATENT_MODEL_MAX_CONCURRENCY`（默认继承
+  document_agent_concurrency，上限 16），默认 TPM 200K→1M；
+- `rag.env` / `compose.yml`：并发 8、RPM 120、TPM 100 万透传进容器。
+
+复测（复用同一确认范围，Run `LRN-0605a39a27796c7b`）：
+
+| 阶段 | 优化前 | 优化后 |
+|---|---:|---:|
+| 方向抽取（267 件） | ~1037s | **71s** |
+| 分类（267 件） | ~830s | **83s** |
+| 整次 Run | ~30min | **~3min** |
+
+- Unresolved 由 7+16 降至 4+6（分类覆盖 256、Others 5、Unresolved 6），
+  正确性无回退；267 个离线测试用例全部通过。
