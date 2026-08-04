@@ -32,3 +32,20 @@ input,textarea,select { width:100%; border:1px solid var(--line); border-radius:
 .macro-column h4 { margin:0 0 6px; font-size:12px; color:var(--green); }
 .macro-row { display:flex; justify-content:space-between; gap:10px; border-top:1px solid #e8eee9; padding:6px 0; font-size:12px; }
 .macro-row span { color:var(--muted); }
+
+/* 报告头部与趋势可视化（2026-08-05 美化） */
+.report-hero { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; border:1px solid var(--line); background:#f7faf7; border-radius:14px; padding:18px 20px; margin-bottom:18px; }
+.report-hero h3 { margin:6px 0 4px; font-size:20px; }
+.report-hero .eyebrow { margin:0; }
+.report-hero .run-id { color:var(--muted); font-size:12px; white-space:nowrap; }
+.change-chip { display:inline-block; border-radius:99px; padding:.15rem .6rem; font-size:.75rem; white-space:nowrap; }
+.change-chip.up { background:#e3f4e8; color:#1e6b52; }
+.change-chip.down { background:#fde7e7; color:#a54242; }
+.change-chip.new { background:#e6efff; color:#1f4fd8; }
+.change-chip.active { background:#e3f2f2; color:#14606a; }
+.change-chip.layout { background:#eef1ef; color:#6b7570; }
+.trend-bars { display:flex; align-items:flex-end; gap:3px; height:36px; min-width:140px; }
+.trend-bar { flex:1; display:flex; align-items:flex-end; height:100%; }
+.trend-bar i { width:100%; background:var(--green); border-radius:2px 2px 0 0; }
+.expand-button { margin-top:10px; }
+.patent-table-wrap { max-height:480px; overflow:auto; }

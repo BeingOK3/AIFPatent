@@ -277,14 +277,38 @@
     const representative = report.representatives.find((item) => item.direction_id === directionId);
     return representative?.classification_path?.join(" / ") || directionId;
   }
+  const CHANGE_CLASS = {
+    STRENGTHENING: "up", NEW: "new", WEAKENING: "down",
+    SUSTAINED_ACTIVE: "active", CURRENT_LAYOUT: "layout",
+  };
+  function changeTypeBadge(value) {
+    const cls = CHANGE_CLASS[value] || "layout";
+    return `<span class="change-chip ${cls}">${escapeHtml(value)}</span>`;
+  }
+  function trendBarCell(bucketMetrics, labels) {
+    const values = (bucketMetrics || []).map((item) => Number(item.analysis_unit_count) || 0);
+    const max = Math.max(1, ...values);
+    return `<div class="trend-bars">${(bucketMetrics || []).map((item, index) => `<span class="trend-bar" title="${escapeHtml((labels.get(item.bucket_id) || item.bucket_id) + " " + item.analysis_unit_count)}"><i style="height:${Math.max(4, Math.round(values[index] / max * 100))}%"></i></span>`).join("")}</div>`;
+  }
+  function patentRow(item) {
+    return `<tr><td>${item.patent_url ? `<a href="${escapeHtml(item.patent_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>` : escapeHtml(item.title)}</td><td>${escapeHtml(item.publication_number)}</td><td>${escapeHtml(item.publication_date || "未知")}</td><td>${escapeHtml(item.applicants.join("、") || "未知")}</td><td>${escapeHtml(item.classification_terminal)}${item.unresolved_reason ? `<br><small>${escapeHtml(item.unresolved_reason)}</small>` : ""}</td></tr>`;
+  }
   function renderReport(report) {
     if (!["landscape-report/4.0.0", "landscape-report/4.1.0"].includes(report.schema_version)) throw new Error("不支持的报告版本");
     $("report-view").classList.remove("hidden"); const counts = report.counts;
     const metrics = [[counts.raw_hit_count, "原始命中"], [counts.frozen_publication_count, "公开文本"], [counts.analysis_unit_count, "分析单元"], [counts.classified_count, "已分类"], [counts.others_count, "Others"], [counts.unresolved_count, "Unresolved"], [counts.detail_fetch_failed_count, "摘要失败"]].map(([value, label]) => `<div class="metric"><b>${Number(value)}</b><span>${label}</span></div>`).join("");
     const bucketLabels = new Map(report.metric_cube.buckets.map((item) => [item.bucket_id, item.label]));
-    const trends = report.trends.map((trend) => `<tr><td>${escapeHtml(directionName(report, trend.direction_id))}</td><td>${escapeHtml(trend.change_type)}</td><td>${trend.bucket_metrics.map((item) => `${escapeHtml(bucketLabels.get(item.bucket_id) || item.bucket_id)}: ${Number(item.analysis_unit_count)}`).join(" · ")}</td><td>${escapeHtml((trend.limitation_codes || []).join("、") || "无")}</td></tr>`).join("") || `<tr><td colspan="4">数据不足，未形成趋势候选。</td></tr>`;
+    const allTrendRows = report.trends.map((trend) => `<tr><td>${escapeHtml(directionName(report, trend.direction_id))}</td><td>${changeTypeBadge(trend.change_type)}</td><td>${trendBarCell(trend.bucket_metrics, bucketLabels)}</td><td>${escapeHtml((trend.limitation_codes || []).join("、") || "无")}</td></tr>`).join("");
+    const trendLimit = 100;
+    const trendVisible = allTrendRows ? allTrendRows.split("</tr>").slice(0, trendLimit).join("</tr>") : "";
+    const trendHidden = allTrendRows ? allTrendRows.split("</tr>").slice(trendLimit).join("</tr>") : "";
+    const trendSection = `<tbody id="trend-rows">${trendVisible || `<tr><td colspan="4">数据不足，未形成趋势候选。</td></tr>`}</tbody>${allTrendRows.split("</tr>").length - 1 > trendLimit ? `<button class="secondary expand-button" id="trend-expand" type="button">显示全部 ${report.trends.length} 条趋势</button>` : ""}`;
     const representatives = report.representatives.map((item) => `<article><a href="${escapeHtml(item.patent_url)}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(item.title)}</strong></a><p>${escapeHtml(item.publication_number)} · ${escapeHtml(item.publication_date || "日期未知")} · ${escapeHtml(item.classification_path.join(" / "))}</p><small>${escapeHtml(item.selection_reasons.join("；"))}</small></article>`).join("") || `<p class="muted">暂无代表专利。</p>`;
-    const patents = report.patents.map((item) => `<tr><td>${item.patent_url ? `<a href="${escapeHtml(item.patent_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>` : escapeHtml(item.title)}</td><td>${escapeHtml(item.publication_number)}</td><td>${escapeHtml(item.publication_date || "未知")}</td><td>${escapeHtml(item.applicants.join("、") || "未知")}</td><td>${escapeHtml(item.classification_terminal)}${item.unresolved_reason ? `<br><small>${escapeHtml(item.unresolved_reason)}</small>` : ""}</td></tr>`).join("");
+    const allPatentRows = report.patents.map(patentRow).join("");
+    const patentLimit = 100;
+    const patentVisible = allPatentRows.split("</tr>").slice(0, patentLimit).join("</tr>");
+    const patentHidden = allPatentRows.split("</tr>").slice(patentLimit).join("</tr>");
+    const patentSection = `<tbody id="patent-rows">${patentVisible}</tbody>${report.patents.length > patentLimit ? `<button class="secondary expand-button" id="patent-expand" type="button">显示全部 ${report.patents.length} 件专利</button>` : ""}`;
     const limitations = report.limitations.map((item) => `<div class="limitation"><b>${escapeHtml(item.code)}</b>：${escapeHtml(item.message)}（${Number(item.affected_count)}）</div>`).join("") || `<p class="muted">无运行限制。</p>`;
     const audits = report.query_audit.map((item) => `<div class="debug-row"><b>${escapeHtml(item.query_text)}</b><span>${Number(item.page_count)} 页 · ${Number(item.raw_hit_count)} 条 · ${escapeHtml(item.final_stop_reason)}</span></div>`).join("");
         const macro = report.macro_summary || {};
@@ -292,7 +316,14 @@
     const macroDirections = (macro.top_directions || []).map((item) => `<div class="macro-row"><b>${escapeHtml(item.name)}</b><span>${item.analysis_unit_count} 个分析单元 · ${escapeHtml(item.change_type)}</span></div>`).join("");
     const macroOrgs = (macro.top_organizations || []).map((item) => `<div class="macro-row"><b>${escapeHtml(item.name)}</b><span>${item.analysis_unit_count} 个分析单元</span></div>`).join("");
     const macroSection = `<section class="report-section macro-summary"><h3>宏观趋势总结</h3>${macro.narrative ? `<p class="macro-narrative">${escapeHtml(macro.narrative)}</p>` : `<p class="muted">暂无宏观总结。</p>`}<div class="macro-pulse-list">${macroPulse}</div>${macroDirections ? `<div class="macro-column"><h4>Top 方向</h4>${macroDirections}</div>` : ""}${macroOrgs ? `<div class="macro-column"><h4>Top 机构</h4>${macroOrgs}</div>` : ""}</section>`;
-    $("report-view").innerHTML = `<div class="metric-grid">${metrics}</div>${macroSection}<section class="report-section"><h3>视图口径</h3><p class="muted">${escapeHtml(MODE_LABELS[report.mode_view.mode])} · 主轴 ${escapeHtml(report.mode_view.primary_axis)} · 次轴 ${escapeHtml(report.mode_view.secondary_axis || "无")}。${escapeHtml(report.mode_view.counting_disclosure)}</p></section><section class="report-section"><h3>趋势候选</h3><table class="trend-table"><thead><tr><th>技术方向</th><th>结论类型</th><th>时间序列（分析单元）</th><th>限制</th></tr></thead><tbody>${trends}</tbody></table></section><section class="report-section"><h3>代表专利</h3><div class="representative-list">${representatives}</div></section><section class="report-section"><h3>专利明细</h3><table class="patent-table"><thead><tr><th>专利</th><th>公开号</th><th>公开日</th><th>申请人</th><th>分类终态</th></tr></thead><tbody>${patents}</tbody></table></section><section class="report-section"><h3>限制</h3>${limitations}</section><section class="report-section"><h3>查询审计</h3>${audits}</section><div class="report-links"><a href="/api/landscape/runs/${encodeURIComponent(report.run_id)}/report.md">下载 Markdown</a></div>`;
+    const scope = report.scope || {};
+    const heroMode = MODE_LABELS[report.mode_view ? report.mode_view.mode : ""] || "专利态势";
+    const hero = `<div class="report-hero"><div><p class="eyebrow">LANDSCAPE REPORT</p><h3>${escapeHtml(heroMode)}</h3><p class="muted">${escapeHtml(scope.publication_start || "?")} 至 ${escapeHtml(scope.publication_end || "?")} · 分类标准 ${escapeHtml(report.taxonomy_version || "")}</p></div><code class="run-id">${escapeHtml(report.run_id)}</code></div>`;
+    $("report-view").innerHTML = `${hero}<div class="metric-grid">${metrics}</div>${macroSection}<section class="report-section"><h3>视图口径</h3><p class="muted">${escapeHtml(MODE_LABELS[report.mode_view.mode])} · 主轴 ${escapeHtml(report.mode_view.primary_axis)} · 次轴 ${escapeHtml(report.mode_view.secondary_axis || "无")}。${escapeHtml(report.mode_view.counting_disclosure)}</p></section><section class="report-section"><h3>趋势候选</h3><table class="trend-table"><thead><tr><th>技术方向</th><th>结论类型</th><th>时间序列（分析单元）</th><th>限制</th></tr></thead>${trendSection}</table></section><section class="report-section"><h3>代表专利</h3><div class="representative-list">${representatives}</div></section><section class="report-section"><h3>专利明细</h3><table class="patent-table"><thead><tr><th>专利</th><th>公开号</th><th>公开日</th><th>申请人</th><th>分类终态</th></tr></thead>${patentSection}</table></section><section class="report-section"><h3>限制</h3>${limitations}</section><section class="report-section"><h3>查询审计</h3>${audits}</section><div class="report-links"><a href="/api/landscape/runs/${encodeURIComponent(report.run_id)}/report.md">下载 Markdown</a></div>`;
+    const trendExpand = document.getElementById("trend-expand");
+    if (trendExpand) trendExpand.addEventListener("click", () => { document.getElementById("trend-rows").insertAdjacentHTML("beforeend", trendHidden); trendExpand.remove(); });
+    const patentExpand = document.getElementById("patent-expand");
+    if (patentExpand) patentExpand.addEventListener("click", () => { document.getElementById("patent-rows").insertAdjacentHTML("beforeend", patentHidden); patentExpand.remove(); });
   }
   async function loadReport(runId) { try { state.report = await jsonRequest(`/api/landscape/runs/${encodeURIComponent(runId)}/report`); renderReport(state.report); } catch (error) { if (TERMINAL.has($("run-status").textContent)) $("form-message").textContent = error.message; } }
   async function loadHistory() {
