@@ -220,7 +220,10 @@ def build_landscape_runtime(
         PatentSnapshotFetchService(
             providers,
             patent_snapshot_repository,
-            max_concurrency=min(8, config.workflow.document_agent_concurrency),
+            max_concurrency=min(
+                int(os.environ.get("AIFPATENT_LANDSCAPE_FETCH_CONCURRENCY", "8")),
+                64,
+            ),
             timeout_seconds=min(90, config.model.timeout_seconds),
             max_attempts_per_provider=config.workflow.max_step_attempts,
         )
