@@ -103,7 +103,8 @@ class PostgreSQLLandscapeRunRepository:
                 """
                 SELECT run_id,scope_revision_id,scope_revision_hash,taxonomy_version,
                        taxonomy_hash,status,mode,publication_start,publication_end,
-                       workflow_version,created_at,updated_at
+                       workflow_version,created_at,updated_at,started_at,completed_at,
+                       error_code,error_message
                 FROM landscape_v4_runs
                 ORDER BY created_at DESC,run_id DESC
                 LIMIT %s
@@ -114,6 +115,82 @@ class PostgreSQLLandscapeRunRepository:
         for run in runs:
             self._validate_bindings(run)
         return runs
+
+    def transition(
+        self,
+        run_id: str,
+        target: LandscapeRunStatus,
+        *,
+        expected: tuple[LandscapeRunStatus, ...],
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> LandscapeRun:
+        target = LandscapeRunStatus(target)
+        if not expected:
+            raise ValueError("expected run statuses must not be empty")
+        expected_values = tuple(LandscapeRunStatus(value) for value in expected)
+        if target == LandscapeRunStatus.FAILED:
+            if not error_code or not error_code.strip():
+                raise ValueError("failed transition requires error code")
+        elif error_code or error_message:
+            raise ValueError("only failed transition may contain an error")
+        timestamp = int(time.time() * 1000)
+        with self._connect() as connection:
+            current = self._load_for_update(connection, run_id)
+            if current.status == target:
+                return current
+            if current.status not in expected_values:
+                raise LandscapeRunPersistenceError(
+                    f"cannot transition {current.status.value} to {target.value}"
+                )
+            if target not in _ALLOWED_TRANSITIONS[current.status]:
+                raise LandscapeRunPersistenceError(
+                    f"transition {current.status.value} to {target.value} is not allowed"
+                )
+            terminal = target in {
+                LandscapeRunStatus.COMPLETED,
+                LandscapeRunStatus.COMPLETED_WITH_LIMITATIONS,
+                LandscapeRunStatus.FAILED,
+                LandscapeRunStatus.CANCELLED,
+            }
+            connection.execute(
+                """
+                UPDATE landscape_v4_runs
+                SET status=%s,updated_at=%s,
+                    started_at=CASE WHEN %s='RUNNING' THEN COALESCE(started_at,%s) ELSE started_at END,
+                    completed_at=CASE WHEN %s THEN %s ELSE completed_at END,
+                    error_code=%s,error_message=%s
+                WHERE run_id=%s AND status=%s
+                """,
+                (
+                    target.value,
+                    timestamp,
+                    target.value,
+                    timestamp,
+                    terminal,
+                    timestamp,
+                    error_code.strip() if error_code else None,
+                    error_message.strip()[:2000] if error_message else None,
+                    run_id,
+                    current.status.value,
+                ),
+            )
+            return self._load(connection, run_id)
+
+    def cancel(self, run_id: str) -> LandscapeRun:
+        current = self.get(run_id)
+        if current.status in {
+            LandscapeRunStatus.COMPLETED,
+            LandscapeRunStatus.COMPLETED_WITH_LIMITATIONS,
+            LandscapeRunStatus.FAILED,
+            LandscapeRunStatus.CANCELLED,
+        }:
+            return current
+        return self.transition(
+            run_id,
+            LandscapeRunStatus.CANCELLED,
+            expected=(current.status,),
+        )
 
     def _validate_bindings(self, run: LandscapeRun) -> None:
         try:
@@ -138,9 +215,20 @@ class PostgreSQLLandscapeRunRepository:
             """
             SELECT run_id,scope_revision_id,scope_revision_hash,taxonomy_version,
                    taxonomy_hash,status,mode,publication_start,publication_end,
-                   workflow_version,created_at,updated_at
+                   workflow_version,created_at,updated_at,started_at,completed_at,
+                   error_code,error_message
             FROM landscape_v4_runs WHERE run_id=%s
             """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return cls._decode(row)
+
+    @classmethod
+    def _load_for_update(cls, connection, run_id: str) -> LandscapeRun:
+        row = connection.execute(
+            "SELECT * FROM landscape_v4_runs WHERE run_id=%s FOR UPDATE",
             (run_id,),
         ).fetchone()
         if row is None:
@@ -174,3 +262,43 @@ class PostgreSQLLandscapeRunRepository:
 
 
 __all__ = ["LandscapeRunPersistenceError", "PostgreSQLLandscapeRunRepository"]
+
+
+_ALLOWED_TRANSITIONS = {
+    LandscapeRunStatus.PLANNING: {
+        LandscapeRunStatus.ESTIMATING,
+        LandscapeRunStatus.CANCELLED,
+    },
+    LandscapeRunStatus.ESTIMATING: {
+        LandscapeRunStatus.AWAITING_SCALE_CONFIRMATION,
+        LandscapeRunStatus.READY,
+        LandscapeRunStatus.FAILED,
+        LandscapeRunStatus.CANCELLED,
+    },
+    LandscapeRunStatus.AWAITING_SCALE_CONFIRMATION: {
+        LandscapeRunStatus.READY,
+        LandscapeRunStatus.CANCELLED,
+        LandscapeRunStatus.FAILED,
+    },
+    LandscapeRunStatus.READY: {
+        LandscapeRunStatus.RUNNING,
+        LandscapeRunStatus.CANCELLED,
+        LandscapeRunStatus.FAILED,
+    },
+    LandscapeRunStatus.RUNNING: {
+        LandscapeRunStatus.WAITING_FOR_CREDENTIALS,
+        LandscapeRunStatus.COMPLETED,
+        LandscapeRunStatus.COMPLETED_WITH_LIMITATIONS,
+        LandscapeRunStatus.FAILED,
+        LandscapeRunStatus.CANCELLED,
+    },
+    LandscapeRunStatus.WAITING_FOR_CREDENTIALS: {
+        LandscapeRunStatus.RUNNING,
+        LandscapeRunStatus.CANCELLED,
+        LandscapeRunStatus.FAILED,
+    },
+    LandscapeRunStatus.COMPLETED: set(),
+    LandscapeRunStatus.COMPLETED_WITH_LIMITATIONS: set(),
+    LandscapeRunStatus.FAILED: set(),
+    LandscapeRunStatus.CANCELLED: set(),
+}

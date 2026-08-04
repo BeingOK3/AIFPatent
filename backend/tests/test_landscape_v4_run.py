@@ -65,6 +65,21 @@ class RunConnection:
             )
             self.rows[run_id] = dict(zip(keys, params, strict=True))
             return Cursor({"run_id": run_id})
+        if normalized.startswith("UPDATE landscape_v4_runs SET status="):
+            target, updated_at = params[0], params[1]
+            terminal, completed_at = params[4], params[5]
+            error_code, error_message, run_id, expected = params[6:]
+            row = self.rows[run_id]
+            if row["status"] == expected:
+                row["status"] = target
+                row["updated_at"] = updated_at
+                if target == "RUNNING" and row.get("started_at") is None:
+                    row["started_at"] = params[3]
+                if terminal:
+                    row["completed_at"] = completed_at
+                row["error_code"] = error_code
+                row["error_message"] = error_message
+            return Cursor()
         if "WHERE run_id=%s" in normalized:
             return Cursor(self.rows.get(params[0]))
         if "ORDER BY created_at DESC" in normalized:
@@ -156,6 +171,36 @@ class LandscapeV4RunRepositoryTests(unittest.TestCase):
         connection.rows[run.run_id]["scope_revision_hash"] = "0" * 64
         with self.assertRaisesRegex(LandscapeRunPersistenceError, "scope hash"):
             repository.get(run.run_id)
+
+    def test_run_state_machine_is_one_way_and_terminal_errors_are_explicit(self) -> None:
+        repository, _connection = repository_fixture()
+        run = repository.create(
+            scope_revision_id="SCR-0000000000000001",
+            taxonomy_version="landscape-taxonomy/fixture",
+            run_id="LRN-0000000000000003",
+        )
+        run = repository.transition(
+            run.run_id,
+            LandscapeRunStatus.ESTIMATING,
+            expected=(LandscapeRunStatus.PLANNING,),
+        )
+        with self.assertRaisesRegex(LandscapeRunPersistenceError, "not allowed"):
+            repository.transition(
+                run.run_id,
+                LandscapeRunStatus.COMPLETED,
+                expected=(LandscapeRunStatus.ESTIMATING,),
+            )
+        failed = repository.transition(
+            run.run_id,
+            LandscapeRunStatus.FAILED,
+            expected=(LandscapeRunStatus.ESTIMATING,),
+            error_code="PROVIDER_FAILED",
+            error_message="provider failed",
+        )
+        self.assertEqual(failed.status, LandscapeRunStatus.FAILED)
+        self.assertEqual(failed.error_code, "PROVIDER_FAILED")
+        self.assertIsNotNone(failed.completed_at)
+        self.assertEqual(repository.cancel(run.run_id), failed)
 
 
 @unittest.skipUnless(

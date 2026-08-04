@@ -36,6 +36,10 @@ class LandscapeRun(ScopeModel):
     workflow_version: str = Field(pattern=r"^landscape-v4/[0-9]+\.[0-9]+\.[0-9]+$")
     created_at: int = Field(ge=0)
     updated_at: int = Field(ge=0)
+    started_at: int | None = Field(default=None, ge=0)
+    completed_at: int | None = Field(default=None, ge=0)
+    error_code: str | None = Field(default=None, max_length=200)
+    error_message: str | None = Field(default=None, max_length=2000)
 
     @model_validator(mode="after")
     def validate_boundaries(self) -> "LandscapeRun":
@@ -43,6 +47,14 @@ class LandscapeRun(ScopeModel):
             raise ValueError("run publication date range is reversed")
         if self.updated_at < self.created_at:
             raise ValueError("run updated_at precedes created_at")
+        if self.started_at is not None and self.started_at < self.created_at:
+            raise ValueError("run started_at precedes created_at")
+        if self.completed_at is not None and self.started_at is not None and self.completed_at < self.started_at:
+            raise ValueError("run completed_at precedes started_at")
+        if self.status == LandscapeRunStatus.FAILED and not self.error_code:
+            raise ValueError("failed run requires error code")
+        if self.status != LandscapeRunStatus.FAILED and (self.error_code or self.error_message):
+            raise ValueError("only failed run may contain an error")
         return self
 
 
