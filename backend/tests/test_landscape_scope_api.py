@@ -11,6 +11,7 @@ from landscape.api import create_landscape_router
 from landscape.scope_service import ScopeDraftPreparationService
 from tests.test_landscape_scope_service import ExpansionStub, MemoryRepository
 from tests.test_landscape_query_planning import confirmed_scope
+from landscape.credential_lease import CredentialVault
 
 
 class ApiRepository(MemoryRepository):
@@ -87,6 +88,7 @@ def app_fixture():
         run_repository=run_repository,
         query_repository=ApiQueryPlanRepository(),
         scale_repository=ApiScaleRepository(),
+        credential_vault=CredentialVault(),
         taxonomy=SimpleNamespace(taxonomy_version="landscape-taxonomy/fixture"),
     )
     app = FastAPI()
@@ -124,6 +126,12 @@ class LandscapeScopeApiTests(unittest.TestCase):
                 )
                 self.assertEqual(decision.status_code, 200)
                 self.assertEqual(decision.json()["decision"], "APPROVED")
+                credentials = await client.post(
+                    "/api/landscape/runs/LRN-0000000000000001/credentials",
+                    json={"api_key":"temporary-secret","base_url":"https://example.test/v1","model":"fixture"},
+                )
+                self.assertEqual(credentials.status_code, 200)
+                self.assertNotIn("temporary-secret", credentials.text)
 
         asyncio.run(scenario())
 

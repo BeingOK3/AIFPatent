@@ -231,6 +231,15 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
         except ScaleGatePersistenceError as exc:
             raise HTTPException(409, str(exc)) from exc
 
+    @router.post("/runs/{run_id}/credentials")
+    async def provide_credentials(run_id: str, request: LandscapeRuntimeRequest):
+        try:
+            runtime.run_repository.get(run_id)
+        except KeyError as exc:
+            raise HTTPException(404, "landscape run not found") from exc
+        runtime.credential_vault.put(run_id, request.runtime_config())
+        return {"run_id": run_id, "credentials_available": True}
+
     @router.get("/runs/{run_id}")
     async def get_run(run_id: str):
         try:

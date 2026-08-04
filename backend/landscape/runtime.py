@@ -33,6 +33,7 @@ from .search_coordinator import LandscapeSearchCoordinator
 from .abstract_repository import PostgreSQLAbstractEvidenceRepository
 from .task_queue import PostgreSQLTaskQueue
 from .model_scheduler import ModelBudget, ModelScheduler
+from .credential_lease import CredentialVault
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -141,6 +142,7 @@ class LandscapeRuntime:
     abstract_repository: PostgreSQLAbstractEvidenceRepository
     task_queue: PostgreSQLTaskQueue
     model_scheduler: ModelScheduler
+    credential_vault: CredentialVault
 
 
 def build_landscape_runtime(
@@ -193,6 +195,7 @@ def build_landscape_runtime(
             max_output_tokens=_int_env("AIFPATENT_MODEL_MAX_OUTPUT_TOKENS", 8_192, minimum=1),
         )
     )
+    credential_vault = CredentialVault()
     store = LandscapeRunStore(runs_dir)
     harness = LandscapeWorkflowHarness(
         database,
@@ -276,6 +279,7 @@ def build_landscape_runtime(
         abstract_repository,
         task_queue,
         model_scheduler,
+        credential_vault,
     )
 
 
