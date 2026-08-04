@@ -118,6 +118,12 @@ def build_landscape_runtime(
     search_execution = PagedSearchExecutionService(
         max_concurrency=min(8, config.workflow.document_agent_concurrency),
         page_size=100,
+        max_pages_per_query=int(
+            os.environ.get("AIFPATENT_LANDSCAPE_MAX_PAGES_PER_QUERY", "8")
+        ),
+        max_frozen_publications=int(
+            os.environ.get("AIFPATENT_LANDSCAPE_MAX_FROZEN_PUBLICATIONS", "3000")
+        ),
     )
     publication_repository = PostgreSQLPublicationRepository(dsn)
     scale_repository = PostgreSQLScaleGateRepository(dsn)

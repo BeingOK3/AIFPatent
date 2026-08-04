@@ -25,6 +25,25 @@ class LandscapePublicationFreezeTests(unittest.TestCase):
         second = freeze_publications("run", tuple(reversed(values)))
         self.assertEqual(first, second)
 
+    def test_freeze_caps_publications_deterministically_and_records_truncation(self):
+        values = tuple(
+            ("q", hit(f"US{i}A1").model_copy(update={"publication_date": f"2024-01-{i:02d}"}))
+            for i in range(1, 6)
+        )
+        result = freeze_publications(
+            "run",
+            values,
+            publication_start=date(2024, 1, 1),
+            publication_end=date(2024, 1, 31),
+            max_publications=3,
+        )
+        self.assertEqual(result.publication_count, 3)
+        self.assertEqual(result.truncated_count, 2)
+        self.assertEqual(
+            [item.publication_number for item in result.publications],
+            ["US1A1", "US2A1", "US3A1"],
+        )
+
     def test_missing_identity_fails_closed(self):
         with self.assertRaises(PublicationFreezeError):
             freeze_publications("run", (("q", SimpleNamespace(publication_number=None, url="")),))

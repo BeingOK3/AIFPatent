@@ -103,6 +103,7 @@ class PageStopReason(StrEnum):
     MORE_AVAILABLE = "MORE_AVAILABLE"
     QUERY_EXHAUSTED = "QUERY_EXHAUSTED"
     PROVIDER_HARD_LIMIT = "PROVIDER_HARD_LIMIT"
+    MAX_PAGES = "MAX_PAGES"
 
 
 class SearchPage(ContractModel):

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Protocol
 
-from idea.providers.base import PagedSearchProvider, SearchPage, SearchQuery
+from idea.providers.base import PageStopReason, PagedSearchProvider, SearchPage, SearchQuery
 
 from .query_planning import V4SearchQuery
 from .publication_freeze import FrozenPublicationSet, freeze_publications
@@ -53,13 +53,26 @@ def to_provider_query(query: V4SearchQuery, *, limit: int = 100) -> SearchQuery:
 
 
 class PagedSearchExecutionService:
-    def __init__(self, *, max_concurrency: int = 8, page_size: int = 100):
+    def __init__(
+        self,
+        *,
+        max_concurrency: int = 8,
+        page_size: int = 100,
+        max_pages_per_query: int = 8,
+        max_frozen_publications: int = 3000,
+    ):
         if not 1 <= max_concurrency <= 64:
             raise ValueError("max_concurrency must be between 1 and 64")
         if not 1 <= page_size <= 100:
             raise ValueError("page_size must be between 1 and 100")
+        if not 1 <= max_pages_per_query <= 100:
+            raise ValueError("max_pages_per_query must be between 1 and 100")
+        if max_frozen_publications < 1:
+            raise ValueError("max_frozen_publications must be at least 1")
         self.max_concurrency = max_concurrency
         self.page_size = page_size
+        self.max_pages_per_query = max_pages_per_query
+        self.max_frozen_publications = max_frozen_publications
 
     async def execute_query(
         self,
@@ -90,6 +103,20 @@ class PagedSearchExecutionService:
             persisted = checkpoints.put(run_id, query.query_id, cursor, page)
             pages.append(persisted)
             if persisted.next_cursor is None:
+                break
+            if len(pages) >= self.max_pages_per_query:
+                capped = page.model_copy(
+                    update={
+                        "stop_reason": PageStopReason.MAX_PAGES,
+                        "next_cursor": None,
+                        "hits": [],
+                        "page_number": persisted.page_number + 1,
+                    }
+                )
+                checkpoints.put(
+                    run_id, query.query_id, persisted.next_cursor, capped
+                )
+                pages.append(capped)
                 break
             cursor = persisted.next_cursor
             page_number += 1
@@ -157,6 +184,7 @@ class PagedSearchExecutionService:
         *,
         publication_start=None,
         publication_end=None,
+        max_publications: int | None = None,
     ) -> FrozenPublicationSet:
         return freeze_publications(
             run_id,
@@ -167,6 +195,7 @@ class PagedSearchExecutionService:
             ),
             publication_start=publication_start,
             publication_end=publication_end,
+            max_publications=max_publications,
         )
 
     @staticmethod

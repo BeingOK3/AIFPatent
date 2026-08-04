@@ -543,10 +543,21 @@ class V4LandscapeWorkflow:
                 message="Provider hits outside the confirmed publication interval were excluded locally.",
                 affected_count=frozen.date_excluded_count,
             )
+        if frozen.truncated_count:
+            self.stage_repository.add_limitation(
+                run_id,
+                V4StageName.FREEZE_PUBLICATIONS,
+                code="FROZEN_PUBLICATION_CAP",
+                message=(
+                    "冻结公开文本达到上限，按公开日确定性截断 "
+                    f"{frozen.truncated_count} 件。"
+                ),
+                affected_count=frozen.truncated_count,
+            )
         self.stage_repository.succeed(
             run_id,
             V4StageName.FREEZE_PUBLICATIONS,
-            with_limitations=bool(frozen.date_excluded_count),
+            with_limitations=bool(frozen.date_excluded_count or frozen.truncated_count),
         )
         return frozen
 

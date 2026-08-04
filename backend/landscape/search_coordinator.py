@@ -49,7 +49,9 @@ class LandscapeSearchCoordinator:
                     )
             else:
                 totals.append(page.reported_total_results)
-        estimate = estimate_scale(plan, tuple(totals), page_size=self.execution.page_size)
+        per_query_cap = self.execution.max_pages_per_query * self.execution.page_size
+        capped_totals = tuple(min(total, per_query_cap) for total in totals)
+        estimate = estimate_scale(plan, capped_totals, page_size=self.execution.page_size)
         return self.scale_repository.record(run_id, estimate).estimate
 
     async def complete(
@@ -89,6 +91,7 @@ class LandscapeSearchCoordinator:
             results,
             publication_start=next(iter(starts)),
             publication_end=next(iter(ends)),
+            max_publications=self.execution.max_frozen_publications,
         )
         return self.publication_repository.put(frozen)
 

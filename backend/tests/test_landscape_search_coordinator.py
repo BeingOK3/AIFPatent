@@ -44,7 +44,39 @@ def coordinator(plan, scale=None):
     return value, scale, publications
 
 
+class HugeTotalProvider:
+    name = "fixture"
+
+    async def search_page(self, query, cursor):
+        return SimpleNamespace(
+            hits=[],
+            next_cursor="page:2" if cursor is None else None,
+            page_number=1 if cursor is None else 2,
+            reported_total_results=5000,
+            reported_total_pages=50,
+            provider_request_id="req-1",
+            stop_reason=PageStopReason.MORE_AVAILABLE if cursor is None else PageStopReason.QUERY_EXHAUSTED,
+        )
+
+
 class LandscapeSearchCoordinatorTests(unittest.TestCase):
+    def test_estimate_caps_reported_totals_to_max_pages_per_query(self):
+        plan = build_query_plan(confirmed_scope(companies=(("华为", ("华为",)),)))
+        publications = PublicationRepository()
+        scale = ScaleRepository()
+        value = LandscapeSearchCoordinator(
+            query_repository=QueryRepository(plan),
+            page_repository=Checkpoints(),
+            scale_repository=scale,
+            publication_repository=publications,
+            execution=PagedSearchExecutionService(
+                max_concurrency=2, max_pages_per_query=1
+            ),
+        )
+        estimate = asyncio.run(value.estimate("run", HugeTotalProvider()))
+        self.assertEqual(estimate.estimated_total_results, 100)
+        self.assertEqual(estimate.estimated_total_pages, 1)
+
     def test_estimate_stops_after_first_page_then_approved_complete_resumes(self):
         plan = build_query_plan(confirmed_scope(companies=(("华为", ("华为",)),)))
         service, scale, publications = coordinator(plan)

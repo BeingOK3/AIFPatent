@@ -47,6 +47,7 @@ class FrozenPublicationSet(ScopeModel):
     publication_count: int = Field(ge=0)
     analysis_unit_count: int = Field(ge=0)
     date_excluded_count: int = Field(default=0, ge=0)
+    truncated_count: int = Field(default=0, ge=0)
     freeze_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
@@ -72,6 +73,7 @@ def freeze_publications(
     *,
     publication_start: date | None = None,
     publication_end: date | None = None,
+    max_publications: int | None = None,
 ) -> FrozenPublicationSet:
     if (publication_start is None) != (publication_end is None):
         raise PublicationFreezeError("both publication date bounds are required")
@@ -107,6 +109,16 @@ def freeze_publications(
         hit = item["hit"]
         publications.append(_freeze_one(identity, item["source_queries"], hit))
     frozen = tuple(publications)
+    truncated_count = 0
+    if max_publications is not None and max_publications < 1:
+        raise PublicationFreezeError("max_publications must be at least 1")
+    if max_publications is not None and len(frozen) > max_publications:
+        ordered = sorted(
+            frozen,
+            key=lambda item: (item.publication_date or date.min, item.publication_identity),
+        )
+        truncated_count = len(frozen) - max_publications
+        frozen = tuple(ordered[:max_publications])
     freeze_hash = hashlib.sha256(
         json.dumps([item.model_dump(mode="json") for item in frozen], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -116,6 +128,7 @@ def freeze_publications(
         publication_count=len(frozen),
         analysis_unit_count=len(frozen),
         date_excluded_count=len(excluded_identities),
+        truncated_count=truncated_count,
         freeze_hash=freeze_hash,
     )
 

@@ -49,6 +49,23 @@ class LandscapeSearchExecutionTests(unittest.TestCase):
         self.assertIn("after=publication:19891231", provider_query.text)
         self.assertIn("before=publication:20270101", provider_query.text)
 
+    def test_query_stops_at_max_pages_and_records_cap_stop_reason(self):
+        plan = build_query_plan(confirmed_scope(companies=(("华为", ("华为",)),)))
+        provider, checkpoints = Provider(), Checkpoints()
+        service = PagedSearchExecutionService(max_concurrency=1, max_pages_per_query=1)
+        result = asyncio.run(
+            service.execute_query(provider, "run", plan.queries[0], checkpoints)
+        )
+        self.assertEqual(len(result.pages), 2)
+        self.assertEqual(result.pages[-1].stop_reason, PageStopReason.MAX_PAGES)
+        self.assertIsNone(result.pages[-1].next_cursor)
+        self.assertEqual(result.pages[-1].hits, [])
+        second = asyncio.run(
+            service.execute_query(provider, "run", plan.queries[0], checkpoints)
+        )
+        self.assertEqual(second, result)
+        self.assertEqual(len(provider.calls), 1)
+
     def test_pages_are_sequential_and_resume_from_checkpoint(self):
         plan = build_query_plan(confirmed_scope(companies=(("华为", ("华为",)),)))
         provider, checkpoints = Provider(), Checkpoints()
