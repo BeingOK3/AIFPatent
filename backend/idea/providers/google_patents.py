@@ -373,12 +373,14 @@ def parse_patent_html(content: str, *, provider: str, url: str, language: str) -
         if abstract
         else []
     )
+    assignee = parser.values.get("assignee")
     return FetchedDocument(
         provider=provider,
         publication_number=publication,
         application_number=parser.values.get("application_number"),
         title=parser.values.get("title", ""),
-        assignee=parser.values.get("assignee"),
+        assignee=assignee,
+        assignees=[assignee] if assignee else [],
         inventors=parser.inventors,
         priority_date=parser.values.get("priority_date"),
         filing_date=parser.values.get("filing_date"),

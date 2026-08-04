@@ -136,6 +136,7 @@ def parse_serpapi_patent_details(
         family_id=str(payload.get("family_id") or "") or None,
         title=str(payload.get("title") or ""),
         assignee=assignees[0] if assignees else None,
+        assignees=assignees,
         inventors=_inventor_names(payload.get("inventors")),
         priority_date=str(payload.get("priority_date") or "") or None,
         filing_date=str(payload.get("filing_date") or "") or None,

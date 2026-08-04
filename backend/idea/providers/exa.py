@@ -293,12 +293,14 @@ def parse_exa_patent_markdown(
     structured = bool(abstract or claims or description)
     if not structured:
         description = text
+    assignee = " ".join(assignee_match.group(1).split()) if assignee_match else None
     return FetchedDocument(
         provider=provider,
         publication_number=publication,
         application_number=application_match.group(1) if application_match else None,
         title=title,
-        assignee=" ".join(assignee_match.group(1).split()) if assignee_match else None,
+        assignee=assignee,
+        assignees=[assignee] if assignee else [],
         priority_date=date_after("Priority date") or date_after("Prior art date"),
         filing_date=date_after("Filing date"),
         publication_date=date_after("Publication date"),

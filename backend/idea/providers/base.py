@@ -74,6 +74,7 @@ class FetchedDocument(ContractModel):
     family_id: str | None = None
     title: str = ""
     assignee: str | None = None
+    assignees: list[str] = []
     inventors: list[str] = []
     priority_date: str | None = None
     filing_date: str | None = None

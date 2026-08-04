@@ -233,6 +233,7 @@ class SerpApiProviderTests(unittest.TestCase):
         self.assertEqual(document.application_number, "US18/123,456")
         self.assertEqual(document.family_id, "family-123")
         self.assertEqual(document.assignee, "Example Corp")
+        self.assertEqual(document.assignees, ["Example Corp"])
         self.assertIn("claim 1", document.section_spans["claims"][0]["label"])
         self.assertIn("inefficient air cooling", document.description_text)
         span = document.section_spans["claims"][1]
