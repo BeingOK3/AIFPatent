@@ -167,7 +167,8 @@ class PostgreSQLMetricRepository(_PostgreSQLAnalyticsRepository):
         cell_rows = connection.execute(
             """
             SELECT * FROM landscape_v4_metric_cells
-            WHERE run_id=%s ORDER BY direction_id,organization_id,bucket_id
+            WHERE run_id=%s
+            ORDER BY direction_id COLLATE "C", organization_id COLLATE "C", bucket_id COLLATE "C"
             """,
             (run_id,),
         ).fetchall()

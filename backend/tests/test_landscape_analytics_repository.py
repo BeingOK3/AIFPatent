@@ -67,6 +67,7 @@ class Cursor:
 
 class Connection:
     def __init__(self):
+        self.statements = []
         self.manifest = None
         self.buckets = []
         self.cells = []
@@ -83,6 +84,7 @@ class Connection:
 
     def execute(self, sql, params=()):
         normalized = " ".join(sql.split())
+        self.statements.append(normalized)
         if normalized.startswith("INSERT INTO landscape_v4_metric_manifests"):
             if self.manifest is not None:
                 return Cursor(self)
@@ -188,6 +190,23 @@ class LandscapeMetricRepositoryTests(unittest.TestCase):
         self.assertEqual(self.repository.get("run"), value)
         self.assertEqual(len(self.connection.cells), len(value.cells))
         self.assertEqual(len(self.connection.values), 2)
+
+    def test_metric_cell_load_orders_with_c_collation(self):
+        # Python sorts 'ORG-UNKNOWN' before 'ORG-a6a9...' (uppercase first), while
+        # the default PostgreSQL collation sorts lowercase first.  A metric cube
+        # that mixes UNKNOWN and known organizations must be reconstructed in the
+        # same order it was built, otherwise the cube hash validation fails.
+        self.repository.put("run", cube())
+        self.repository.get("run")
+        cell_queries = [
+            statement
+            for statement in self.connection.statements
+            if "FROM landscape_v4_metric_cells" in statement
+        ]
+        self.assertTrue(cell_queries)
+        self.assertIn('ORDER BY direction_id COLLATE "C"', cell_queries[0])
+        self.assertIn('organization_id COLLATE "C"', cell_queries[0])
+        self.assertIn('bucket_id COLLATE "C"', cell_queries[0])
 
     def test_changed_cube_for_same_run_fails_closed(self):
         value = cube()
