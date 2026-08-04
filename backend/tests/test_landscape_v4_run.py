@@ -15,6 +15,8 @@ from landscape.query_planning import build_query_plan
 from landscape.query_repository import PostgreSQLQueryPlanRepository
 from landscape.publication_freeze import freeze_publications
 from landscape.publication_repository import PostgreSQLPublicationRepository
+from landscape.scale_gate import estimate_scale
+from landscape.scale_repository import PostgreSQLScaleGateRepository, ScaleDecision
 from idea.providers.base import SearchHit
 from landscape.scope import (
     CandidateSource,
@@ -233,6 +235,9 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
         publication_repository = PostgreSQLPublicationRepository(
             "postgresql://integration", connect=connect
         )
+        scale_repository = PostgreSQLScaleGateRepository(
+            "postgresql://integration", connect=connect
+        )
         try:
             scope_repository.create(draft)
             confirmed = scope_repository.confirm(
@@ -252,6 +257,15 @@ class LandscapeV4RunPostgreSQLIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 run_repository.get(run.run_id).status,
                 LandscapeRunStatus.ESTIMATING,
+            )
+            gate = scale_repository.record(
+                run.run_id,
+                estimate_scale(plan, tuple(1 for _query in plan.queries)),
+            )
+            self.assertEqual(gate.decision, ScaleDecision.APPROVED)
+            self.assertEqual(
+                run_repository.get(run.run_id).status,
+                LandscapeRunStatus.READY,
             )
             publications = freeze_publications(
                 run.run_id,

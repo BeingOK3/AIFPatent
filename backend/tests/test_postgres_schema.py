@@ -62,6 +62,9 @@ LANDSCAPE_V4_SEARCH_PAGES_SCHEMA_PATH = Path(
 LANDSCAPE_V4_PUBLICATIONS_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/090_landscape_v4_publications.sql"
 )
+LANDSCAPE_V4_SCALE_GATE_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/091_landscape_v4_scale_gate.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -352,6 +355,13 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("UNIQUE(run_id,publication_identity)", sql)
         self.assertIn("BEFORE UPDATE OR DELETE", sql)
         self.assertIn("'090_landscape_v4_publications'", sql)
+
+    def test_landscape_v4_scale_gate_has_one_way_decision(self) -> None:
+        sql = LANDSCAPE_V4_SCALE_GATE_SCHEMA_PATH.read_text(encoding="utf-8")
+        self.assertIn("landscape_v4_scale_gates", sql)
+        self.assertIn("OLD.decision IS NOT NULL", sql)
+        self.assertIn("'APPROVED','REJECTED'", sql)
+        self.assertIn("'091_landscape_v4_scale_gate'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)

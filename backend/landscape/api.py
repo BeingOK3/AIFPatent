@@ -20,6 +20,7 @@ from .scope_service import ScopePreparationError
 from .run_repository import LandscapeRunPersistenceError
 from .query_planning import build_query_plan
 from .query_repository import QueryPlanPersistenceError
+from .scale_repository import ScaleGatePersistenceError
 from .store import LandscapeStoreError
 
 
@@ -92,6 +93,10 @@ class PatchScopeDraftRequest(ApiModel):
 
 class ConfirmScopeDraftRequest(ApiModel):
     expected_revision: int = Field(ge=1)
+
+
+class ScaleDecisionRequest(ApiModel):
+    approve: bool
 
 
 def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
@@ -213,6 +218,18 @@ def create_landscape_router(runtime: LandscapeRuntime) -> APIRouter:
             return {"runs": [_run_view(runtime, item["run_id"]) for item in database.list_runs(limit)]}
         except ValueError as exc:
             raise HTTPException(422, str(exc))
+
+    @router.post("/runs/{run_id}/scale-decision")
+    async def decide_scale(run_id: str, request: ScaleDecisionRequest):
+        try:
+            return runtime.scale_repository.decide(
+                run_id,
+                approve=request.approve,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "scale gate not found") from exc
+        except ScaleGatePersistenceError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @router.get("/runs/{run_id}")
     async def get_run(run_id: str):

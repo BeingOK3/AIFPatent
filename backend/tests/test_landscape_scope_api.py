@@ -69,6 +69,11 @@ class ApiQueryPlanRepository:
         return plan
 
 
+class ApiScaleRepository:
+    def decide(self, run_id, *, approve):
+        return {"run_id": run_id, "decision": "APPROVED" if approve else "REJECTED"}
+
+
 def app_fixture():
     repository = ApiRepository()
     service = ScopeDraftPreparationService(repository, ExpansionStub(delay=0))
@@ -81,6 +86,7 @@ def app_fixture():
         scope_service=service,
         run_repository=run_repository,
         query_repository=ApiQueryPlanRepository(),
+        scale_repository=ApiScaleRepository(),
         taxonomy=SimpleNamespace(taxonomy_version="landscape-taxonomy/fixture"),
     )
     app = FastAPI()
@@ -112,6 +118,12 @@ class LandscapeScopeApiTests(unittest.TestCase):
                 )
                 self.assertEqual(created.status_code, 201)
                 self.assertEqual(created.json()["status"], "ESTIMATING")
+                decision = await client.post(
+                    "/api/landscape/runs/LRN-0000000000000001/scale-decision",
+                    json={"approve": True},
+                )
+                self.assertEqual(decision.status_code, 200)
+                self.assertEqual(decision.json()["decision"], "APPROVED")
 
         asyncio.run(scenario())
 
