@@ -6,6 +6,7 @@ import json
 from pydantic import Field, model_validator
 
 from .scope import ScopeModel
+from .publication_freeze import FrozenPublicationSet
 
 
 class FamilyResolutionError(ValueError):
@@ -118,6 +119,26 @@ def resolve_families(
     )
 
 
+def resolve_frozen_publications(frozen: FrozenPublicationSet) -> FamilyResolution:
+    """Resolve only identifiers explicitly preserved by the frozen search set.
+
+    A shared priority *date* is not a priority-number set and must never merge
+    unrelated applications. Provider family IDs remain advisory and ignored by
+    the conservative resolver.
+    """
+    return resolve_families(
+        tuple(
+            BibliographicPublication(
+                publication_id=item.publication_id,
+                publication_number=item.publication_number or item.publication_identity,
+                application_number=item.application_number,
+                family_id=item.family_id,
+            )
+            for item in frozen.publications
+        )
+    )
+
+
 def _normalize(value: str | None) -> str:
     return "" if not value else "".join(value.upper().split())
 
@@ -126,4 +147,11 @@ def _hash(value: object) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-__all__ = ["AnalysisUnit", "BibliographicPublication", "FamilyResolution", "FamilyResolutionError", "resolve_families"]
+__all__ = [
+    "AnalysisUnit",
+    "BibliographicPublication",
+    "FamilyResolution",
+    "FamilyResolutionError",
+    "resolve_families",
+    "resolve_frozen_publications",
+]

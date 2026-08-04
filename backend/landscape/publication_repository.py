@@ -48,16 +48,19 @@ class PostgreSQLPublicationRepository:
                         """
                         INSERT INTO landscape_v4_publications(
                             run_id,publication_id,publication_identity,
-                            publication_number,title,url,publication_date,family_id,
+                            publication_number,application_number,title,snippet,url,
+                            priority_date,filing_date,publication_date,assignee,family_id,
                             provider,content_hash,sort_order
-                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         """,
                         [
                             (
                                 frozen.run_id, item.publication_id,
                                 item.publication_identity, item.publication_number,
-                                item.title, item.url, item.publication_date,
-                                item.family_id, item.provider, item.content_hash, order,
+                                item.application_number, item.title, item.snippet,
+                                item.url, item.priority_date, item.filing_date,
+                                item.publication_date, item.assignee, item.family_id,
+                                item.provider, item.content_hash, order,
                             )
                             for order, item in enumerate(frozen.publications, start=1)
                         ],
@@ -110,9 +113,14 @@ class PostgreSQLPublicationRepository:
                     publication_id=row["publication_id"],
                     publication_identity=row["publication_identity"],
                     publication_number=row["publication_number"],
+                    application_number=row["application_number"],
                     title=row["title"],
+                    snippet=row["snippet"],
                     url=row["url"],
+                    priority_date=_date(row["priority_date"]),
+                    filing_date=_date(row["filing_date"]),
                     publication_date=_date(row["publication_date"]),
+                    assignee=row["assignee"],
                     family_id=row["family_id"],
                     source_queries=tuple(by_publication.pop(row["publication_id"], ())),
                     provider=row["provider"],

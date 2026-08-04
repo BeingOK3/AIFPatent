@@ -19,9 +19,14 @@ class FrozenPublication(ScopeModel):
     publication_id: str = Field(pattern=r"^PUB-[0-9a-f]{16}$")
     publication_identity: str = Field(min_length=1, max_length=300)
     publication_number: str | None = None
+    application_number: str | None = None
     title: str = Field(default="", max_length=2000)
+    snippet: str = Field(default="", max_length=10000)
     url: str = Field(min_length=1, max_length=4000)
+    priority_date: date | None = None
+    filing_date: date | None = None
     publication_date: date | None = None
+    assignee: str | None = Field(default=None, max_length=1000)
     family_id: str | None = None
     source_queries: tuple[str, ...] = Field(min_length=1)
     provider: str = Field(min_length=1, max_length=100)
@@ -113,14 +118,31 @@ def _rank_key(hit: SearchHit) -> tuple[int, str, str]:
 
 
 def _freeze_one(identity: str, queries: tuple[str, ...], hit: SearchHit) -> FrozenPublication:
-    content = {"identity": identity, "title": hit.title, "url": hit.url, "family_id": hit.family_id}
+    content = {
+        "identity": identity,
+        "publication_number": _normalize(hit.publication_number) if hit.publication_number else None,
+        "application_number": _normalize(hit.application_number) if hit.application_number else None,
+        "title": hit.title,
+        "snippet": hit.snippet,
+        "url": hit.url,
+        "priority_date": _date_json(hit.priority_date),
+        "filing_date": _date_json(hit.filing_date),
+        "publication_date": _date_json(hit.publication_date),
+        "assignee": hit.assignee,
+        "family_id": hit.family_id,
+    }
     return FrozenPublication(
         publication_id=f"PUB-{hashlib.sha256(identity.encode()).hexdigest()[:16]}",
         publication_identity=identity,
         publication_number=_normalize(hit.publication_number) if hit.publication_number else None,
+        application_number=_normalize(hit.application_number) if hit.application_number else None,
         title=hit.title,
+        snippet=hit.snippet,
         url=hit.url or f"https://patents.google.com/patent/{_normalize(hit.publication_number)}",
+        priority_date=_parse_date(hit.priority_date),
+        filing_date=_parse_date(hit.filing_date),
         publication_date=_parse_date(hit.publication_date),
+        assignee=hit.assignee,
         family_id=hit.family_id,
         source_queries=queries,
         provider=hit.provider,
@@ -135,6 +157,11 @@ def _parse_date(value: str | None) -> date | None:
         return date.fromisoformat(value[:10])
     except ValueError:
         return None
+
+
+def _date_json(value: str | None) -> str | None:
+    parsed = _parse_date(value)
+    return parsed.isoformat() if parsed else None
 
 
 __all__ = ["FrozenPublication", "FrozenPublicationSet", "PublicationFreezeError", "freeze_publications"]

@@ -83,6 +83,9 @@ LANDSCAPE_V4_ANALYTICS_SCHEMA_PATH = Path(
 LANDSCAPE_V4_WORKFLOW_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/097_landscape_v4_workflow_state.sql"
 )
+LANDSCAPE_V4_ANALYSIS_UNITS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/098_landscape_v4_analysis_units.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -105,6 +108,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_workflow_sql = LANDSCAPE_V4_WORKFLOW_SCHEMA_PATH.read_text(
             encoding="utf-8"
+        )
+        self.landscape_analysis_units_sql = (
+            LANDSCAPE_V4_ANALYSIS_UNITS_SCHEMA_PATH.read_text(encoding="utf-8")
         )
         self.landscape_company_manifest_sql = (
             LANDSCAPE_COMPANY_MANIFEST_SCHEMA_PATH.read_text(encoding="utf-8")
@@ -459,6 +465,19 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertIn("error_code", sql)
         self.assertIn("BEFORE UPDATE OR DELETE", sql)
         self.assertIn("'097_landscape_v4_workflow_state'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_analysis_units_strictly_partition_frozen_publications(self) -> None:
+        sql = self.landscape_analysis_units_sql
+        self.assertIn("landscape_v4_family_manifests", sql)
+        self.assertIn("landscape_v4_analysis_units", sql)
+        self.assertIn("landscape_v4_analysis_unit_members", sql)
+        self.assertIn("UNIQUE(run_id,publication_id)", sql)
+        self.assertIn("landscape_v4_direction_records_analysis_unit_fkey", sql)
+        self.assertIn("'098_landscape_v4_analysis_units'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)

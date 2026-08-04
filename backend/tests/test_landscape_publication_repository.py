@@ -19,7 +19,12 @@ class Cursor:
     def executemany(self, sql, values):
         normalized = " ".join(sql.split())
         if normalized.startswith("INSERT INTO landscape_v4_publications"):
-            keys = ("run_id","publication_id","publication_identity","publication_number","title","url","publication_date","family_id","provider","content_hash","sort_order")
+            keys = (
+                "run_id","publication_id","publication_identity","publication_number",
+                "application_number","title","snippet","url","priority_date",
+                "filing_date","publication_date","assignee","family_id","provider",
+                "content_hash","sort_order",
+            )
             self.connection.publications.extend(dict(zip(keys, row, strict=True)) for row in values)
         elif normalized.startswith("INSERT INTO landscape_v4_publication_sources"):
             keys = ("run_id","publication_id","query_id")

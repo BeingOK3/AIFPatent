@@ -227,13 +227,13 @@ class LandscapePostgreSQLDatabase(LandscapeDatabase):
             row = connection.execute(
                 """
                 SELECT version FROM aifpatent_schema_migrations
-                WHERE version = '097_landscape_v4_workflow_state'
+                WHERE version = '098_landscape_v4_analysis_units'
                 """
             ).fetchone()
         if row is None:
             raise PostgreSQLPersistenceError(
                 "PostgreSQL schema is not current; apply migration "
-                "097_landscape_v4_workflow_state"
+                "098_landscape_v4_analysis_units"
             )
 
     @contextmanager

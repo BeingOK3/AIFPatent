@@ -45,6 +45,7 @@ from .analytics_repository import (
     PostgreSQLTrendRepository,
 )
 from .stage_repository import PostgreSQLStageRepository
+from .family_repository import PostgreSQLFamilyRepository
 from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
@@ -158,6 +159,7 @@ class LandscapeRuntime:
     v4_trend_repository: PostgreSQLTrendRepository
     representative_repository: PostgreSQLRepresentativeRepository
     stage_repository: PostgreSQLStageRepository
+    family_repository: PostgreSQLFamilyRepository
     task_queue: PostgreSQLTaskQueue
     model_scheduler: ModelScheduler
     credential_vault: CredentialVault
@@ -210,6 +212,7 @@ def build_landscape_runtime(
     v4_trend_repository = PostgreSQLTrendRepository(dsn)
     representative_repository = PostgreSQLRepresentativeRepository(dsn)
     stage_repository = PostgreSQLStageRepository(dsn)
+    family_repository = PostgreSQLFamilyRepository(dsn)
     task_queue = PostgreSQLTaskQueue(dsn)
     model_scheduler = ModelScheduler(
         ModelBudget(
@@ -309,6 +312,7 @@ def build_landscape_runtime(
         v4_trend_repository,
         representative_repository,
         stage_repository,
+        family_repository,
         task_queue,
         model_scheduler,
         credential_vault,

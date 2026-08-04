@@ -28,5 +28,24 @@ class LandscapePublicationFreezeTests(unittest.TestCase):
         with self.assertRaises(PublicationFreezeError):
             freeze_publications("run", (("q", SimpleNamespace(publication_number=None, url="")),))
 
+    def test_freeze_preserves_explicit_family_and_organization_inputs(self):
+        value = SearchHit(
+            provider="fixture",
+            provider_rank=1,
+            publication_number="CN 123 A",
+            application_number="CN 2024 001",
+            title="title",
+            snippet="abstract-like search snippet",
+            priority_date="2022-01-02",
+            filing_date="2023-02-03",
+            publication_date="2024-03-04",
+            assignee="示例公司",
+        )
+        publication = freeze_publications("run", (("q", value),)).publications[0]
+        self.assertEqual(publication.application_number, "CN2024001")
+        self.assertEqual(publication.assignee, "示例公司")
+        self.assertEqual(publication.snippet, "abstract-like search snippet")
+        self.assertEqual(publication.priority_date.isoformat(), "2022-01-02")
+
 
 if __name__ == "__main__": unittest.main()
