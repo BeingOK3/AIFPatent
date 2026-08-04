@@ -87,6 +87,27 @@
     if (item.memory_action === "RETIRE") return "已停用";
     return "仅本次排除";
   }
+  function sourceBadge(item) {
+    const labels = { HISTORY: "历史", MODEL_SUGGESTED: "模型", USER_INPUT: "用户", USER_ADDED: "手动" };
+    return labels[item.source] || item.source;
+  }
+  function sourceGroupLabel(item) {
+    if (item.status === "EXCLUDED") return "已排除 · 可恢复";
+    if (item.source === "HISTORY") return "历史档案";
+    if (item.source === "MODEL_SUGGESTED") return "模型建议";
+    return "其他候选";
+  }
+  function scopeCounts(items, company) {
+    const active = items.filter((item) => item.status === "ACTIVE").length;
+    const model = items.filter((item) => item.status !== "ACTIVE" && item.source === "MODEL_SUGGESTED").length;
+    const history = items.filter((item) => item.status !== "ACTIVE" && item.source === "HISTORY").length;
+    const excluded = items.filter((item) => item.status === "EXCLUDED").length;
+    const parts = [`已纳入 ${active}`];
+    if (model) parts.push(`模型建议 ${model}`);
+    if (history) parts.push(`历史档案 ${history}`);
+    if (excluded) parts.push(`已排除 ${excluded}`);
+    return parts.join(" · ") || `已纳入 0${company ? " · 可从历史或模型建议中选择" : " · 可从模型建议中选择"}`;
+  }
   function candidateLabel(item, company) {
     const relation = company ? item.relation_type : item.relation_to_original;
     const status = candidateStatusLabel(item);
@@ -102,16 +123,26 @@
     return buttons.join("");
   }
   function chipHTML(item, company) {
-    return `<span class="chip"><span class="chip-text" title="${escapeHtml(candidateLabel(item, company))}">${escapeHtml(item.text)}</span>${chipActions(item, company)}</span>`;
+    return `<span class="chip"><small class="chip-source">${escapeHtml(sourceBadge(item))}</small><span class="chip-text" title="${escapeHtml(candidateLabel(item, company))}">${escapeHtml(item.text)}</span>${chipActions(item, company)}</span>`;
   }
   function chipList(items, company) {
     return items.length ? `<div class="chip-list">${items.map((item) => chipHTML(item, company)).join("")}</div>` : `<p class="muted">尚未纳入任何${company ? "名称" : "技术词"}。</p>`;
   }
   function pickerHTML(candidates, company) {
-    const options = candidates.map((item) => {
-      const id = item.name_id || item.term_id;
-      const rationale = item.rationale ? ` · ${item.rationale}` : "";
-      return `<option value="${escapeHtml(id)}" title="${escapeHtml(candidateLabel(item, company) + rationale)}">${escapeHtml(candidateLabel(item, company))}</option>`;
+    const order = ["模型建议", "历史档案", "已排除 · 可恢复", "其他候选"];
+    const groups = new Map();
+    for (const item of candidates) {
+      const label = sourceGroupLabel(item);
+      if (!groups.has(label)) groups.set(label, []);
+      groups.get(label).push(item);
+    }
+    const options = order.filter((label) => groups.has(label)).map((label) => {
+      const items = groups.get(label);
+      return `<optgroup label="${label}">${items.map((item) => {
+        const id = item.name_id || item.term_id;
+        const rationale = item.rationale ? ` · ${item.rationale}` : "";
+        return `<option value="${escapeHtml(id)}" title="${escapeHtml(candidateLabel(item, company) + rationale)}">${escapeHtml(candidateLabel(item, company))}</option>`;
+      }).join("")}</optgroup>`;
     }).join("");
     return `<div class="add-picker">
       <button type="button" class="secondary toggle-add">＋ 添加${company ? "公司名称/别名" : "技术词"}</button>
@@ -129,9 +160,9 @@
     $("company-review-list").innerHTML = (draft.companies || []).map((company) => {
       const active = company.names.filter((item) => item.status === "ACTIVE");
       const pool = company.names.filter((item) => item.status !== "ACTIVE");
-      return `<section class="review-group" data-profile-id="${escapeHtml(company.profile_id)}"><h3>${escapeHtml(company.display_name)}</h3><p class="muted">下拉选择纳入检索的名称；未选中的候选默认仅本次排除。</p>${chipList(active, true)}${pickerHTML(pool, true)}</section>`;
+      return `<section class="review-group" data-profile-id="${escapeHtml(company.profile_id)}"><h3>${escapeHtml(company.display_name)}</h3><p class="muted">${escapeHtml(scopeCounts(company.names, true))} · 下拉从“模型建议 / 历史档案”选择纳入检索；未选中的候选默认仅本次排除。</p>${chipList(active, true)}${pickerHTML(pool, true)}</section>`;
     }).join("");
-    $("technology-review").innerHTML = draft.technology_input ? `<section class="review-group"><h3>双语技术检索词</h3><p class="muted">确认时至少保留一个中文词和一个英文词。</p>${chipList(draft.technology_terms.filter((item) => item.status === "ACTIVE"), false)}${pickerHTML(draft.technology_terms.filter((item) => item.status !== "ACTIVE"), false)}</section>` : "";
+    $("technology-review").innerHTML = draft.technology_input ? `<section class="review-group"><h3>双语技术检索词</h3><p class="muted">${escapeHtml(scopeCounts(draft.technology_terms, false))} · 确认时至少保留一个中文词和一个英文词。</p>${chipList(draft.technology_terms.filter((item) => item.status === "ACTIVE"), false)}${pickerHTML(draft.technology_terms.filter((item) => item.status !== "ACTIVE"), false)}</section>` : "";
     const editable = draft.status === "AWAITING_CONFIRMATION";
     $("resume-scope-expansion").classList.toggle("hidden", !["DRAFT", "EXPANDING"].includes(draft.status));
     $("save-scope-review").classList.toggle("hidden", !editable); $("confirm-scope").classList.toggle("hidden", !editable);
