@@ -35,6 +35,9 @@ from .abstract_repository import PostgreSQLAbstractEvidenceRepository
 from .task_queue import PostgreSQLTaskQueue
 from .model_scheduler import ModelBudget, ModelScheduler
 from .credential_lease import CredentialVault
+from .batching import make_profile
+from .direction_agent import DirectionExtractionService
+from .classification_agent import ClassificationMatchingService
 from .semantic_result_repository import (
     PostgreSQLClassificationRepository,
     PostgreSQLDirectionRepository,
@@ -171,6 +174,8 @@ class LandscapeRuntime:
     v4_workflow: V4LandscapeWorkflow | None
     task_queue: PostgreSQLTaskQueue
     model_scheduler: ModelScheduler
+    direction_extraction: DirectionExtractionService
+    classification_matching: ClassificationMatchingService
     credential_vault: CredentialVault
 
 
@@ -242,6 +247,39 @@ def build_landscape_runtime(
         max_step_attempts=config.workflow.max_step_attempts,
     )
     model = StructuredModelClient(config.model)
+    bulk_profile = make_profile(
+        model_role="bulk",
+        verified_context_tokens=_int_env(
+            "AIFPATENT_MODEL_VERIFIED_CONTEXT_TOKENS",
+            600_000,
+            minimum=10_000,
+        ),
+        safety_ratio=0.65,
+        fixed_prompt_tokens=20_000,
+        reserved_output_tokens=min(8_192, config.model.max_output_tokens),
+        max_batch_input_tokens=_int_env(
+            "AIFPATENT_MODEL_MAX_BATCH_INPUT_TOKENS",
+            400_000,
+            minimum=1_000,
+        ),
+        max_batch_output_tokens=min(8_192, config.model.max_output_tokens),
+        max_batch_items=_int_env(
+            "AIFPATENT_MODEL_MAX_BATCH_ITEMS", 8, minimum=1
+        ),
+        max_taxonomy_candidates=500,
+    )
+    direction_extraction = DirectionExtractionService(
+        model,
+        model_scheduler,
+        bulk_profile,
+        batch_retries=max(0, config.workflow.max_step_attempts - 1),
+    )
+    classification_matching = ClassificationMatchingService(
+        model,
+        model_scheduler,
+        bulk_profile,
+        batch_retries=max(0, config.workflow.max_step_attempts - 1),
+    )
     scope_service = ScopeDraftPreparationService(
         scope_repository,
         ScopeExpansionService(model),
@@ -362,6 +400,8 @@ def build_landscape_runtime(
         v4_workflow,
         task_queue,
         model_scheduler,
+        direction_extraction,
+        classification_matching,
         credential_vault,
     )
 
