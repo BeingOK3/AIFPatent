@@ -109,7 +109,12 @@ class ClassificationMatchingService:
                 )
         leaf_parent_pairs = _leaf_parent_pairs(taxonomy)
         first_candidates = {
-            item.analysis_unit_id: _candidate_leaves(item, taxonomy, leaf_parent_pairs)
+            item.analysis_unit_id: _candidate_leaves(
+                item,
+                taxonomy,
+                leaf_parent_pairs,
+                max_candidates=self.profile.max_taxonomy_candidates,
+            )
             for item in available
         }
         first = await self._decide(available, first_candidates, taxonomy, review_round=0)
@@ -132,6 +137,13 @@ class ClassificationMatchingService:
                 )
                 or all_leaves
                 for item in needs_review
+            }
+            second_candidates = {
+                item_id: _cap_candidates(
+                    candidates,
+                    self.profile.max_taxonomy_candidates,
+                )
+                for item_id, candidates in second_candidates.items()
             }
             second = await self._decide(
                 tuple(needs_review), second_candidates, taxonomy, review_round=1
@@ -271,15 +283,34 @@ def _candidate_leaves(
     direction: DirectionRecord,
     taxonomy: TaxonomyArtifact,
     leaf_parent_pairs: tuple[tuple[str, str], ...],
+    *,
+    max_candidates: int,
 ) -> tuple[str, ...]:
     if not direction.candidate_level1_ids:
-        return tuple(taxonomy.leaf_category_ids)
+        return _cap_candidates(
+            tuple(taxonomy.leaf_category_ids),
+            max_candidates,
+        )
     parents = set(direction.candidate_level1_ids)
     return tuple(
         leaf_id
         for leaf_id, level1_id in leaf_parent_pairs
         if level1_id in parents
     )
+
+
+def _cap_candidates(
+    candidates: tuple[str, ...],
+    max_candidates: int,
+) -> tuple[str, ...]:
+    if max_candidates < 1:
+        raise ValueError("max_candidates must be positive")
+    if len(candidates) <= max_candidates:
+        return candidates
+    # Deterministic bound so a single direction can never push a batch item
+    # past the frozen batch profile. The bounded parent-review round still
+    # offers the remaining leaves, so no category is silently unreachable.
+    return candidates[:max_candidates]
 
 
 def _terminal(

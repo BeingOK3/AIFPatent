@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from types import SimpleNamespace
+from pathlib import Path
 
 from landscape.batching import make_profile
 from landscape.classification_agent import (
@@ -18,7 +19,7 @@ from landscape.classification_terminal import (
 )
 from landscape.direction_record import DirectionRecord, DirectionStatus
 from landscape.model_scheduler import ModelBudget, ModelScheduler
-from landscape.taxonomy import compile_taxonomy_markdown
+from landscape.taxonomy import compile_taxonomy_file, compile_taxonomy_markdown
 
 
 TAXONOMY = compile_taxonomy_markdown(
@@ -145,7 +146,7 @@ class ClassificationMatchingServiceTests(unittest.TestCase):
             evidence_ids=("EV-aa",),
         )
         pairs = _leaf_parent_pairs(taxonomy)
-        scoped = _candidate_leaves(alpha_only, taxonomy, pairs)
+        scoped = _candidate_leaves(alpha_only, taxonomy, pairs, max_candidates=500)
         self.assertEqual(
             set(scoped),
             {node_by_path[("Alpha", "One", "LeafA")].category_id,
@@ -163,7 +164,10 @@ class ClassificationMatchingServiceTests(unittest.TestCase):
             confidence=0.8,
             evidence_ids=("EV-bb",),
         )
-        self.assertEqual(_candidate_leaves(alpha_only_again, taxonomy, pairs), scoped)
+        self.assertEqual(
+            _candidate_leaves(alpha_only_again, taxonomy, pairs, max_candidates=500),
+            scoped,
+        )
 
         unscoped = DirectionRecord(
             analysis_unit_id="AU-00000000000000cc",
@@ -175,7 +179,62 @@ class ClassificationMatchingServiceTests(unittest.TestCase):
             confidence=0.8,
             evidence_ids=("EV-cc",),
         )
-        self.assertEqual(_candidate_leaves(unscoped, taxonomy, pairs), leaf_ids)
+        self.assertEqual(
+            _candidate_leaves(unscoped, taxonomy, pairs, max_candidates=500),
+            leaf_ids,
+        )
+
+    def test_empty_parent_hint_is_bounded_to_batch_profile(self):
+        real_taxonomy = compile_taxonomy_file(
+            Path(__file__).resolve().parents[2]
+            / "development"
+            / "landscape"
+            / "classify.md"
+        )
+        pairs = _leaf_parent_pairs(real_taxonomy)
+        no_hint = DirectionRecord(
+            analysis_unit_id="AU-00000000000000dd",
+            status=DirectionStatus.AVAILABLE,
+            evidence_sufficient=True,
+            solution_mechanism="通过液体回路散热",
+            direction_summary="冷板液冷技术方向",
+            candidate_level1_ids=(),
+            confidence=0.8,
+            evidence_ids=("EV-dd",),
+        )
+        bounded = _candidate_leaves(
+            no_hint,
+            real_taxonomy,
+            pairs,
+            max_candidates=500,
+        )
+        self.assertLessEqual(len(bounded), 500)
+        self.assertEqual(
+            bounded,
+            tuple(real_taxonomy.leaf_category_ids)[:500],
+        )
+        tiny = _candidate_leaves(
+            no_hint,
+            real_taxonomy,
+            pairs,
+            max_candidates=3,
+        )
+        self.assertEqual(len(tiny), 3)
+
+    def test_empty_parent_hint_still_terminates_every_unit(self):
+        model = FakeModel()
+        no_hint = DirectionRecord(
+            analysis_unit_id="AU-0000000000000005",
+            status=DirectionStatus.AVAILABLE,
+            evidence_sufficient=True,
+            solution_mechanism="通过液体回路散热",
+            direction_summary="冷板液冷技术方向",
+            candidate_level1_ids=(),
+            confidence=0.8,
+            evidence_ids=("EV-5",),
+        )
+        results = asyncio.run(service(model).classify((no_hint,), TAXONOMY))
+        self.assertEqual(results[0].terminal, ClassificationTerminal.CLASSIFIED)
 
 
 if __name__ == "__main__":
