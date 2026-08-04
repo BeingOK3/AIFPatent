@@ -102,6 +102,7 @@
     const editable = draft.status === "AWAITING_CONFIRMATION";
     $("resume-scope-expansion").classList.toggle("hidden", !["DRAFT", "EXPANDING"].includes(draft.status));
     $("save-scope-review").classList.toggle("hidden", !editable); $("confirm-scope").classList.toggle("hidden", !editable);
+    $("start-confirmed-run").classList.toggle("hidden", draft.status !== "CONFIRMED");
   }
   function captureReviewDecisions(draft, requireAll) {
     const decisions = new Map(Array.from(document.querySelectorAll(".company-decision,.term-decision"), (item) => [item.dataset.id, item.value]));
@@ -137,6 +138,14 @@
       const confirmed = await jsonRequest(`/api/landscape/scope-drafts/${encodeURIComponent(saved.draft_id)}/confirm`, { method: "POST", body: JSON.stringify({ expected_revision: saved.revision }) });
       $("scope-review-status").textContent = "CONFIRMED"; $("save-scope-review").classList.add("hidden"); $("confirm-scope").classList.add("hidden");
       $("scope-review-message").textContent = `范围已冻结：${confirmed.scope_revision_id}，正在建立正式运行…`;
+      await startRun(confirmed.scope_revision_id);
+    } catch (error) { $("scope-review-message").textContent = error.message; }
+  }
+  async function startConfirmedScope() {
+    try {
+      const draft = state.scopeDraft;
+      const confirmed = await jsonRequest(`/api/landscape/scope-drafts/${encodeURIComponent(draft.draft_id)}/confirm`, { method: "POST", body: JSON.stringify({ expected_revision: draft.revision }) });
+      $("scope-review-message").textContent = `正在从不可变范围 ${confirmed.scope_revision_id} 建立新运行…`;
       await startRun(confirmed.scope_revision_id);
     } catch (error) { $("scope-review-message").textContent = error.message; }
   }
@@ -202,6 +211,7 @@
   $("period-preset").addEventListener("change", presetDates); $("technology-direction").addEventListener("input", updateMode); $("competitors").addEventListener("input", updateMode);
   $("resume-scope-expansion").addEventListener("click", () => expandScopeDraft().catch((error) => { $("scope-review-message").textContent = error.message; }));
   $("save-scope-review").addEventListener("click", () => saveScopeReview().catch((error) => { $("scope-review-message").textContent = error.message; })); $("confirm-scope").addEventListener("click", confirmScope);
+  $("start-confirmed-run").addEventListener("click", startConfirmedScope);
   $("scope-review-panel").addEventListener("click", (event) => { try { const button = event.target.closest(".add-company-name"); if (button) addCompanyName(button); if (event.target.id === "add-technology-term") addTechnologyTerm(); } catch (error) { $("scope-review-message").textContent = error.message; } });
   $("approve-scale").addEventListener("click", () => decideScale().catch((error) => { $("form-message").textContent = error.message; })); $("reject-scale").addEventListener("click", () => cancelRun().catch((error) => { $("form-message").textContent = error.message; })); $("attach-credentials").addEventListener("click", () => attachCredentials().catch((error) => { $("form-message").textContent = error.message; }));
   presetDates(); updateMode(); restoreScopeDraft(); loadHistory();

@@ -38,10 +38,12 @@ class LandscapeFrontendContractTests(unittest.TestCase):
             'jsonRequest("/api/landscape/runs"',
             "scope_revision_id",
             "/credentials",
+            "startConfirmedScope",
         ):
             self.assertIn(fragment, self.javascript)
         self.assertIn('id="scope-review-panel"', self.html)
         self.assertIn('id="confirm-scope"', self.html)
+        self.assertIn('id="start-confirmed-run"', self.html)
 
     def test_v4_progress_scale_gate_and_debug_are_rendered(self) -> None:
         for fragment in (
