@@ -122,3 +122,44 @@
 - 服务器 `rag.env` 并发 8→16（RPM 240），完整端到端复测
   （Run `LRN-02f1cd5f34a9e9c1`）稳定完成：方向抽取 52s、分类 84s、
   整 Run ~3min，Unresolved 4+7，无 429/无失败。
+
+## 2026-08-05 — 真实运行验收、宏观总结、检索截断与前端美化
+
+### 9. 三模式真实运行状态（124.223.158.48）
+
+- COMPANY_AND_TECHNOLOGY：历史 3 次成功（LRN-02f1cd5f、LRN-0605a39、LRN-b32de73）。
+- TECHNOLOGY_ONLY：本次真实跑通（LRN-0c325c02ad11bf53，AI 服务器液冷，2025-08-01~2026-07-31），
+  950 冻结公开文本 → 897 分析单元 → 660 趋势候选 → 98 代表专利，状态 COMPLETED_WITH_LIMITATIONS。
+- COMPANY_ONLY：本次真实运行中（LRN-b9d4f2cc933fd665，英伟达/华为），限额下冻结 1980 件。
+
+### 10. 真实运行暴露并修复的缺陷
+
+- 指标立方哈希不一致：Python 码点序与 PostgreSQL 默认 collation 排序不同，同一方向下
+  `ORG-UNKNOWN`（大写）与已知机构（小写 hex）混排时顺序翻转，写库重建后 `cube_hash` 校验失败，
+  仅技术模式（大量 UNKNOWN 机构）必现。修复：指标 cell 读取按 `COLLATE "C"` 排序，
+  与构建端 Python 顺序一致（提交 5b3a50a）。
+- 检索页 CHECK 约束：新增 `MAX_PAGES` 停止原因被 `landscape_v4_search_pages_stop_reason_check`
+  拒绝（迁移 103 放开，提交 fe409d2）。
+
+### 11. 召回量分析与截断上限
+
+- 根因：窗口内检索量取决于 Provider 报告的 total_results；公司模式别名查询越多、窗口越长，
+  total 求和越大。仅公司 2 家、30 条查询、1 年窗口，估算 269,962 件 / 2710 页 / 1350 分片。
+- 修复：`AIFPATENT_LANDSCAPE_MAX_PAGES_PER_QUERY`（默认 8）与
+  `AIFPATENT_LANDSCAPE_MAX_FROZEN_PUBLICATIONS`（默认 3000）：取页到上限后追加
+  `MAX_PAGES` 终止页，冻结按公开日确定性截断并记录 `truncated_count`，规模估算同步封顶，
+  限制以 `FROZEN_PUBLICATION_CAP`/`MAX_PAGES` 如实进入报告（提交 d35e8bc）。
+- 限额后仅公司模式估算 2,888 / 37 页 / 15 分片，冻结 1,980 件。
+
+### 12. 报告质量与前端
+
+- 报告 4.1.0 新增 `macro_summary`（程序化宏观总结：总体规模、时间脉冲、Top 方向/机构、
+  变化分布与一句话叙述，样本不足不虚构），前端顶部宏观总结卡片（提交 5d2195f）。
+- 生成提速：模型阶段 16 并发不变；详情抓取并发参数化 `AIFPATENT_LANDSCAPE_FETCH_CONCURRENCY`
+  （默认 8，上限 64，提交 9f5c453），待重建后 16 并发复测。
+- 前端美化：报告头部、趋势迷你条形图、变化类型彩色徽章、趋势/专利大表分页折叠（提交 dcfed60）。
+
+### 待办
+
+- COMPANY_ONLY Run 完成后验证报告与截断限制；重建容器（含抓取并发 16 与前端）后复测提速；
+- 真实三模式验收清单全部打勾后，向用户交付运行证据。
