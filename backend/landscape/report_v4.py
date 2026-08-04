@@ -82,7 +82,12 @@ class LandscapeReportV4(ScopeModel):
     def validate_report(self) -> "LandscapeReportV4":
         if self.counts.frozen_publication_count != len(self.patents):
             raise ValueError("report patent count mismatch")
-        terminals = Counter(item.classification_terminal for item in self.patents)
+        unit_terminals = {
+            item.analysis_unit_id: item.classification_terminal for item in self.patents
+        }
+        if len(unit_terminals) != self.counts.analysis_unit_count:
+            raise ValueError("report analysis unit count mismatch")
+        terminals = Counter(unit_terminals.values())
         if (
             self.counts.classified_count != terminals[ClassificationTerminal.CLASSIFIED]
             or self.counts.others_count != terminals[ClassificationTerminal.OTHERS]

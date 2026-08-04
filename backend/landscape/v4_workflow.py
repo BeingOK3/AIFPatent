@@ -16,6 +16,7 @@ from .others_discovery import discover_others_directions
 from .patent_snapshot import PatentSnapshotStatus, snapshot_bibliography
 from .metrics import build_metric_cube
 from .representatives import select_representative_patents
+from .report_v4 import build_report_v4, render_report_markdown
 from .trends import build_trend_candidates
 from .stage_repository import V4StageName, V4StageStatus
 from .v4_run import LandscapeRunStatus
@@ -60,6 +61,7 @@ class V4LandscapeWorkflow:
         metric_repository=None,
         trend_repository=None,
         representative_repository=None,
+        report_repository=None,
     ):
         self.run_repository = run_repository
         self.scope_repository = scope_repository
@@ -81,6 +83,15 @@ class V4LandscapeWorkflow:
         self.metric_repository = metric_repository
         self.trend_repository = trend_repository
         self.representative_repository = representative_repository
+        self.report_repository = report_repository
+
+    async def execute_full(self, run_id: str) -> V4WorkflowOutcome:
+        outcome = await self.execute_through_analytics(run_id)
+        if outcome == V4WorkflowOutcome.AWAITING_SCALE_CONFIRMATION:
+            return outcome
+        self._build_report(run_id)
+        self._verify_run(run_id)
+        return outcome
 
     async def execute_through_analytics(self, run_id: str) -> V4WorkflowOutcome:
         outcome = await self.execute_through_classification(run_id)
@@ -267,6 +278,91 @@ class V4LandscapeWorkflow:
         )
         self.stage_repository.succeed(run_id, V4StageName.SELECT_REPRESENTATIVES)
         return representatives
+
+    def _build_report(self, run_id: str):
+        if self.report_repository is None:
+            raise V4WorkflowError("report repository is missing")
+        if self._succeeded(run_id, V4StageName.BUILD_REPORT):
+            return self.report_repository.get(run_id)
+        self.stage_repository.start(
+            run_id, V4StageName.BUILD_REPORT, total_count=1
+        )
+        run = self.run_repository.get(run_id)
+        scope = self.scope_repository.get_confirmed(run.scope_revision_id)
+        plan = self.search_coordinator.query_repository.get(run_id)
+        resolution = self.family_repository.get(run_id)
+        directions = tuple(
+            self.direction_repository.get(run_id, unit.analysis_unit_id)
+            for unit in resolution.analysis_units
+        )
+        classifications = tuple(
+            self.classification_repository.get(run_id, unit.analysis_unit_id)
+            for unit in resolution.analysis_units
+        )
+        report = build_report_v4(
+            run=run,
+            scope=scope,
+            query_plan=plan,
+            search_pages_by_query={
+                query.query_id: self.search_coordinator.page_repository.list(
+                    run_id, query.query_id
+                )
+                for query in plan.queries
+            },
+            scale_gate=self.search_coordinator.scale_repository.get(run_id),
+            resolution=resolution,
+            snapshots=self.snapshot_repository.get(run_id),
+            organizations=self.organization_repository.get(run_id),
+            classifications=classifications,
+            directions=directions,
+            others=self.others_repository.get(run_id),
+            metric_cube=self.metric_repository.get(run_id),
+            trends=self.trend_repository.get(run_id),
+            representatives=self.representative_repository.get(run_id),
+            limitations=self.stage_repository.limitations(run_id),
+        )
+        artifact = self.report_repository.put(report, render_report_markdown(report))
+        self.stage_repository.progress(
+            run_id,
+            V4StageName.BUILD_REPORT,
+            completed_count=1,
+            total_count=1,
+        )
+        self.stage_repository.succeed(run_id, V4StageName.BUILD_REPORT)
+        return artifact
+
+    def _verify_run(self, run_id: str) -> None:
+        if self._succeeded(run_id, V4StageName.VERIFY_RUN):
+            return
+        self.stage_repository.start(run_id, V4StageName.VERIFY_RUN, total_count=1)
+        report, markdown = self.report_repository.get(run_id)
+        if report.run_id != run_id or not markdown.strip():
+            raise V4WorkflowError("Report 4.0 artifact failed final verification")
+        if (
+            report.counts.classified_count
+            + report.counts.others_count
+            + report.counts.unresolved_count
+            != report.counts.analysis_unit_count
+        ):
+            raise V4WorkflowError("classification terminal counts do not reconcile")
+        self.stage_repository.progress(
+            run_id,
+            V4StageName.VERIFY_RUN,
+            completed_count=1,
+            total_count=1,
+        )
+        self.stage_repository.succeed(run_id, V4StageName.VERIFY_RUN)
+        limitations = self.stage_repository.limitations(run_id)
+        target = (
+            LandscapeRunStatus.COMPLETED_WITH_LIMITATIONS
+            if limitations
+            else LandscapeRunStatus.COMPLETED
+        )
+        self.run_repository.transition(
+            run_id,
+            target,
+            expected=(LandscapeRunStatus.RUNNING,),
+        )
 
     async def _extract_directions(self, run_id: str, taxonomy):
         resolution = self.family_repository.get(run_id)

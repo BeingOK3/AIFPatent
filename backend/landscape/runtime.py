@@ -57,6 +57,7 @@ from .taxonomy import TaxonomyArtifact
 from .taxonomy_repository import PostgreSQLTaxonomyRepository
 from .workflow import LandscapeWorkflow, LandscapeWorkflowHarness
 from .v4_workflow import V4LandscapeWorkflow
+from .report_v4_repository import PostgreSQLReportV4Repository
 
 
 @dataclass
@@ -172,6 +173,7 @@ class LandscapeRuntime:
     patent_snapshot_repository: PostgreSQLPatentSnapshotRepository
     patent_snapshot_fetch: PatentSnapshotFetchService | None
     v4_workflow: V4LandscapeWorkflow | None
+    report_v4_repository: PostgreSQLReportV4Repository
     task_queue: PostgreSQLTaskQueue
     model_scheduler: ModelScheduler
     direction_extraction: DirectionExtractionService
@@ -229,6 +231,7 @@ def build_landscape_runtime(
     family_repository = PostgreSQLFamilyRepository(dsn)
     organization_repository = PostgreSQLOrganizationRepository(dsn)
     patent_snapshot_repository = PostgreSQLPatentSnapshotRepository(dsn)
+    report_v4_repository = PostgreSQLReportV4Repository(dsn)
     task_queue = PostgreSQLTaskQueue(dsn)
     model_scheduler = ModelScheduler(
         ModelBudget(
@@ -339,6 +342,7 @@ def build_landscape_runtime(
             metric_repository=metric_repository,
             trend_repository=v4_trend_repository,
             representative_repository=representative_repository,
+            report_repository=report_v4_repository,
         )
         if patent_snapshot_fetch is not None and paged_provider is not None
         else None
@@ -407,6 +411,7 @@ def build_landscape_runtime(
         patent_snapshot_repository,
         patent_snapshot_fetch,
         v4_workflow,
+        report_v4_repository,
         task_queue,
         model_scheduler,
         direction_extraction,
