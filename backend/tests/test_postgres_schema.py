@@ -92,6 +92,9 @@ LANDSCAPE_V4_ORGANIZATIONS_SCHEMA_PATH = Path(
 LANDSCAPE_V4_PATENT_SNAPSHOTS_SCHEMA_PATH = Path(
     "deploy/rag/postgres-init/100_landscape_v4_patent_snapshots.sql"
 )
+LANDSCAPE_V4_REPORTS_SCHEMA_PATH = Path(
+    "deploy/rag/postgres-init/101_landscape_v4_reports.sql"
+)
 
 
 class PostgreSQLSchemaTests(unittest.TestCase):
@@ -123,6 +126,9 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         )
         self.landscape_patent_snapshots_sql = (
             LANDSCAPE_V4_PATENT_SNAPSHOTS_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+        self.landscape_v4_reports_sql = LANDSCAPE_V4_REPORTS_SCHEMA_PATH.read_text(
+            encoding="utf-8"
         )
         self.landscape_company_manifest_sql = (
             LANDSCAPE_COMPANY_MANIFEST_SCHEMA_PATH.read_text(encoding="utf-8")
@@ -516,6 +522,17 @@ class PostgreSQLSchemaTests(unittest.TestCase):
         self.assertNotIn("claims_text", sql)
         self.assertNotIn("description_text", sql)
         self.assertIn("'100_landscape_v4_patent_snapshots'", sql)
+        upper = sql.upper()
+        self.assertNotIn("DROP TABLE", upper)
+        self.assertNotIn("TRUNCATE", upper)
+        self.assertNotIn("DELETE FROM", upper)
+
+    def test_landscape_v4_reports_are_immutable_json_and_markdown_artifacts(self) -> None:
+        sql = self.landscape_v4_reports_sql
+        self.assertIn("CREATE TABLE IF NOT EXISTS landscape_v4_reports", sql)
+        self.assertIn("report_json JSONB", sql)
+        self.assertIn("report_markdown TEXT", sql)
+        self.assertIn("'101_landscape_v4_reports'", sql)
         upper = sql.upper()
         self.assertNotIn("DROP TABLE", upper)
         self.assertNotIn("TRUNCATE", upper)
