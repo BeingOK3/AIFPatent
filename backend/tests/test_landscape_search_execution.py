@@ -83,5 +83,18 @@ class LandscapeSearchExecutionTests(unittest.TestCase):
         result = service.freeze_results("run", asyncio.run(scenario()))
         self.assertEqual(result.publication_count, 2)
 
+    def test_estimation_fetches_only_first_page_and_is_resumable(self):
+        plan = build_query_plan(confirmed_scope(companies=(("华为", ("华为",)),)))
+        provider, checkpoints = Provider(), Checkpoints()
+        service = PagedSearchExecutionService()
+        async def scenario():
+            first = await service.estimate_plan(provider, "run", plan.queries, checkpoints)
+            second = await service.estimate_plan(provider, "run", plan.queries, checkpoints)
+            return first, second
+        first, second = asyncio.run(scenario())
+        self.assertEqual(first, second)
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(provider.calls[0][1], None)
+
 
 if __name__ == "__main__": unittest.main()

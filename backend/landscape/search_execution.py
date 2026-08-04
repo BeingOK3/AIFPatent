@@ -86,6 +86,44 @@ class PagedSearchExecutionService:
             page_number += 1
         return QuerySearchResult(query.query_id, tuple(pages))
 
+    async def checkpoint_first_page(
+        self,
+        provider: PagedSearchProvider,
+        run_id: str,
+        query: V4SearchQuery,
+        checkpoints: SearchPageCheckpoint,
+    ) -> SearchPage:
+        existing = checkpoints.list(run_id, query.query_id)
+        if existing:
+            self._validate_history(existing)
+            return existing[0]
+        page = await provider.search_page(
+            to_provider_query(query, limit=self.page_size),
+            None,
+        )
+        if page.page_number != 1:
+            raise SearchExecutionError(
+                f"provider returned page {page.page_number}, expected 1"
+            )
+        return checkpoints.put(run_id, query.query_id, None, page)
+
+    async def estimate_plan(
+        self,
+        provider: PagedSearchProvider,
+        run_id: str,
+        queries: tuple[V4SearchQuery, ...],
+        checkpoints: SearchPageCheckpoint,
+    ) -> tuple[SearchPage, ...]:
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+
+        async def one(query: V4SearchQuery) -> SearchPage:
+            async with semaphore:
+                return await self.checkpoint_first_page(
+                    provider, run_id, query, checkpoints
+                )
+
+        return tuple(await asyncio.gather(*(one(query) for query in queries)))
+
     async def execute_plan(
         self,
         provider: PagedSearchProvider,
